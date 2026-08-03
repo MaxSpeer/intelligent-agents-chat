@@ -1,4 +1,90 @@
-# Native vLLM on the HPI Slurm cluster
+# vLLM on the HPI Slurm cluster
+
+## Recommended: validated Enroot container
+
+`run-vllm-enroot.sbatch` reproduces the container setup tested successfully on `gx32`: the
+project-local vLLM 0.11.2 image runs directly with Enroot, the unpacking/runtime paths use the
+job-local NVMe scratch, and models plus logs remain in shared project storage. It does not use
+Pyxis, because Pyxis extracted the container filesystem into the home directory despite the
+interactive `ENROOT_*` overrides.
+
+The image must already exist at:
+
+```text
+/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/containers/images/vllm-openai-v0.11.2.sqsh
+```
+
+Create the log directory before submission because Slurm opens the log before executing the
+script:
+
+```bash
+PROJECT_ROOT=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max
+mkdir -p "$PROJECT_ROOT/logs/vllm"
+```
+
+Validate and submit a short first run from the repository root:
+
+```bash
+bash -n cluster/run-vllm-enroot.sbatch
+
+SERVER_JOB=$(sbatch \
+  --parsable \
+  --account=sci-lippert-intelligent-agents \
+  --partition=gpu-shortrun \
+  --time=00:20:00 \
+  cluster/run-vllm-enroot.sbatch)
+SERVER_JOB=${SERVER_JOB%%;*}
+
+echo "$SERVER_JOB"
+tail -f "$PROJECT_ROOT/logs/vllm/vllm-enroot-${SERVER_JOB}.out"
+```
+
+The default API port is deterministic for the job:
+
+```bash
+PORT=$((60000 + SERVER_JOB % 4000))
+echo "$PORT"
+```
+
+After the log reports that the server is ready, test it from a second step in the same allocation:
+
+```bash
+srun \
+  --account=sci-lippert-intelligent-agents \
+  --jobid="$SERVER_JOB" \
+  --overlap \
+  --nodes=1 \
+  --ntasks=1 \
+  curl -s "http://127.0.0.1:${PORT}/v1/models"
+```
+
+Submit the normal four-hour `gpu-batch` job by omitting the command-line overrides:
+
+```bash
+SERVER_JOB=$(sbatch \
+  --parsable \
+  --account=sci-lippert-intelligent-agents \
+  cluster/run-vllm-enroot.sbatch)
+SERVER_JOB=${SERVER_JOB%%;*}
+```
+
+Defaults can be changed without editing the script. For example:
+
+```bash
+sbatch \
+  --account=sci-lippert-intelligent-agents \
+  --export=ALL,MODEL_ID=ORG/MODEL,MODEL_REVISION=FULL_COMMIT_SHA,SERVED_MODEL_NAME=my-model,GPU_MEMORY_UTILIZATION=0.9 \
+  cluster/run-vllm-enroot.sbatch
+```
+
+The server binds to `127.0.0.1` by default. Keep that default and use an SSH tunnel for the local
+NiceGUI application. Stop the allocation when it is no longer needed:
+
+```bash
+scancel --account=sci-lippert-intelligent-agents "$SERVER_JOB"
+```
+
+## Alternative: native uv environment
 
 Use one repository, but keep two Python environments. The root environment is the portable
 NiceGUI application and OpenAI client. The separate `cluster/vllm` specification is Linux x86_64
@@ -33,6 +119,10 @@ This native setup does not use Pyxis or Enroot, so it also avoids extraction int
 - `download-model.sbatch` previews or downloads a pinned model on `cpu-batch`.
 - `vllm-smoke-test.sbatch` starts vLLM, calls its OpenAI-compatible API once, and exits.
 - `run-vllm.sbatch` runs the OpenAI-compatible server until cancellation or the time limit.
+
+Both GPU jobs launch the installed CLI through `uv run ... vllm serve`. The `--no-project` and
+`--offline` flags make uv use the already synchronized CUDA environment without creating another
+`.venv` or resolving packages on a compute node.
 
 Every Slurm job uses `--account=sci-lippert-intelligent-agents` and
 `--constraint=ARCH:X86`.

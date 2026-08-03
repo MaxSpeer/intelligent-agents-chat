@@ -17,7 +17,7 @@ set -Eeuo pipefail
 readonly PROJECT_ROOT="/sc/projects/sci-lippert/intelligent-agents/project_matthias_max"
 readonly VLLM_ENV="${PROJECT_ROOT}/envs/vllm-0.23.0-cu129"
 readonly PYTHON_BIN="${VLLM_ENV}/bin/python"
-readonly VLLM_BIN="${VLLM_ENV}/bin/vllm"
+readonly UV_BIN="${VLLM_ENV}/bin/uv"
 
 readonly DEFAULT_MODEL_ID="Qwen/Qwen3-0.6B"
 readonly DEFAULT_MODEL_REVISION="c1899de289a04d12100db370d81485cdf75e47ca"
@@ -49,7 +49,7 @@ log() {
     printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"
 }
 
-if [[ ! -x "$PYTHON_BIN" || ! -x "$VLLM_BIN" ]]; then
+if [[ ! -x "$PYTHON_BIN" || ! -x "$UV_BIN" ]]; then
     printf 'vLLM is not installed at %s. Run install-vllm.sbatch first.\n' \
         "$VLLM_ENV" >&2
     exit 2
@@ -117,7 +117,12 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 log "Starting a localhost-only vLLM server"
-"$VLLM_BIN" serve "$snapshot_path" \
+"$UV_BIN" run \
+    --offline \
+    --no-project \
+    --python "$PYTHON_BIN" \
+    -- \
+    vllm serve "$snapshot_path" \
     --host "$SERVER_HOST" \
     --port "$SERVER_PORT" \
     --served-model-name "$SERVED_MODEL_NAME" \

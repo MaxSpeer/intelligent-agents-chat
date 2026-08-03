@@ -86,10 +86,13 @@ uv run python -m unittest discover -s tests
 
 ## HPI cluster
 
-The application and vLLM intentionally use separate Python environments:
+The validated cluster workflow runs vLLM 0.11.2 from a persistent Enroot image while placing
+temporary container data on the allocated node's NVMe scratch. A native uv-managed environment
+remains documented as an alternative:
 
 - the root project contains NiceGUI and the OpenAI client;
-- `cluster/vllm` defines the Linux x86_64 CUDA runtime and pins vLLM 0.23.0;
+- `cluster/run-vllm-enroot.sbatch` starts the OpenAI-compatible container server;
+- `cluster/vllm` defines the optional native Linux x86_64 CUDA runtime and pins vLLM 0.23.0;
 - the large environment, models, caches, and logs live in HPI project storage and are not
   committed to Git.
 
