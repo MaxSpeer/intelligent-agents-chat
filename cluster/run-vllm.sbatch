@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=vllm-server
+#SBATCH --job-name=vllm
 #SBATCH --account=sci-lippert-intelligent-agents
 #SBATCH --partition=gpu-batch
 #SBATCH --constraint=ARCH:X86
@@ -9,130 +9,250 @@
 #SBATCH --mem=64G
 #SBATCH --gpus=1
 #SBATCH --time=04:00:00
-#SBATCH --output=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/vllm/vllm-server-%j.out
-#SBATCH --error=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/vllm/vllm-server-%j.out
+#SBATCH --signal=B:TERM@60
+#SBATCH --output=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/vllm/%x-%j.out
+#SBATCH --error=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/vllm/%x-%j.out
 
 set -Eeuo pipefail
 
 readonly PROJECT_ROOT="/sc/projects/sci-lippert/intelligent-agents/project_matthias_max"
-readonly VLLM_ENV="${PROJECT_ROOT}/envs/vllm-0.23.0-cu129"
-readonly PYTHON_BIN="${VLLM_ENV}/bin/python"
-readonly UV_BIN="${VLLM_ENV}/bin/uv"
-
-readonly DEFAULT_MODEL_ID="Qwen/Qwen3-0.6B"
-readonly DEFAULT_MODEL_REVISION="c1899de289a04d12100db370d81485cdf75e47ca"
-readonly MODEL_ID="${MODEL_ID:-$DEFAULT_MODEL_ID}"
-readonly MODEL_REVISION="${MODEL_REVISION:-$DEFAULT_MODEL_REVISION}"
-readonly SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-qwen3-0.6b}"
-readonly SERVER_HOST="${SERVER_HOST:-127.0.0.1}"
-readonly SERVER_PORT="${SERVER_PORT:-$((60000 + SLURM_JOB_ID % 4000))}"
-readonly MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
-readonly GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
-readonly TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
-
-export HF_HOME="${PROJECT_ROOT}/models/huggingface"
-export HF_HUB_CACHE="${HF_HOME}/hub"
-export HF_XET_CACHE="${HF_HOME}/xet"
-export VLLM_CACHE_ROOT="${PROJECT_ROOT}/models/vllm-cache"
-export XDG_CACHE_HOME="${VLLM_CACHE_ROOT}/xdg"
-export UV_CACHE_DIR="${PROJECT_ROOT}/cache/uv"
-export TMPDIR="${SLURM_TMPDIR:-/tmp/vllm-${SLURM_JOB_ID}}"
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-export HF_HUB_DISABLE_TELEMETRY=1
-export VLLM_NO_USAGE_STATS=1
-export TOKENIZERS_PARALLELISM=false
-export PYTHONNOUSERSITE=1
-
-# The serving job reads an already downloaded snapshot and does not need a Hub token.
-unset HF_TOKEN
 
 log() {
     printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"
 }
 
-if [[ ! -x "$PYTHON_BIN" || ! -x "$UV_BIN" ]]; then
-    printf 'vLLM is not installed at %s. Run cluster/install-vllm.sbatch first.\n' \
-        "$VLLM_ENV" >&2
+fail() {
+    printf 'ERROR: %s\n' "$*" >&2
     exit 2
+}
+
+readonly MODEL_PRESET="${MODEL_PRESET:-qwen3-0.6b}"
+case "$MODEL_PRESET" in
+    qwen3-0.6b)
+        PRESET_IMAGE="${PROJECT_ROOT}/containers/images/vllm-openai-v0.11.2.sqsh"
+        PRESET_MODEL_ID="Qwen/Qwen3-0.6B"
+        PRESET_MODEL_REVISION="c1899de289a04d12100db370d81485cdf75e47ca"
+        PRESET_SERVED_MODEL_NAME="qwen3-0.6b"
+        PRESET_MAX_MODEL_LEN="4096"
+        PRESET_GPU_MEMORY_UTILIZATION="0.20"
+        PRESET_MIN_GPU_MEMORY_MIB="0"
+        PRESET_LANGUAGE_MODEL_ONLY="0"
+        PRESET_REASONING_PARSER=""
+        ;;
+    qwen3.5-35b-a3b)
+        PRESET_IMAGE="${PROJECT_ROOT}/containers/images/vllm-openai-v0.23.0-cu129.sqsh"
+        PRESET_MODEL_ID="Qwen/Qwen3.5-35B-A3B"
+        PRESET_MODEL_REVISION="59d61f3ce65a6d9863b86d2e96597125219dc754"
+        PRESET_SERVED_MODEL_NAME="qwen3.5-35b-a3b"
+        PRESET_MAX_MODEL_LEN="32768"
+        PRESET_GPU_MEMORY_UTILIZATION="0.90"
+        PRESET_MIN_GPU_MEMORY_MIB="90000"
+        PRESET_LANGUAGE_MODEL_ONLY="1"
+        PRESET_REASONING_PARSER="qwen3"
+        ;;
+    *)
+        fail "Unknown MODEL_PRESET '${MODEL_PRESET}'. Use qwen3-0.6b or qwen3.5-35b-a3b."
+        ;;
+esac
+
+readonly PRESET_IMAGE PRESET_MODEL_ID PRESET_MODEL_REVISION PRESET_SERVED_MODEL_NAME
+readonly PRESET_MAX_MODEL_LEN PRESET_GPU_MEMORY_UTILIZATION PRESET_MIN_GPU_MEMORY_MIB
+readonly PRESET_LANGUAGE_MODEL_ONLY PRESET_REASONING_PARSER
+
+readonly IMAGE="${VLLM_IMAGE:-$PRESET_IMAGE}"
+readonly MODEL_ID="${MODEL_ID:-$PRESET_MODEL_ID}"
+readonly MODEL_REVISION="${MODEL_REVISION:-$PRESET_MODEL_REVISION}"
+readonly SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-$PRESET_SERVED_MODEL_NAME}"
+readonly SERVER_HOST="${SERVER_HOST:-127.0.0.1}"
+readonly SERVER_PORT="${SERVER_PORT:-$((60000 + ${SLURM_JOB_ID:-0} % 4000))}"
+readonly MAX_MODEL_LEN="${MAX_MODEL_LEN:-$PRESET_MAX_MODEL_LEN}"
+readonly GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-$PRESET_GPU_MEMORY_UTILIZATION}"
+readonly TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
+readonly MIN_GPU_MEMORY_MIB="${MIN_GPU_MEMORY_MIB:-$PRESET_MIN_GPU_MEMORY_MIB}"
+readonly LANGUAGE_MODEL_ONLY="${LANGUAGE_MODEL_ONLY:-$PRESET_LANGUAGE_MODEL_ONLY}"
+readonly REASONING_PARSER="${REASONING_PARSER:-$PRESET_REASONING_PARSER}"
+
+[[ -n "${SLURM_JOB_ID:-}" ]] || fail "This script must run through sbatch."
+[[ -r "$IMAGE" ]] || fail "Container image is missing or unreadable: ${IMAGE}"
+command -v enroot >/dev/null 2>&1 || fail "enroot is not available on $(hostname -f)."
+command -v nvidia-smi >/dev/null 2>&1 || fail "nvidia-smi is not available on $(hostname -f)."
+
+if ! [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] \
+    || ((SERVER_PORT < 1024 || SERVER_PORT > 65535)); then
+    fail "SERVER_PORT must be an integer from 1024 through 65535, got: ${SERVER_PORT}"
 fi
+
+[[ "$MAX_MODEL_LEN" =~ ^[1-9][0-9]*$ ]] \
+    || fail "MAX_MODEL_LEN must be a positive integer, got: ${MAX_MODEL_LEN}"
+[[ "$TENSOR_PARALLEL_SIZE" =~ ^[1-9][0-9]*$ ]] \
+    || fail "TENSOR_PARALLEL_SIZE must be a positive integer, got: ${TENSOR_PARALLEL_SIZE}"
+[[ "$MIN_GPU_MEMORY_MIB" =~ ^[0-9]+$ ]] \
+    || fail "MIN_GPU_MEMORY_MIB must be a non-negative integer, got: ${MIN_GPU_MEMORY_MIB}"
+[[ "$LANGUAGE_MODEL_ONLY" == "0" || "$LANGUAGE_MODEL_ONLY" == "1" ]] \
+    || fail "LANGUAGE_MODEL_ONLY must be 0 or 1, got: ${LANGUAGE_MODEL_ONLY}"
 
 if [[ "$SERVER_HOST" != "127.0.0.1" && "$SERVER_HOST" != "localhost" ]] \
     && [[ -z "${VLLM_API_KEY:-}" ]]; then
-    printf 'Set VLLM_API_KEY before binding vLLM to a non-loopback address.\n' >&2
-    exit 2
+    fail "Set VLLM_API_KEY before binding vLLM to a non-loopback address."
 fi
+
+GPU_MEMORY_MIB="$(
+    nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits \
+        | awk 'NR == 1 { minimum = $1 } $1 < minimum { minimum = $1 } END { print minimum }'
+)"
+readonly GPU_MEMORY_MIB
+[[ "$GPU_MEMORY_MIB" =~ ^[0-9]+$ ]] \
+    || fail "Could not determine the available GPU memory."
+if ((GPU_MEMORY_MIB < MIN_GPU_MEMORY_MIB)); then
+    fail "Preset ${MODEL_PRESET} requires at least ${MIN_GPU_MEMORY_MIB} MiB GPU memory; this node exposes ${GPU_MEMORY_MIB} MiB."
+fi
+
+if [[ -n "${SLURM_SCRATCH:-}" && -d "$SLURM_SCRATCH" ]]; then
+    readonly RUNTIME_ROOT="$SLURM_SCRATCH"
+    readonly RUNTIME_STORAGE="Slurm local scratch"
+else
+    readonly RUNTIME_ROOT="/tmp/vllm-${UID}-${SLURM_JOB_ID}"
+    readonly RUNTIME_STORAGE="node-local /tmp fallback"
+fi
+
+export ENROOT_CACHE_PATH="${RUNTIME_ROOT}/enroot-cache"
+export ENROOT_DATA_PATH="${RUNTIME_ROOT}/enroot-data"
+export ENROOT_RUNTIME_PATH="${RUNTIME_ROOT}/enroot-run"
+export ENROOT_TEMP_PATH="${RUNTIME_ROOT}/enroot-tmp"
+export ENROOT_MAX_PROCESSORS="${ENROOT_MAX_PROCESSORS:-4}"
+
+readonly SCRATCH_HOME="${RUNTIME_ROOT}/home"
+readonly SCRATCH_TMP="${RUNTIME_ROOT}/tmp"
+readonly SCRATCH_CACHE="${RUNTIME_ROOT}/cache"
+readonly NO_ENTRYPOINT="${RUNTIME_ROOT}/no-entrypoint.sh"
 
 umask 002
 mkdir -p \
-    "$HF_HUB_CACHE" \
-    "$HF_XET_CACHE" \
-    "$VLLM_CACHE_ROOT" \
-    "$XDG_CACHE_HOME" \
-    "$TMPDIR"
+    "$ENROOT_CACHE_PATH" \
+    "$ENROOT_DATA_PATH" \
+    "$ENROOT_RUNTIME_PATH" \
+    "$ENROOT_TEMP_PATH" \
+    "$SCRATCH_HOME" \
+    "$SCRATCH_TMP" \
+    "${SCRATCH_CACHE}/cuda" \
+    "${SCRATCH_CACHE}/torchinductor" \
+    "${SCRATCH_CACHE}/triton" \
+    "${PROJECT_ROOT}/cache/vllm/xdg" \
+    "${PROJECT_ROOT}/logs/vllm" \
+    "${PROJECT_ROOT}/models/huggingface/hub" \
+    "${PROJECT_ROOT}/models/huggingface/xet"
+chmod 700 "$RUNTIME_ROOT" "$ENROOT_RUNTIME_PATH"
 
-log "Host: $(hostname -f)"
+# The vLLM image has its own Docker entrypoint. This small Enroot command script
+# makes the command after the image name behave like --no-container-entrypoint.
+printf '%s\n' '#!/bin/sh' 'exec "$@"' > "$NO_ENTRYPOINT"
+chmod 700 "$NO_ENTRYPOINT"
+
+server_pid=""
+cleanup() {
+    local exit_code=$?
+    trap - EXIT
+
+    if [[ "$RUNTIME_STORAGE" == "node-local /tmp fallback" \
+        && "$RUNTIME_ROOT" == "/tmp/vllm-${UID}-${SLURM_JOB_ID}" \
+        && -d "$RUNTIME_ROOT" ]]; then
+        log "Removing temporary job directory: ${RUNTIME_ROOT}"
+        rm -rf --one-file-system -- "$RUNTIME_ROOT"
+    fi
+
+    exit "$exit_code"
+}
+
+terminate() {
+    local signal="$1"
+    local exit_code="$2"
+
+    if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
+        kill "-${signal}" "$server_pid" 2>/dev/null || true
+        wait "$server_pid" 2>/dev/null || true
+    fi
+
+    exit "$exit_code"
+}
+
+trap cleanup EXIT
+trap 'terminate TERM 143' TERM
+trap 'terminate INT 130' INT
+
 log "Job: ${SLURM_JOB_ID}"
+log "Node: $(hostname -f)"
+log "Temporary storage: ${RUNTIME_ROOT} (${RUNTIME_STORAGE})"
+log "Model preset: ${MODEL_PRESET}"
+log "Image: ${IMAGE}"
 log "Model: ${MODEL_ID}@${MODEL_REVISION}"
-log "OpenAI-compatible API: http://${SERVER_HOST}:${SERVER_PORT}/v1"
 log "Served model name: ${SERVED_MODEL_NAME}"
+log "Maximum model length: ${MAX_MODEL_LEN}"
+log "Minimum/available GPU memory: ${MIN_GPU_MEMORY_MIB}/${GPU_MEMORY_MIB} MiB"
+log "OpenAI-compatible API: http://${SERVER_HOST}:${SERVER_PORT}/v1"
+if [[ -n "${VLLM_API_KEY:-}" ]]; then
+    log "API authentication: enabled (key not printed)"
+else
+    log "API authentication: disabled; server is loopback-only"
+fi
+if [[ -n "${HF_TOKEN:-}" ]]; then
+    log "Hugging Face authentication: HF_TOKEN is present (value not printed)"
+else
+    log "Hugging Face authentication: anonymous/public model"
+fi
 
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
 
-"$PYTHON_BIN" - <<'PY'
-import torch
-import vllm
-
-print(f"vLLM: {vllm.__version__}")
-print(f"PyTorch: {torch.__version__}")
-print(f"PyTorch CUDA runtime: {torch.version.cuda}")
-print(f"CUDA available: {torch.cuda.is_available()}")
-if not torch.cuda.is_available():
-    raise SystemExit("The Slurm job did not expose a usable CUDA GPU")
-print(f"GPU: {torch.cuda.get_device_name(0)}")
-PY
-
-export MODEL_ID MODEL_REVISION
-snapshot_path=$(
-    "$PYTHON_BIN" - <<'PY'
-import os
-from huggingface_hub import snapshot_download
-
-print(
-    snapshot_download(
-        repo_id=os.environ["MODEL_ID"],
-        revision=os.environ["MODEL_REVISION"],
-        cache_dir=os.environ["HF_HUB_CACHE"],
-        local_files_only=True,
-    )
+enroot_args=(
+    --rw
+    --rc "$NO_ENTRYPOINT"
+    --env "HOME=/scratch/home"
+    --env "TMPDIR=/tmp"
+    --env "HF_HOME=/project/models/huggingface"
+    --env "HF_HUB_CACHE=/project/models/huggingface/hub"
+    --env "HF_XET_CACHE=/project/models/huggingface/xet"
+    --env "VLLM_CACHE_ROOT=/project/cache/vllm"
+    --env "XDG_CACHE_HOME=/project/cache/vllm/xdg"
+    --env "CUDA_CACHE_PATH=/scratch/cache/cuda"
+    --env "TORCHINDUCTOR_CACHE_DIR=/scratch/cache/torchinductor"
+    --env "TRITON_CACHE_DIR=/scratch/cache/triton"
+    --env "HF_HUB_DISABLE_TELEMETRY=1"
+    --env "VLLM_NO_USAGE_STATS=1"
+    --env "TOKENIZERS_PARALLELISM=false"
+    --env "PYTHONUNBUFFERED=1"
+    --mount "${PROJECT_ROOT}:/project"
+    --mount "${RUNTIME_ROOT}:/scratch"
+    --mount "${SCRATCH_TMP}:/tmp"
 )
-PY
-)
-readonly snapshot_path
-log "Using offline snapshot: ${snapshot_path}"
+
+# Passing only the variable name keeps secret values out of the process arguments.
+[[ -z "${HF_TOKEN:-}" ]] || enroot_args+=(--env HF_TOKEN)
+[[ -z "${VLLM_API_KEY:-}" ]] || enroot_args+=(--env VLLM_API_KEY)
 
 server_args=(
-    serve "$snapshot_path"
+    /usr/local/bin/vllm
+    serve "$MODEL_ID"
+    --revision "$MODEL_REVISION"
+    --served-model-name "$SERVED_MODEL_NAME"
     --host "$SERVER_HOST"
     --port "$SERVER_PORT"
-    --served-model-name "$SERVED_MODEL_NAME"
     --dtype auto
     --max-model-len "$MAX_MODEL_LEN"
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
     --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
+    --generation-config vllm
 )
 
-if [[ -n "${VLLM_API_KEY:-}" ]]; then
-    log "API authentication: enabled (key not printed)"
-    server_args+=(--api-key "$VLLM_API_KEY")
-else
-    log "API authentication: disabled; server is loopback-only"
+if [[ "$LANGUAGE_MODEL_ONLY" == "1" ]]; then
+    server_args+=(--language-model-only)
+fi
+if [[ -n "$REASONING_PARSER" ]]; then
+    server_args+=(--reasoning-parser "$REASONING_PARSER")
 fi
 
-log "Starting vLLM; the allocation stays active until the time limit or cancellation"
-exec "$UV_BIN" run \
-    --offline \
-    --no-project \
-    --python "$PYTHON_BIN" \
-    -- \
-    vllm "${server_args[@]}"
+log "Starting vLLM; the job remains active until cancellation or the time limit."
+enroot start \
+    "${enroot_args[@]}" \
+    "$IMAGE" \
+    "${server_args[@]}" &
+server_pid=$!
+wait "$server_pid"

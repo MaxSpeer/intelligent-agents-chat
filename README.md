@@ -86,17 +86,18 @@ uv run python -m unittest discover -s tests
 
 ## HPI cluster
 
-The validated cluster workflow runs vLLM 0.11.2 from a persistent Enroot image. It uses local
-Slurm scratch when available and falls back to a job-specific `/tmp` directory otherwise. A
-native uv-managed environment remains documented as an alternative:
+The cluster workflow runs persistent vLLM images directly with Enroot. The validated default uses
+vLLM 0.11.2 with Qwen3 0.6B; an additional vLLM 0.23.0 CUDA 12.9 preset serves Qwen3.5 35B-A3B on
+a GPU with at least 90,000 MiB memory. Jobs use local Slurm scratch when available and fall back
+to a job-specific `/tmp` directory otherwise:
 
 - the root project contains NiceGUI and the OpenAI client;
-- `cluster/run-vllm-enroot.sbatch` starts the OpenAI-compatible container server;
-- `cluster/vllm` defines the optional native Linux x86_64 CUDA runtime and pins vLLM 0.23.0;
-- the large environment, models, caches, and logs live in HPI project storage and are not
-  committed to Git.
+- `cluster/run-vllm.sbatch` starts either named model preset through the same OpenAI-compatible
+  server path;
+- the container image, models, caches, and logs live in HPI project storage outside Git;
+- the local application reaches the compute-node loopback API through an SSH tunnel.
 
-Installation, model download, smoke testing, and the long-running server job are documented in
+Submission, validation, SSH tunneling, model overrides, and image recreation are documented in
 [`cluster/README.md`](cluster/README.md).
 
 ## Scope

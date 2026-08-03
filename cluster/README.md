@@ -1,57 +1,76 @@
-# vLLM on the HPI Slurm cluster
+# vLLM on HPI Slurm
 
-## Recommended: validated Enroot container
+The cluster uses one serving path: `run-vllm.sbatch` starts a persistent vLLM SquashFS image
+directly with Enroot and exposes its OpenAI-compatible API. There is no separate cluster Python
+environment and no Pyxis extraction. Two named model presets are available:
 
-`run-vllm-enroot.sbatch` reproduces the container setup tested successfully on `gx32`: the
-project-local vLLM 0.11.2 image runs directly with Enroot, while models and logs remain in shared
-project storage. It does not use Pyxis, because Pyxis extracted the container filesystem into the
-home directory despite the interactive `ENROOT_*` overrides.
+| `MODEL_PRESET` | Model | vLLM image | Minimum GPU memory | Default context |
+| --- | --- | --- | --- | --- |
+| `qwen3-0.6b` | `Qwen/Qwen3-0.6B` | 0.11.2 | none beyond normal vLLM requirements | 4,096 |
+| `qwen3.5-35b-a3b` | `Qwen/Qwen3.5-35B-A3B` | 0.23.0 cu129 | 90,000 MiB | 32,768 |
 
-Local NVMe scratch is optional. When `SLURM_SCRATCH` exists, the job uses it for Enroot runtime
-data, `/tmp`, and compiler caches. On nodes without local scratch it automatically uses the
-job-specific directory `/tmp/vllm-<uid>-<jobid>` instead. The Slurm constraint therefore requires
-only `ARCH:X86`, allowing the scheduler to consider GPU nodes without `SCRATCH:NVME`. The fallback
-directory is removed when the server exits normally or receives Slurm's advance termination signal.
+The 0.6B path is validated on the HPI cluster. The 35B preset is intentionally separate so the
+working 0.11.2 image remains unchanged; validate the new 0.23.0 cu129 image once before relying on
+it.
 
-The image must already exist at:
+All Slurm commands use the account `sci-lippert-intelligent-agents`. Persistent runtime data lives
+under:
 
 ```text
-/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/containers/images/vllm-openai-v0.11.2.sqsh
+/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/
+├── cache/vllm/
+├── containers/images/
+│   ├── vllm-openai-v0.11.2.sqsh
+│   └── vllm-openai-v0.23.0-cu129.sqsh
+├── logs/vllm/
+├── models/huggingface/
+└── code/intelligent-agents-chat/
 ```
 
-Create the log directory before submission because Slurm opens the log before executing the
-script:
+The job requires one x86 GPU node, but not local NVMe. It uses `SLURM_SCRATCH` when available and
+otherwise creates a job-specific directory under `/tmp`, which it removes during normal or
+signaled shutdown.
+
+## Submit a short validation job
+
+On a login node, update the repository and prepare the log directory:
 
 ```bash
 PROJECT_ROOT=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max
+REPOSITORY_DIR="$PROJECT_ROOT/code/intelligent-agents-chat"
+
+cd "$REPOSITORY_DIR"
+git pull --ff-only
 mkdir -p "$PROJECT_ROOT/logs/vllm"
+bash -n cluster/run-vllm.sbatch
 ```
 
-Validate and submit a short first run from the repository root:
+Submit a 20-minute job to the short-run partition. Command-line options override the normal
+four-hour defaults in the script:
 
 ```bash
-bash -n cluster/run-vllm-enroot.sbatch
-
 SERVER_JOB=$(sbatch \
   --parsable \
   --account=sci-lippert-intelligent-agents \
   --partition=gpu-shortrun \
   --time=00:20:00 \
-  cluster/run-vllm-enroot.sbatch)
+  cluster/run-vllm.sbatch)
 SERVER_JOB=${SERVER_JOB%%;*}
 
 echo "$SERVER_JOB"
-tail -f "$PROJECT_ROOT/logs/vllm/vllm-enroot-${SERVER_JOB}.out"
+tail -f "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.out"
 ```
 
-The default API port is deterministic for the job:
+The defaults serve the pinned revision of `Qwen/Qwen3-0.6B` as `qwen3-0.6b`. The API listens only
+on compute-node loopback. Its deterministic port is:
 
 ```bash
 PORT=$((60000 + SERVER_JOB % 4000))
 echo "$PORT"
 ```
 
-After the log reports that the server is ready, test it from a second step in the same allocation:
+Wait until the log reports that the application startup is complete. Then test the API from a
+second step in the same allocation:
 
 ```bash
 srun \
@@ -63,269 +82,84 @@ srun \
   curl -s "http://127.0.0.1:${PORT}/v1/models"
 ```
 
-Submit the normal four-hour `gpu-batch` job by omitting the command-line overrides:
+Check Slurm state and exit status with:
 
 ```bash
-SERVER_JOB=$(sbatch \
-  --parsable \
+squeue \
   --account=sci-lippert-intelligent-agents \
-  cluster/run-vllm-enroot.sbatch)
-SERVER_JOB=${SERVER_JOB%%;*}
-```
+  --jobs="$SERVER_JOB" \
+  --format="%.18i %.9P %.8T %.10M %R"
 
-Defaults can be changed without editing the script. For example:
-
-```bash
-sbatch \
-  --account=sci-lippert-intelligent-agents \
-  --export=ALL,MODEL_ID=ORG/MODEL,MODEL_REVISION=FULL_COMMIT_SHA,SERVED_MODEL_NAME=my-model,GPU_MEMORY_UTILIZATION=0.9 \
-  cluster/run-vllm-enroot.sbatch
-```
-
-The server binds to `127.0.0.1` by default. Keep that default and use an SSH tunnel for the local
-NiceGUI application. Stop the allocation when it is no longer needed:
-
-```bash
-scancel --account=sci-lippert-intelligent-agents "$SERVER_JOB"
-```
-
-## Alternative: native uv environment
-
-Use one repository, but keep two Python environments. The root environment is the portable
-NiceGUI application and OpenAI client. The separate `cluster/vllm` specification is Linux x86_64
-only and pins vLLM 0.23.0 plus its CUDA 12.9 PyTorch stack.
-
-Yes, the vLLM environment can and should live in the shared project folder. It is installed at:
-
-```text
-/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/envs/vllm-0.23.0-cu129
-```
-
-Do not put that large environment inside the Git checkout. Models, caches, environments, and logs
-are runtime data and stay outside Git:
-
-```text
-project_matthias_max/
-├── cache/
-├── envs/
-├── logs/
-├── models/
-└── .../intelligent-agents-chat/  # Git checkout; exact location is your choice
-```
-
-This native setup does not use Pyxis or Enroot, so it also avoids extraction into
-`~/.local/share/enroot`, which caused the earlier home-quota error.
-
-## Files in this repository
-
-- `vllm/pyproject.toml` contains the direct runtime dependencies.
-- `vllm/requirements-cu129.txt` is the complete uv-generated Linux x86_64/CUDA 12.9 lock.
-- `install-vllm.sbatch` creates and synchronizes the environment once on `cpu-batch`.
-- `download-model.sbatch` previews or downloads a pinned model on `cpu-batch`.
-- `vllm-smoke-test.sbatch` starts vLLM, calls its OpenAI-compatible API once, and exits.
-- `run-vllm.sbatch` runs the OpenAI-compatible server until cancellation or the time limit.
-
-Both GPU jobs launch the installed CLI through `uv run ... vllm serve`. The `--no-project` and
-`--offline` flags make uv use the already synchronized CUDA environment without creating another
-`.venv` or resolving packages on a compute node.
-
-Every Slurm job uses `--account=sci-lippert-intelligent-agents` and
-`--constraint=ARCH:X86`.
-
-## 1. One-time cluster setup
-
-Create a dedicated source-code directory under project storage, clone the repository, and enter
-the checkout:
-
-```bash
-PROJECT_ROOT=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max
-REPOSITORY_DIR="$PROJECT_ROOT/code/intelligent-agents-chat"
-
-umask 002
-mkdir -p "$PROJECT_ROOT/code"
-git clone https://github.com/MaxSpeer/intelligent-agents-chat.git "$REPOSITORY_DIR"
-cd "$REPOSITORY_DIR"
-```
-
-For later updates, do not clone again. Update the existing checkout instead:
-
-```bash
-cd /sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat
-git pull --ff-only
-```
-
-HPI currently requires its supported Conda setup for Python environments:
-
-```bash
-command -v conda || setup-conda3
-```
-
-If `setup-conda3` was just installed, reconnect or start a fresh login shell, then verify:
-
-```bash
-command -v conda
-```
-
-Create the shared runtime directories. The log directories must exist before `sbatch`, because
-Slurm opens the output file before the job script starts:
-
-```bash
-PROJECT_ROOT=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max
-
-umask 002
-mkdir -p \
-  "$PROJECT_ROOT/cache/conda/pkgs" \
-  "$PROJECT_ROOT/cache/uv" \
-  "$PROJECT_ROOT/envs" \
-  "$PROJECT_ROOT/models/huggingface/hub" \
-  "$PROJECT_ROOT/models/huggingface/xet" \
-  "$PROJECT_ROOT/models/vllm-cache" \
-  "$PROJECT_ROOT/logs/model-downloads" \
-  "$PROJECT_ROOT/logs/vllm"
-```
-
-Do not use `chmod 777`; retain the project group and group-write permissions.
-
-## 2. Validate and install vLLM
-
-Run these commands from the repository root:
-
-```bash
-bash -n cluster/install-vllm.sbatch
-bash -n cluster/download-model.sbatch
-bash -n cluster/vllm-smoke-test.sbatch
-bash -n cluster/run-vllm.sbatch
-
-sbatch --account=sci-lippert-intelligent-agents --test-only cluster/install-vllm.sbatch
-sbatch --account=sci-lippert-intelligent-agents --test-only cluster/vllm-smoke-test.sbatch
-sbatch --account=sci-lippert-intelligent-agents --test-only cluster/run-vllm.sbatch
-```
-
-Submit the one-time installation job:
-
-```bash
-INSTALL_JOB=$(sbatch \
-  --parsable \
-  --account=sci-lippert-intelligent-agents \
-  cluster/install-vllm.sbatch)
-
-echo "$INSTALL_JOB"
-tail -f \
-  "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/vllm/install-vllm-${INSTALL_JOB}.out"
-```
-
-The job creates a Python 3.12 Conda environment in shared project storage, installs uv 0.12.1,
-and uses `uv pip sync --torch-backend=cu129` with the pinned requirements. vLLM and PyTorch use
-their prebuilt CUDA wheels; uv may build a smaller transitive package when no wheel is published.
-
-After it finishes, require `COMPLETED` and `0:0`:
-
-```bash
 sacct \
   --account=sci-lippert-intelligent-agents \
-  --jobs="$INSTALL_JOB" \
-  --format=JobID,State,Elapsed,ExitCode,MaxRSS
+  --jobs="$SERVER_JOB" \
+  --format=JobID,State,Elapsed,ExitCode,AllocTRES
 ```
 
-Re-run the same installation job whenever the pinned runtime file changes. It synchronizes the
-existing environment rather than creating another copy.
+## Run the normal server job
 
-## 3. Download a model into project storage
-
-The default is the small public `Qwen/Qwen3-0.6B` model at the pinned commit
-`c1899de289a04d12100db370d81485cdf75e47ca`. First submit the safe dry run:
-
-```bash
-DOWNLOAD_PREVIEW_JOB=$(sbatch \
-  --parsable \
-  --account=sci-lippert-intelligent-agents \
-  cluster/download-model.sbatch)
-
-tail -f \
-  "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/model-downloads/hf-download-${DOWNLOAD_PREVIEW_JOB}.out"
-```
-
-Review the listed files and sizes, then perform the transfer:
-
-```bash
-DOWNLOAD_JOB=$(sbatch \
-  --parsable \
-  --account=sci-lippert-intelligent-agents \
-  --export=ALL,DOWNLOAD_MODE=download \
-  cluster/download-model.sbatch)
-
-tail -f \
-  "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/model-downloads/hf-download-${DOWNLOAD_JOB}.out"
-```
-
-The final log must report successful checksum verification. For a different model, always use a
-full commit SHA so subsequent serving jobs load exactly the reviewed revision:
-
-```bash
-sbatch \
-  --account=sci-lippert-intelligent-agents \
-  --export=ALL,DOWNLOAD_MODE=download,MODEL_ID=ORG/MODEL,MODEL_REVISION=FULL_COMMIT_SHA \
-  cluster/download-model.sbatch
-```
-
-For a gated model, accept its terms first and pass a fine-grained read token without putting it in
-the script or shell history:
-
-```bash
-read -rsp "Hugging Face token: " HF_TOKEN
-export HF_TOKEN
-printf '\n'
-
-sbatch \
-  --account=sci-lippert-intelligent-agents \
-  --export=ALL,DOWNLOAD_MODE=download,MODEL_ID=ORG/MODEL,MODEL_REVISION=FULL_COMMIT_SHA \
-  cluster/download-model.sbatch
-
-unset HF_TOKEN
-```
-
-## 4. Run the end-to-end GPU smoke test
-
-This allocates one GPU for at most 20 minutes, loads only from the offline project cache, calls
-`/health`, sends one request with the official OpenAI Python client, and shuts down:
-
-```bash
-SMOKE_JOB=$(sbatch \
-  --parsable \
-  --account=sci-lippert-intelligent-agents \
-  cluster/vllm-smoke-test.sbatch)
-
-tail -f \
-  "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/vllm/vllm-smoke-${SMOKE_JOB}.out"
-```
-
-Success means the log contains `CUDA available: True`, a generated response, and `Smoke test
-passed`, followed by `COMPLETED` and `0:0` in Slurm:
-
-```bash
-sacct \
-  --account=sci-lippert-intelligent-agents \
-  --jobs="$SMOKE_JOB" \
-  --format=JobID,State,Elapsed,ExitCode,MaxRSS,AllocTRES
-```
-
-## 5. Start the long-running OpenAI-compatible server
-
-The default job runs for four hours, binds only to loopback, and chooses a deterministic port from
-the job ID:
+Without overrides, the script requests `gpu-batch` for four hours:
 
 ```bash
 SERVER_JOB=$(sbatch \
   --parsable \
   --account=sci-lippert-intelligent-agents \
   cluster/run-vllm.sbatch)
-
-echo "$SERVER_JOB"
-tail -f \
-  "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/vllm/vllm-server-${SERVER_JOB}.out"
+SERVER_JOB=${SERVER_JOB%%;*}
 ```
 
-Wait until the log says the API server is running. Find its node and port with:
+## Run Qwen3.5 35B
+
+`Qwen/Qwen3.5-35B-A3B` has 35B total parameters with 3B active parameters. The preset runs it as a
+text-only model, enables the Qwen3 reasoning parser, and uses a conservative 32K context window so
+that the initial test has headroom on a 96 GB GPU.
+
+First create the vLLM 0.23.0 cu129 image as described under **Import a container image** below.
+Then submit the 35B job from the repository root:
+
+```bash
+SERVER_JOB=$(sbatch \
+  --parsable \
+  --account=sci-lippert-intelligent-agents \
+  --constraint='ARCH:X86&GPU_MEM:96GB' \
+  --mem=128G \
+  --gpus=1 \
+  --export=ALL,MODEL_PRESET=qwen3.5-35b-a3b \
+  cluster/run-vllm.sbatch)
+SERVER_JOB=${SERVER_JOB%%;*}
+
+PORT=$((60000 + SERVER_JOB % 4000))
+echo "job=${SERVER_JOB} port=${PORT}"
+tail -f "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.out"
+```
+
+The first start downloads the pinned public model revision into `models/huggingface/`. Later jobs
+reuse it. The job refuses to start on a GPU exposing less than 90,000 MiB instead of failing during
+model loading. To test a longer context after the first successful run, override it explicitly:
+
+```bash
+sbatch \
+  --account=sci-lippert-intelligent-agents \
+  --constraint='ARCH:X86&GPU_MEM:96GB' \
+  --mem=128G \
+  --gpus=1 \
+  --export=ALL,MODEL_PRESET=qwen3.5-35b-a3b,MAX_MODEL_LEN=131072 \
+  cluster/run-vllm.sbatch
+```
+
+The Qwen model card recommends at least 128K context for its full thinking capability, but that
+setting should be treated as a second cluster test because memory headroom depends on the GPU and
+workload.
+
+Stop the server when it is no longer needed:
+
+```bash
+scancel --account=sci-lippert-intelligent-agents "$SERVER_JOB"
+```
+
+## Connect from the local application
+
+Find the compute node while the job is running:
 
 ```bash
 NODE=$(squeue \
@@ -335,116 +169,164 @@ NODE=$(squeue \
   --format='%N')
 PORT=$((60000 + SERVER_JOB % 4000))
 
-printf 'node=%s port=%s\n' "$NODE" "$PORT"
+printf 'job=%s node=%s port=%s\n' "$SERVER_JOB" "$NODE" "$PORT"
 ```
 
-Test the running server from a second job step inside the same allocation. This works even though
-the server is intentionally loopback-only:
+On the local computer, while connected to the Scientific Compute VPN, open a tunnel through the
+login host. Set the node and remote port to the values printed above:
 
 ```bash
-PROJECT_ROOT=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max
+NODE=gx32
+REMOTE_PORT=62216
 
-srun \
-  --account=sci-lippert-intelligent-agents \
-  --jobid="$SERVER_JOB" \
-  --overlap \
-  --nodes=1 \
-  --ntasks=1 \
-  --export=ALL,SERVER_PORT="$PORT" \
-  "$PROJECT_ROOT/envs/vllm-0.23.0-cu129/bin/python" - <<'PY'
-import os
-from openai import OpenAI
-
-client = OpenAI(
-    base_url=f"http://127.0.0.1:{os.environ['SERVER_PORT']}/v1",
-    api_key="not-needed",
-)
-response = client.chat.completions.create(
-    model="qwen3-0.6b",
-    messages=[{"role": "user", "content": "Say hello in one short sentence. /no_think"}],
-    max_tokens=64,
-)
-print(response.choices[0].message.content)
-PY
-```
-
-Stop the server when it is no longer needed:
-
-```bash
-scancel --account=sci-lippert-intelligent-agents "$SERVER_JOB"
-```
-
-## Does the NiceGUI application need to run on the cluster?
-
-No. During development, keep NiceGUI on your laptop and reach the loopback-only server through an
-SSH jump/tunnel to the allocated compute node, if direct compute-node SSH is permitted:
-
-```bash
 ssh \
-  -J maximilian.speer@lx01 \
+  -J maximilian.speer@hpc.sci.hpi.de \
   -N \
-  -L "8000:127.0.0.1:${PORT}" \
-  "maximilian.speer@${NODE}"
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=60 \
+  -L "8000:127.0.0.1:${REMOTE_PORT}" \
+  "maximilian.speer@${NODE}.hpc.sci.hpi.de"
 ```
 
-The local application then uses `http://127.0.0.1:8000/v1` as `base_url`. For an unattended or
-multi-user deployment, run the UI on a stable service or VM and treat the Slurm vLLM allocation as
-an ephemeral backend. Do not expose an unauthenticated vLLM port publicly.
-
-If the application must run in another Slurm job, bind vLLM to `0.0.0.0` only with an API key and
-use the compute-node hostname on the internal cluster network:
+Keep that terminal open and verify the local endpoint in a second terminal:
 
 ```bash
-read -rsp "Temporary vLLM API key: " VLLM_API_KEY
-export VLLM_API_KEY
+curl -s http://127.0.0.1:8000/v1/models
+```
+
+Start the NiceGUI application against the tunnel:
+
+```bash
+export CHAT_DEFAULT_PROFILE=default
+export VLLM_BASE_URL=http://127.0.0.1:8000/v1
+export VLLM_MODEL=qwen3-0.6b
+export VLLM_API_KEY=not-needed
+
+uv run intelligent-agents-chat
+```
+
+For the 35B server, use its served model name and allow more time and output tokens for reasoning:
+
+```bash
+export CHAT_DEFAULT_PROFILE=default
+export VLLM_BASE_URL=http://127.0.0.1:8000/v1
+export VLLM_MODEL=qwen3.5-35b-a3b
+export VLLM_API_KEY=not-needed
+export VLLM_TIMEOUT_SECONDS=600
+export VLLM_MAX_TOKENS=4096
+export VLLM_TEMPERATURE=1.0
+
+uv run intelligent-agents-chat
+```
+
+To expose both models in the application at once, run two Slurm jobs, open tunnels to local ports
+8000 and 8001, and configure both profiles:
+
+```bash
+export VLLM_PROFILES_JSON='[
+  {
+    "key": "small",
+    "label": "Qwen3 0.6B",
+    "base_url": "http://127.0.0.1:8000/v1",
+    "model": "qwen3-0.6b"
+  },
+  {
+    "key": "large",
+    "label": "Qwen3.5 35B-A3B",
+    "base_url": "http://127.0.0.1:8001/v1",
+    "model": "qwen3.5-35b-a3b"
+  }
+]'
+export CHAT_DEFAULT_PROFILE=large
+export VLLM_API_KEY=not-needed
+
+uv run intelligent-agents-chat
+```
+
+The tunnel requires an active job on the target compute node and SSH public-key authentication.
+
+## Change the model or resources
+
+Runtime settings are environment-variable overrides. Always pin Hugging Face models to a full
+commit SHA:
+
+```bash
+sbatch \
+  --account=sci-lippert-intelligent-agents \
+  --export=ALL,MODEL_ID=ORG/MODEL,MODEL_REVISION=FULL_COMMIT_SHA,SERVED_MODEL_NAME=my-model,GPU_MEMORY_UTILIZATION=0.9 \
+  cluster/run-vllm.sbatch
+```
+
+For a gated model, accept its license first and pass the token through the job environment without
+putting it into the script:
+
+```bash
+read -rsp "Hugging Face token: " HF_TOKEN
+export HF_TOKEN
 printf '\n'
 
 sbatch \
   --account=sci-lippert-intelligent-agents \
-  --export=ALL,SERVER_HOST=0.0.0.0 \
+  --export=ALL,MODEL_ID=ORG/MODEL,MODEL_REVISION=FULL_COMMIT_SHA,SERVED_MODEL_NAME=my-model \
   cluster/run-vllm.sbatch
 
-unset VLLM_API_KEY
+unset HF_TOKEN
 ```
 
-## Larger or different models
-
-Override the model and its pinned revision consistently for both download and serving. Larger
-models may require more GPUs, memory, runtime, and tensor parallelism. For example, a two-GPU
-submission starts with:
+For tensor parallelism across two GPUs, override both Slurm and vLLM consistently:
 
 ```bash
 sbatch \
   --account=sci-lippert-intelligent-agents \
   --gpus=2 \
-  --export=ALL,MODEL_ID=ORG/MODEL,MODEL_REVISION=FULL_COMMIT_SHA,SERVED_MODEL_NAME=my-model,TENSOR_PARALLEL_SIZE=2 \
+  --export=ALL,TENSOR_PARALLEL_SIZE=2,MODEL_ID=ORG/MODEL,MODEL_REVISION=FULL_COMMIT_SHA,SERVED_MODEL_NAME=my-model \
   cluster/run-vllm.sbatch
 ```
 
-Do not assume that every GPU node has enough memory; first inspect the allocation and test the
-small default model.
+Keep `SERVER_HOST=127.0.0.1` and use the SSH tunnel. Binding to a non-loopback address requires
+`VLLM_API_KEY`, but API-key authentication alone does not protect every vLLM endpoint.
 
-## Updating the CUDA runtime lock
+## Import a container image
 
-`requirements-cu129.txt` is generated, not hand-edited. With uv 0.12.1, regenerate it from the
-repository root with:
+Run the following from an allocated x86 compute node, not a login node. Set `VLLM_IMAGE_TAG` to
+`v0.11.2` for the small validated model or `v0.23.0-cu129` for Qwen3.5 35B. The explicit CUDA 12.9
+variant is compatible with the driver used on `gx32`; the unqualified 0.23.0 image uses CUDA 13:
 
 ```bash
-uv pip compile \
-  cluster/vllm/pyproject.toml \
-  --python-version 3.12 \
-  --python-platform x86_64-manylinux_2_28 \
-  --torch-backend cu129 \
-  --output-file cluster/vllm/requirements-cu129.txt
-```
+PROJECT_ROOT=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max
+VLLM_IMAGE_TAG=v0.23.0-cu129
+IMAGE="$PROJECT_ROOT/containers/images/vllm-openai-${VLLM_IMAGE_TAG}.sqsh"
+RUNTIME_ROOT="${SLURM_SCRATCH:-/tmp/enroot-${UID}-${SLURM_JOB_ID}}"
 
-Review the dependency diff, commit it, and rerun `install-vllm.sbatch`.
+export ENROOT_CACHE_PATH="$RUNTIME_ROOT/cache"
+export ENROOT_DATA_PATH="$RUNTIME_ROOT/data"
+export ENROOT_RUNTIME_PATH="$RUNTIME_ROOT/run"
+export ENROOT_TEMP_PATH="$RUNTIME_ROOT/tmp"
+export ENROOT_MAX_PROCESSORS=4
+
+mkdir -p \
+  "$PROJECT_ROOT/containers/images" \
+  "$ENROOT_CACHE_PATH" \
+  "$ENROOT_DATA_PATH" \
+  "$ENROOT_RUNTIME_PATH" \
+  "$ENROOT_TEMP_PATH"
+chmod 700 "$RUNTIME_ROOT" "$ENROOT_RUNTIME_PATH"
+
+test ! -e "$IMAGE" || {
+  echo "Image already exists: $IMAGE"
+  exit 1
+}
+
+enroot import \
+  -o "$IMAGE" \
+  "docker://vllm/vllm-openai:${VLLM_IMAGE_TAG}"
+```
 
 ## References
 
-- [HPI Python and Conda guidance](https://docs.sc.hpi.de/cluster/software_installation/Python-Conda/)
-- [HPI Slurm job examples](https://docs.sc.hpi.de/cluster/SLURM/Job-Examples/)
-- [HPI partitions](https://docs.sc.hpi.de/cluster/Resources/Partitions/)
-- [vLLM GPU installation](https://docs.vllm.ai/en/latest/getting_started/installation/gpu/)
-- [uv PyTorch integration](https://docs.astral.sh/uv/guides/integration/pytorch/)
-- [Hugging Face download CLI](https://huggingface.co/docs/huggingface_hub/en/guides/cli)
+- [HPI Enroot documentation](https://docs.sc.hpi.de/cluster/Containerization/enroot/)
+- [HPI scratch-space documentation](https://docs.sc.hpi.de/cluster/Storage/Scratch-Space/)
+- [HPI Slurm basics](https://docs.sc.hpi.de/cluster/SLURM/Basics/)
+- [vLLM 0.11.2 serve CLI](https://docs.vllm.ai/en/v0.11.2/cli/serve/)
+- [vLLM 0.23.0 supported models](https://docs.vllm.ai/en/v0.23.0/models/supported_models/)
+- [Qwen3.5-35B-A3B model card](https://huggingface.co/Qwen/Qwen3.5-35B-A3B)
