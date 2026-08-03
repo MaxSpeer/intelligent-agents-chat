@@ -3,10 +3,15 @@
 ## Recommended: validated Enroot container
 
 `run-vllm-enroot.sbatch` reproduces the container setup tested successfully on `gx32`: the
-project-local vLLM 0.11.2 image runs directly with Enroot, the unpacking/runtime paths use the
-job-local NVMe scratch, and models plus logs remain in shared project storage. It does not use
-Pyxis, because Pyxis extracted the container filesystem into the home directory despite the
-interactive `ENROOT_*` overrides.
+project-local vLLM 0.11.2 image runs directly with Enroot, while models and logs remain in shared
+project storage. It does not use Pyxis, because Pyxis extracted the container filesystem into the
+home directory despite the interactive `ENROOT_*` overrides.
+
+Local NVMe scratch is optional. When `SLURM_SCRATCH` exists, the job uses it for Enroot runtime
+data, `/tmp`, and compiler caches. On nodes without local scratch it automatically uses the
+job-specific directory `/tmp/vllm-<uid>-<jobid>` instead. The Slurm constraint therefore requires
+only `ARCH:X86`, allowing the scheduler to consider GPU nodes without `SCRATCH:NVME`. The fallback
+directory is removed when the server exits normally or receives Slurm's advance termination signal.
 
 The image must already exist at:
 

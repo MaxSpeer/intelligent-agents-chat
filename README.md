@@ -86,9 +86,9 @@ uv run python -m unittest discover -s tests
 
 ## HPI cluster
 
-The validated cluster workflow runs vLLM 0.11.2 from a persistent Enroot image while placing
-temporary container data on the allocated node's NVMe scratch. A native uv-managed environment
-remains documented as an alternative:
+The validated cluster workflow runs vLLM 0.11.2 from a persistent Enroot image. It uses local
+Slurm scratch when available and falls back to a job-specific `/tmp` directory otherwise. A
+native uv-managed environment remains documented as an alternative:
 
 - the root project contains NiceGUI and the OpenAI client;
 - `cluster/run-vllm-enroot.sbatch` starts the OpenAI-compatible container server;
