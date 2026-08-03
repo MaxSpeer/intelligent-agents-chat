@@ -1,8 +1,17 @@
 # Intelligent Agents Chat
 
-A deliberately small starter repository for the Intelligent Agents project. It satisfies the
-project's initial technical direction: a Python project managed by `uv` and a cross-platform
-graphical interface built with NiceGUI.
+A cross-platform NiceGUI chat application for the Intelligent Agents project. The current
+milestone provides persistent conversations in SQLite and streamed generation through an
+offline test model or an OpenAI-compatible vLLM server.
+
+## Current features
+
+- create, continue, switch, and delete conversations;
+- retain the complete visible conversation history in SQLite;
+- stream responses from the built-in offline model or vLLM and stop an in-progress response;
+- select a model profile per conversation;
+- retain model provenance on assistant messages;
+- group conversations under a default project, ready for project-level memory later.
 
 ## Run it
 
@@ -15,11 +24,64 @@ uv run intelligent-agents-chat
 
 Then open <http://localhost:8080>.
 
+The development server binds to `127.0.0.1` only. Remote or multi-user deployment needs an
+authenticated front end and is intentionally outside this milestone.
+
+The default profile is `Lorem Ipsum (offline)`. It always streams the same placeholder response,
+so the complete chat and persistence flow can be tested without a language-model server. A vLLM
+profile for `http://127.0.0.1:8000/v1` and model `qwen3-0.6b` remains selectable. Chat data is
+written to `.data/chats.sqlite3`, which is intentionally ignored by Git.
+
+## Configuration
+
+The bundled vLLM profile can be overridden with environment variables. Set
+`CHAT_DEFAULT_PROFILE=default` to start new chats with it instead of the offline profile:
+
+```bash
+export CHAT_DEFAULT_PROFILE=default
+export VLLM_BASE_URL=http://127.0.0.1:8000/v1
+export VLLM_MODEL=qwen3-0.6b
+export VLLM_API_KEY=not-needed
+export CHAT_DB_PATH=.data/chats.sqlite3
+uv run intelligent-agents-chat
+```
+
+To meet the model-switching requirement with multiple vLLM processes or fine-tuned adapters,
+configure named profiles as JSON. API credentials still come from `VLLM_API_KEY`, so they do not
+need to be embedded in the profile list:
+
+```bash
+export VLLM_PROFILES_JSON='[
+  {
+    "key": "base",
+    "label": "Qwen Base",
+    "base_url": "http://127.0.0.1:8000/v1",
+    "model": "qwen-base"
+  },
+  {
+    "key": "tuned",
+    "label": "Qwen LoRA",
+    "base_url": "http://127.0.0.1:8001/v1",
+    "model": "qwen-lora"
+  }
+]'
+export CHAT_DEFAULT_PROFILE=base
+uv run intelligent-agents-chat
+```
+
+The legacy `VLLM_DEFAULT_PROFILE` variable is still accepted when `CHAT_DEFAULT_PROFILE` is not
+set. The built-in `lorem` profile is always available, including alongside configured vLLM
+profiles.
+
+Optional generation settings are `VLLM_SYSTEM_PROMPT`, `VLLM_MAX_TOKENS`,
+`VLLM_TEMPERATURE`, and `VLLM_TIMEOUT_SECONDS`.
+
 ## Development
 
 ```bash
 uv run ruff check .
 uv run ruff format .
+uv run python -m unittest discover -s tests
 ```
 
 ## HPI cluster
@@ -36,5 +98,5 @@ Installation, model download, smoke testing, and the long-running server job are
 
 ## Scope
 
-This is only a polished Hello World foundation. Chat history, model switching, memory, and
-elective agent features from the project prompt are intentionally left for later milestones.
+This milestone deliberately stops at persistent chat and the model gateway. Project-memory
+retrieval, fine-tuning workflows, and elective agent features remain later milestones.

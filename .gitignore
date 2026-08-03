@@ -4,4 +4,4 @@ __pycache__/
 .idea/
 .DS_Store
 .ruff_cache/
-
+.data/
