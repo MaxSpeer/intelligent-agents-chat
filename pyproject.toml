@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "nicegui>=3.0,<4",
+    "openai>=2,<3",
 ]
 
 [project.scripts]
@@ -22,3 +23,6 @@ dev = [
 
 [tool.ruff]
 line-length = 100
+
+[tool.uv]
+required-version = ">=0.12,<0.13"
