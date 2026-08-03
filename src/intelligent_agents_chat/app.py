@@ -111,10 +111,10 @@ def index() -> None:
                 ui.label("Ready for your first agent feature").classes("text-sm text-slate-400")
 
 
-def run() -> None:
+def main() -> None:
     """Start the NiceGUI development server."""
     ui.run(title="Agent Lab", favicon="✨", reload=False)
 
 
 if __name__ in {"__main__", "__mp_main__"}:
-    run()
+    main()

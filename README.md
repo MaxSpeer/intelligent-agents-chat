@@ -10,7 +10,7 @@ Install [`uv`](https://docs.astral.sh/uv/getting-started/installation/) and run:
 
 ```bash
 uv sync
-uv run python main.py
+uv run intelligent-agents-chat
 ```
 
 Then open <http://localhost:8080>.
