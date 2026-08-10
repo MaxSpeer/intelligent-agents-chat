@@ -140,18 +140,18 @@ uv run python -m unittest discover -s tests
 
 ## HPI cluster
 
-The cluster workflow runs persistent vLLM images directly with Enroot. The validated default uses
-vLLM 0.11.2 with Qwen3 0.6B; an additional vLLM 0.23.0 CUDA 12.9 preset serves Qwen3.5 35B-A3B on
-a GPU with at least 90,000 MiB memory. Jobs use local Slurm scratch when available and fall back
-to a job-specific `/tmp` directory otherwise:
+The cluster workflow runs persistent vLLM images directly with Enroot. `cluster/run-vllm.sbatch`
+is fixed to `Qwen/Qwen3.5-9B` served as `qwen3.5-9b`; use one copied sbatch script per additional
+model. Jobs use local Slurm scratch when available and fall back to a job-specific `/tmp` directory
+otherwise:
 
 - the root project contains NiceGUI and the OpenAI client;
-- `cluster/run-vllm.sbatch` starts either named model preset through the same OpenAI-compatible
-  server path;
+- each vLLM Slurm job binds to compute-node loopback and writes its selected node/port to
+  `logs/vllm/vllm-${JOB_ID}.endpoint`;
 - the container image, models, caches, and logs live in HPI project storage outside Git;
-- the local application reaches the compute-node loopback API through an SSH tunnel.
+- the local application reaches each compute-node loopback API through its own SSH tunnel.
 
-Submission, validation, SSH tunneling, model overrides, and image recreation are documented in
+Submission, validation, SSH tunneling, and image recreation are documented in
 [`cluster/README.md`](cluster/README.md).
 
 ## Scope

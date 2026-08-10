@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=vllm
+#SBATCH --job-name=vllm-qwen35-9b
 #SBATCH --account=sci-lippert-intelligent-agents
 #SBATCH --partition=gpu-batch
 #SBATCH --constraint=ARCH:X86
@@ -16,6 +16,14 @@
 set -Eeuo pipefail
 
 readonly PROJECT_ROOT="/sc/projects/sci-lippert/intelligent-agents/project_matthias_max"
+readonly IMAGE="${PROJECT_ROOT}/containers/images/vllm-openai-v0.23.0-cu129.sqsh"
+readonly MODEL_ID="Qwen/Qwen3.5-9B"
+readonly MODEL_REVISION="e0330a142393d4516eca6ab0145ce66ac513e842"
+readonly SERVED_MODEL_NAME="qwen3.5-9b"
+readonly SERVER_HOST="127.0.0.1"
+readonly MAX_MODEL_LEN="32768"
+readonly GPU_MEMORY_UTILIZATION="0.90"
+readonly TENSOR_PARALLEL_SIZE="1"
 
 log() {
     printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"
@@ -26,86 +34,37 @@ fail() {
     exit 2
 }
 
-readonly MODEL_PRESET="${MODEL_PRESET:-qwen3-0.6b}"
-case "$MODEL_PRESET" in
-    qwen3-0.6b)
-        PRESET_IMAGE="${PROJECT_ROOT}/containers/images/vllm-openai-v0.11.2.sqsh"
-        PRESET_MODEL_ID="Qwen/Qwen3-0.6B"
-        PRESET_MODEL_REVISION="c1899de289a04d12100db370d81485cdf75e47ca"
-        PRESET_SERVED_MODEL_NAME="qwen3-0.6b"
-        PRESET_MAX_MODEL_LEN="4096"
-        PRESET_GPU_MEMORY_UTILIZATION="0.20"
-        PRESET_MIN_GPU_MEMORY_MIB="0"
-        PRESET_LANGUAGE_MODEL_ONLY="0"
-        PRESET_REASONING_PARSER=""
-        ;;
-    qwen3.5-35b-a3b)
-        PRESET_IMAGE="${PROJECT_ROOT}/containers/images/vllm-openai-v0.23.0-cu129.sqsh"
-        PRESET_MODEL_ID="Qwen/Qwen3.5-35B-A3B"
-        PRESET_MODEL_REVISION="59d61f3ce65a6d9863b86d2e96597125219dc754"
-        PRESET_SERVED_MODEL_NAME="qwen3.5-35b-a3b"
-        PRESET_MAX_MODEL_LEN="32768"
-        PRESET_GPU_MEMORY_UTILIZATION="0.90"
-        PRESET_MIN_GPU_MEMORY_MIB="90000"
-        PRESET_LANGUAGE_MODEL_ONLY="1"
-        PRESET_REASONING_PARSER="qwen3"
-        ;;
-    *)
-        fail "Unknown MODEL_PRESET '${MODEL_PRESET}'. Use qwen3-0.6b or qwen3.5-35b-a3b."
-        ;;
-esac
+choose_port() {
+    python3 - "$SLURM_JOB_ID" <<'PYPORT'
+import socket
+import sys
 
-readonly PRESET_IMAGE PRESET_MODEL_ID PRESET_MODEL_REVISION PRESET_SERVED_MODEL_NAME
-readonly PRESET_MAX_MODEL_LEN PRESET_GPU_MEMORY_UTILIZATION PRESET_MIN_GPU_MEMORY_MIB
-readonly PRESET_LANGUAGE_MODEL_ONLY PRESET_REASONING_PARSER
+job_id = int(sys.argv[1])
+first_port = 49152 + (job_id % 12000)
 
-readonly IMAGE="${VLLM_IMAGE:-$PRESET_IMAGE}"
-readonly MODEL_ID="${MODEL_ID:-$PRESET_MODEL_ID}"
-readonly MODEL_REVISION="${MODEL_REVISION:-$PRESET_MODEL_REVISION}"
-readonly SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-$PRESET_SERVED_MODEL_NAME}"
-readonly SERVER_HOST="${SERVER_HOST:-127.0.0.1}"
-readonly SERVER_PORT="${SERVER_PORT:-$((60000 + ${SLURM_JOB_ID:-0} % 4000))}"
-readonly MAX_MODEL_LEN="${MAX_MODEL_LEN:-$PRESET_MAX_MODEL_LEN}"
-readonly GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-$PRESET_GPU_MEMORY_UTILIZATION}"
-readonly TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
-readonly MIN_GPU_MEMORY_MIB="${MIN_GPU_MEMORY_MIB:-$PRESET_MIN_GPU_MEMORY_MIB}"
-readonly LANGUAGE_MODEL_ONLY="${LANGUAGE_MODEL_ONLY:-$PRESET_LANGUAGE_MODEL_ONLY}"
-readonly REASONING_PARSER="${REASONING_PARSER:-$PRESET_REASONING_PARSER}"
+for offset in range(12000):
+    port = 49152 + ((first_port - 49152 + offset) % 12000)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            continue
+    print(port)
+    raise SystemExit(0)
+
+raise SystemExit("no free vLLM port found in 49152-61151")
+PYPORT
+}
 
 [[ -n "${SLURM_JOB_ID:-}" ]] || fail "This script must run through sbatch."
 [[ -r "$IMAGE" ]] || fail "Container image is missing or unreadable: ${IMAGE}"
 command -v enroot >/dev/null 2>&1 || fail "enroot is not available on $(hostname -f)."
 command -v nvidia-smi >/dev/null 2>&1 || fail "nvidia-smi is not available on $(hostname -f)."
+command -v python3 >/dev/null 2>&1 || fail "python3 is not available on $(hostname -f)."
 
-if ! [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] \
-    || ((SERVER_PORT < 1024 || SERVER_PORT > 65535)); then
-    fail "SERVER_PORT must be an integer from 1024 through 65535, got: ${SERVER_PORT}"
-fi
-
-[[ "$MAX_MODEL_LEN" =~ ^[1-9][0-9]*$ ]] \
-    || fail "MAX_MODEL_LEN must be a positive integer, got: ${MAX_MODEL_LEN}"
-[[ "$TENSOR_PARALLEL_SIZE" =~ ^[1-9][0-9]*$ ]] \
-    || fail "TENSOR_PARALLEL_SIZE must be a positive integer, got: ${TENSOR_PARALLEL_SIZE}"
-[[ "$MIN_GPU_MEMORY_MIB" =~ ^[0-9]+$ ]] \
-    || fail "MIN_GPU_MEMORY_MIB must be a non-negative integer, got: ${MIN_GPU_MEMORY_MIB}"
-[[ "$LANGUAGE_MODEL_ONLY" == "0" || "$LANGUAGE_MODEL_ONLY" == "1" ]] \
-    || fail "LANGUAGE_MODEL_ONLY must be 0 or 1, got: ${LANGUAGE_MODEL_ONLY}"
-
-if [[ "$SERVER_HOST" != "127.0.0.1" && "$SERVER_HOST" != "localhost" ]] \
-    && [[ -z "${VLLM_API_KEY:-}" ]]; then
-    fail "Set VLLM_API_KEY before binding vLLM to a non-loopback address."
-fi
-
-GPU_MEMORY_MIB="$(
-    nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits \
-        | awk 'NR == 1 { minimum = $1 } $1 < minimum { minimum = $1 } END { print minimum }'
-)"
-readonly GPU_MEMORY_MIB
-[[ "$GPU_MEMORY_MIB" =~ ^[0-9]+$ ]] \
-    || fail "Could not determine the available GPU memory."
-if ((GPU_MEMORY_MIB < MIN_GPU_MEMORY_MIB)); then
-    fail "Preset ${MODEL_PRESET} requires at least ${MIN_GPU_MEMORY_MIB} MiB GPU memory; this node exposes ${GPU_MEMORY_MIB} MiB."
-fi
+SERVER_PORT="$(choose_port)"
+readonly SERVER_PORT
 
 if [[ -n "${SLURM_SCRATCH:-}" && -d "$SLURM_SCRATCH" ]]; then
     readonly RUNTIME_ROOT="$SLURM_SCRATCH"
@@ -125,6 +84,7 @@ readonly SCRATCH_HOME="${RUNTIME_ROOT}/home"
 readonly SCRATCH_TMP="${RUNTIME_ROOT}/tmp"
 readonly SCRATCH_CACHE="${RUNTIME_ROOT}/cache"
 readonly NO_ENTRYPOINT="${RUNTIME_ROOT}/no-entrypoint.sh"
+readonly ENDPOINT_FILE="${PROJECT_ROOT}/logs/vllm/vllm-${SLURM_JOB_ID}.endpoint"
 
 umask 002
 mkdir -p \
@@ -145,7 +105,7 @@ chmod 700 "$RUNTIME_ROOT" "$ENROOT_RUNTIME_PATH"
 
 # The vLLM image has its own Docker entrypoint. This small Enroot command script
 # makes the command after the image name behave like --no-container-entrypoint.
-printf '%s\n' '#!/bin/sh' 'exec "$@"' > "$NO_ENTRYPOINT"
+printf '%s\n' '#!/bin/sh' 'exec "$@"' >"$NO_ENTRYPOINT"
 chmod 700 "$NO_ENTRYPOINT"
 
 server_pid=""
@@ -182,12 +142,10 @@ trap 'terminate INT 130' INT
 log "Job: ${SLURM_JOB_ID}"
 log "Node: $(hostname -f)"
 log "Temporary storage: ${RUNTIME_ROOT} (${RUNTIME_STORAGE})"
-log "Model preset: ${MODEL_PRESET}"
 log "Image: ${IMAGE}"
 log "Model: ${MODEL_ID}@${MODEL_REVISION}"
 log "Served model name: ${SERVED_MODEL_NAME}"
 log "Maximum model length: ${MAX_MODEL_LEN}"
-log "Minimum/available GPU memory: ${MIN_GPU_MEMORY_MIB}/${GPU_MEMORY_MIB} MiB"
 log "OpenAI-compatible API: http://${SERVER_HOST}:${SERVER_PORT}/v1"
 if [[ -n "${VLLM_API_KEY:-}" ]]; then
     log "API authentication: enabled (key not printed)"
@@ -201,6 +159,16 @@ else
 fi
 
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
+
+cat >"$ENDPOINT_FILE" <<EOF
+job=${SLURM_JOB_ID}
+node=$(hostname -f)
+host=${SERVER_HOST}
+port=${SERVER_PORT}
+base_url=http://${SERVER_HOST}:${SERVER_PORT}/v1
+model=${SERVED_MODEL_NAME}
+EOF
+log "Endpoint file: ${ENDPOINT_FILE}"
 
 enroot_args=(
     --rw
@@ -241,13 +209,6 @@ server_args=(
     --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
     --generation-config vllm
 )
-
-if [[ "$LANGUAGE_MODEL_ONLY" == "1" ]]; then
-    server_args+=(--language-model-only)
-fi
-if [[ -n "$REASONING_PARSER" ]]; then
-    server_args+=(--reasoning-parser "$REASONING_PARSER")
-fi
 
 log "Starting vLLM; the job remains active until cancellation or the time limit."
 enroot start \
