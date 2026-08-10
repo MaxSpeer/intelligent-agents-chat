@@ -10,6 +10,11 @@ model:
 For another model, copy the sbatch file and change the constants at the top of that copy. Do not add
 model-selection environment variables back into this script.
 
+It can also serve one or more LoRA adapters alongside the base model -- e.g. one trained with
+`training/train_lora.py` -- via the `LORA_MODULES` constant near the top (empty by default, so this
+doesn't change the base model's behavior). See
+[`training/README.md`](../training/README.md#trying-the-adapter-with-vllm).
+
 All Slurm commands use the account `sci-lippert-intelligent-agents`. Persistent runtime data lives
 under:
 
@@ -19,9 +24,19 @@ under:
 ├── containers/images/
 │   └── vllm-openai-v0.23.0-cu129.sqsh
 ├── logs/vllm/
-├── models/huggingface/
-└── code/intelligent-agents-chat/
+├── logs/training/
+├── models/huggingface/         # HF_HOME -- base models + datasets
+├── adapters/                   # trained LoRA adapters (train_lora.py's OUTPUT_DIR)
+│   └── qwen3.5-9b-conspiracy/
+└── code/intelligent-agents-chat/   # checkout run-vllm.sbatch/run-training.sbatch expect
+    └── training/
+        ├── .venv/     # created by `uv sync`, gitignored
+        └── data/      # written by prepare_dataset.py, gitignored
 ```
+
+The adapter/model paths are hardcoded absolute paths under `$PROJECT_ROOT`, so they land in the same
+place regardless of where you happen to have this repo checked out; only the two sbatch scripts
+require the fixed `code/intelligent-agents-chat` checkout location shown above.
 
 The job binds vLLM to compute-node loopback only. The remote port is chosen per Slurm job from
 `49152-61151`; if that port is already in use on the same node, the script picks the next free port.
@@ -158,6 +173,28 @@ uv run intelligent-agents-chat
 
 To expose multiple models in the app at once, start one Slurm job per model-specific sbatch script,
 open one SSH tunnel per job, and point each profile at its own local port.
+
+## LoRA fine-tuning
+
+LoRA supervised fine-tuning of `Qwen/Qwen3.5-9B` has nothing to do with vLLM or Enroot -- it just
+needs a GPU and a plain `uv`-managed Python environment (`training/pyproject.toml`), set up the
+same way as this repo's own `.venv`. Two ways to run it, both documented in
+[`training/README.md`](../training/README.md):
+
+- **Interactively, no sbatch script**: grab a `gpu-i` allocation with `srun --pty bash` and run
+  `uv sync` + the training scripts by hand. Good for iterating and watching output live.
+- **As a batch job**: `run-training.sbatch` runs the same steps unattended on `gpu-batch`.
+
+```bash
+sbatch --account=sci-lippert-intelligent-agents cluster/run-training.sbatch
+
+tail -f "$PROJECT_ROOT/logs/training/lora-sft-qwen35-9b-<job-id>.out"
+```
+
+The training scripts take no CLI flags -- every setting (dataset size, LoRA rank, epochs, ...) is a
+constant at the top of `training/prepare_dataset.py` / `train_lora.py`; edit those and `git pull`
+the change before submitting a batch run. The trained adapter is written to
+`$PROJECT_ROOT/adapters/qwen3.5-9b-conspiracy` (see `training/README.md`).
 
 ## Import a container image
 

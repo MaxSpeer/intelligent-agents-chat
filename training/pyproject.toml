@@ -1,0 +1,29 @@
+[project]
+name = "lora-training"
+version = "0.1.0"
+description = "LoRA SFT training scripts for Qwen3.5-9B, kept separate from the chat app's dependencies."
+requires-python = ">=3.11"
+dependencies = [
+    # torch<2.11 keeps the PyPI default build on the CUDA 12.8 runtime
+    # (bundles nvidia-cublas-cu12==12.8.4.1). torch>=2.11 defaults to a CUDA
+    # 13.0 build on PyPI, which errors ("CUDA driver is too old") against
+    # this cluster's driver -- and pytorch.org's own wheel index (which
+    # would otherwise let us pin an explicit cuXXX build) isn't reachable
+    # from here. Bump the ceiling only after confirming the driver on the
+    # GPU node you're using actually supports CUDA 13.
+    "torch>=2.8,<2.11",
+    # Qwen3.5 ("qwen3_5" architecture) is only recognized starting with
+    # transformers 5.15 -- 4.x raises "does not recognize this architecture"
+    # on AutoModelForCausalLM.from_pretrained(). 5.x also renamed/removed
+    # some TrainingArguments fields (e.g. warmup_ratio -> warmup_steps as a
+    # float); train_lora.py already accounts for that.
+    "transformers>=5.15,<5.16",
+    "accelerate>=1.0",
+    "peft>=0.13,<0.14",
+    "bitsandbytes>=0.44",
+    "datasets>=3.0",
+]
+
+# Scripts only, nothing to import as a package -- skip the build step entirely.
+[tool.uv]
+package = false

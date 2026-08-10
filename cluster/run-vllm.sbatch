@@ -25,6 +25,19 @@ readonly MAX_MODEL_LEN="32768"
 readonly GPU_MEMORY_UTILIZATION="0.90"
 readonly TENSOR_PARALLEL_SIZE="1"
 
+# Optional: serve LoRA adapters (e.g. from training/train_lora.py) alongside
+# the base model. Empty by default -- the base model behaves exactly as
+# before. Each entry is "name=path"; "path" must be visible inside the
+# container, i.e. under /project (== $PROJECT_ROOT on the host). Once
+# enabled, request the adapter with "model": "<name>" instead of
+# "$SERVED_MODEL_NAME" -- see training/README.md.
+#
+# Example, after training the conspiracy adapter:
+# readonly LORA_MODULES=(
+#     "conspiracy=/project/adapters/qwen3.5-9b-conspiracy"
+# )
+readonly LORA_MODULES=()
+
 log() {
     printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"
 }
@@ -157,6 +170,11 @@ if [[ -n "${HF_TOKEN:-}" ]]; then
 else
     log "Hugging Face authentication: anonymous/public model"
 fi
+if ((${#LORA_MODULES[@]} > 0)); then
+    log "LoRA modules: ${LORA_MODULES[*]}"
+else
+    log "LoRA modules: none"
+fi
 
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
 
@@ -209,6 +227,10 @@ server_args=(
     --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
     --generation-config vllm
 )
+
+if ((${#LORA_MODULES[@]} > 0)); then
+    server_args+=(--enable-lora --lora-modules "${LORA_MODULES[@]}")
+fi
 
 log "Starting vLLM; the job remains active until cancellation or the time limit."
 enroot start \
