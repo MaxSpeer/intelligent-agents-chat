@@ -9,6 +9,8 @@ offline test model or an OpenAI-compatible vLLM server.
 - create, continue, switch, and delete conversations;
 - retain the complete visible conversation history in SQLite;
 - stream responses from the built-in offline model or vLLM and stop an in-progress response;
+- render user messages and streamed model responses as sanitized Markdown, including code blocks,
+  tables, lists, and links;
 - select a model profile per conversation;
 - enable model thinking per conversation when the selected profile supports it;
 - retain model provenance on assistant messages;

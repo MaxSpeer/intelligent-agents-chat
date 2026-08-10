@@ -87,6 +87,15 @@ gateway = VLLMGateway(settings)
 active_generations: set[str] = set()
 log_event(logger, logging.INFO, "application.initialized")
 
+CHAT_MARKDOWN_EXTRAS = [
+    "break-on-newline",
+    "cuddled-lists",
+    "fenced-code-blocks",
+    "strike",
+    "tables",
+    "task_list",
+]
+
 
 def _log_unhandled_application_exception(error: Exception) -> None:
     logger.error(
@@ -340,22 +349,134 @@ ui.add_head_html(
             line-height: 1.58;
         }
 
+        .chat-markdown {
+            min-width: 0;
+            max-width: min(42rem, 76vw);
+            overflow-wrap: anywhere;
+            line-height: 1.58;
+        }
+
+        .chat-markdown > :first-child {
+            margin-top: 0;
+        }
+
+        .chat-markdown > :last-child {
+            margin-bottom: 0;
+        }
+
+        .chat-markdown p,
+        .chat-markdown ul,
+        .chat-markdown ol,
+        .chat-markdown blockquote,
+        .chat-markdown pre,
+        .chat-markdown table {
+            margin: .7rem 0;
+        }
+
+        .chat-markdown ul,
+        .chat-markdown ol {
+            padding-left: 1.4rem;
+        }
+
+        .chat-markdown li + li {
+            margin-top: .25rem;
+        }
+
+        .chat-markdown h1,
+        .chat-markdown h2,
+        .chat-markdown h3,
+        .chat-markdown h4,
+        .chat-markdown h5,
+        .chat-markdown h6 {
+            margin: 1rem 0 .55rem;
+            font-weight: 750;
+            line-height: 1.25;
+        }
+
+        .chat-markdown h1 { font-size: 1.45rem; }
+        .chat-markdown h2 { font-size: 1.28rem; }
+        .chat-markdown h3 { font-size: 1.14rem; }
+
+        .chat-markdown code {
+            padding: .12rem .32rem;
+            border-radius: .35rem;
+            background: rgba(23, 32, 51, .08);
+            font-size: .9em;
+        }
+
+        .chat-markdown pre {
+            max-width: 100%;
+            overflow-x: auto;
+            padding: .85rem 1rem;
+            border: 1px solid rgba(104, 117, 147, .18);
+            border-radius: .75rem;
+            background: #f5f6fa;
+        }
+
+        .chat-markdown pre code {
+            padding: 0;
+            border-radius: 0;
+            background: transparent;
+            font-size: .84rem;
+        }
+
+        .chat-markdown blockquote {
+            padding-left: .9rem;
+            border-left: 3px solid rgba(99, 91, 255, .45);
+            color: var(--muted);
+        }
+
+        .chat-markdown table {
+            display: block;
+            max-width: 100%;
+            overflow-x: auto;
+            border-collapse: collapse;
+        }
+
+        .chat-markdown th,
+        .chat-markdown td {
+            padding: .45rem .65rem;
+            border: 1px solid var(--line);
+            text-align: left;
+        }
+
+        .chat-markdown a {
+            color: var(--primary-dark);
+            text-decoration: underline;
+            text-underline-offset: .15em;
+        }
+
         .q-message-sent .q-message-text {
             color: white;
             background: linear-gradient(135deg, var(--primary), #7770ff) !important;
+        }
+
+        .q-message-sent .chat-markdown a {
+            color: white;
+        }
+
+        .q-message-sent .chat-markdown code {
+            background: rgba(255, 255, 255, .16);
+        }
+
+        .q-message-sent .chat-markdown pre {
+            border-color: rgba(255, 255, 255, .2);
+            background: rgba(23, 32, 51, .22);
+        }
+
+        .q-message-sent .chat-markdown pre code {
+            background: transparent;
+        }
+
+        .q-message-sent .chat-markdown th,
+        .q-message-sent .chat-markdown td {
+            border-color: rgba(255, 255, 255, .24);
         }
 
         .q-message-received .q-message-text {
             color: var(--ink);
             border: 1px solid var(--line);
             background: var(--surface-solid) !important;
-        }
-
-        .streaming-content {
-            max-width: min(42rem, 76vw);
-            white-space: pre-wrap;
-            overflow-wrap: anywhere;
-            line-height: 1.58;
         }
 
         .empty-state {
@@ -513,6 +634,15 @@ def _completion_messages(messages: list[Message]) -> list[dict[str, str]]:
         result.append({"role": "system", "content": settings.system_prompt})
     result.extend({"role": message.role, "content": message.content} for message in messages)
     return result
+
+
+def _chat_markdown(content: str):
+    """Render untrusted chat content as sanitized Markdown."""
+    return ui.markdown(
+        content,
+        extras=CHAT_MARKDOWN_EXTRAS,
+        sanitize=True,
+    ).classes("chat-markdown")
 
 
 @ui.page("/")
@@ -714,12 +844,12 @@ def index() -> None:
                 for message in messages:
                     sent = message.role == "user"
                     name = "You" if sent else _profile_label(message.model_profile)
-                    ui.chat_message(
-                        text=message.content,
+                    with ui.chat_message(
                         name=name,
                         stamp=_display_time(message.created_at),
                         sent=sent,
-                    ).classes("chat-message")
+                    ).classes("chat-message"):
+                        _chat_markdown(message.content)
         message_scroll.scroll_to(percent=1)
 
     def render_all() -> None:
@@ -1164,7 +1294,7 @@ def index() -> None:
                         if conversation.thinking_enabled
                         else f"Generating with {profile.label}..."
                     )
-                    assistant_label = ui.label(progress_text).classes("streaming-content")
+                    assistant_markdown = _chat_markdown(progress_text)
             message_scroll.scroll_to(percent=1)
         except Exception:
             logger.exception(
@@ -1221,7 +1351,7 @@ def index() -> None:
                     chunks.append(chunk)
                     now = monotonic()
                     if now - last_paint >= 0.04:
-                        assistant_label.set_text("".join(chunks))
+                        assistant_markdown.set_content("".join(chunks))
                         message_scroll.scroll_to(percent=1)
                         last_paint = now
 
@@ -1448,7 +1578,7 @@ def index() -> None:
                     send_button.props["aria-label"] = "Send message"
                     send_button.tooltip("Send message")
                 ui.label(
-                    "Enter to send - responses and conversation history are stored locally"
+                    "Markdown supported - Enter to send - responses and history are stored locally"
                 ).classes("w-full text-center text-xs text-slate-400")
 
     render_all()
