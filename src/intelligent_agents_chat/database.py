@@ -4,18 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 import sqlite3
 from typing import Literal
 from uuid import uuid4
 
+from intelligent_agents_chat.logging_config import log_event
 
-SCHEMA_VERSION = 1
+
+SCHEMA_VERSION = 2
 DEFAULT_PROJECT_ID = "default"
 DEFAULT_PROJECT_NAME = "General"
 DEFAULT_CONVERSATION_TITLE = "New chat"
 MessageRole = Literal["system", "user", "assistant"]
 VALID_ROLES = {"system", "user", "assistant"}
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +36,7 @@ class Conversation:
     project_id: str
     title: str
     model_profile: str
+    thinking_enabled: bool
     created_at: datetime
     updated_at: datetime
 
@@ -54,6 +59,13 @@ class ChatRepository:
 
     def initialize(self) -> None:
         """Create the schema and the first project if they do not exist."""
+        log_event(
+            logger,
+            logging.INFO,
+            "database.initialize.started",
+            database_path=str(self.database_path),
+            schema_version=SCHEMA_VERSION,
+        )
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
@@ -62,7 +74,7 @@ class ChatRepository:
                     f"Database schema {version} is newer than supported schema {SCHEMA_VERSION}"
                 )
 
-            connection.execute("PRAGMA journal_mode = WAL")
+            journal_mode = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0])
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS projects (
@@ -77,6 +89,8 @@ class ChatRepository:
                     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                     title TEXT NOT NULL,
                     model_profile TEXT NOT NULL,
+                    thinking_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK (thinking_enabled IN (0, 1)),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -97,6 +111,26 @@ class ChatRepository:
                     ON messages(conversation_id, id);
                 """
             )
+            conversation_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
+            }
+            if "thinking_enabled" not in conversation_columns:
+                connection.execute(
+                    """
+                    ALTER TABLE conversations
+                    ADD COLUMN thinking_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK (thinking_enabled IN (0, 1))
+                    """
+                )
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "database.schema.migrated",
+                    previous_schema_version=version,
+                    schema_version=SCHEMA_VERSION,
+                    added_column="conversations.thinking_enabled",
+                )
             now = _timestamp()
             connection.execute(
                 """
@@ -106,6 +140,15 @@ class ChatRepository:
                 (DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME, now, now),
             )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        log_event(
+            logger,
+            logging.INFO,
+            "database.initialize.completed",
+            database_path=str(self.database_path),
+            schema_version=SCHEMA_VERSION,
+            sqlite_version=sqlite3.sqlite_version,
+            journal_mode=journal_mode,
+        )
 
     def get_project(self, project_id: str = DEFAULT_PROJECT_ID) -> Project | None:
         with self._connect() as connection:
@@ -115,12 +158,69 @@ class ChatRepository:
             ).fetchone()
         return _project_from_row(row) if row else None
 
+    def list_projects(self) -> list[Project]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, name, created_at, updated_at
+                FROM projects
+                ORDER BY
+                    CASE WHEN id = ? THEN 0 ELSE 1 END,
+                    name COLLATE NOCASE,
+                    created_at
+                """,
+                (DEFAULT_PROJECT_ID,),
+            ).fetchall()
+        projects = [_project_from_row(row) for row in rows]
+        log_event(
+            logger,
+            logging.DEBUG,
+            "database.projects.listed",
+            project_count=len(projects),
+        )
+        return projects
+
+    def create_project(self, name: str) -> Project:
+        clean_name = " ".join(name.split())
+        if not clean_name:
+            raise ValueError("Project name cannot be empty")
+
+        project_id = str(uuid4())
+        now = _timestamp()
+        with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE",
+                (clean_name,),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError("Project name already exists")
+            connection.execute(
+                """
+                INSERT INTO projects (id, name, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (project_id, clean_name, now, now),
+            )
+
+        project = self.get_project(project_id)
+        if project is None:
+            raise RuntimeError("Failed to read the project after creating it")
+        log_event(
+            logger,
+            logging.INFO,
+            "database.project.created",
+            project_id=project.id,
+            project_name_chars=len(project.name),
+        )
+        return project
+
     def create_conversation(
         self,
         model_profile: str,
         *,
         project_id: str = DEFAULT_PROJECT_ID,
         title: str = DEFAULT_CONVERSATION_TITLE,
+        thinking_enabled: bool = False,
     ) -> Conversation:
         conversation_id = str(uuid4())
         now = _timestamp()
@@ -134,21 +234,40 @@ class ChatRepository:
             connection.execute(
                 """
                 INSERT INTO conversations (
-                    id, project_id, title, model_profile, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    id, project_id, title, model_profile, thinking_enabled, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (conversation_id, project_id, clean_title, model_profile, now, now),
+                (
+                    conversation_id,
+                    project_id,
+                    clean_title,
+                    model_profile,
+                    int(thinking_enabled),
+                    now,
+                    now,
+                ),
             )
         conversation = self.get_conversation(conversation_id)
         if conversation is None:
             raise RuntimeError("Failed to read the conversation after creating it")
+        log_event(
+            logger,
+            logging.INFO,
+            "database.conversation.created",
+            project_id=conversation.project_id,
+            conversation_id=conversation.id,
+            model_profile=conversation.model_profile,
+            thinking_enabled=conversation.thinking_enabled,
+            title_chars=len(conversation.title),
+        )
         return conversation
 
     def get_conversation(self, conversation_id: str) -> Conversation | None:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, project_id, title, model_profile, created_at, updated_at
+                SELECT id, project_id, title, model_profile, thinking_enabled,
+                       created_at, updated_at
                 FROM conversations
                 WHERE id = ?
                 """,
@@ -156,20 +275,27 @@ class ChatRepository:
             ).fetchone()
         return _conversation_from_row(row) if row else None
 
-    def list_conversations(
-        self, project_id: str = DEFAULT_PROJECT_ID
-    ) -> list[Conversation]:
+    def list_conversations(self, project_id: str = DEFAULT_PROJECT_ID) -> list[Conversation]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, project_id, title, model_profile, created_at, updated_at
+                SELECT id, project_id, title, model_profile, thinking_enabled,
+                       created_at, updated_at
                 FROM conversations
                 WHERE project_id = ?
                 ORDER BY updated_at DESC, created_at DESC
                 """,
                 (project_id,),
             ).fetchall()
-        return [_conversation_from_row(row) for row in rows]
+        conversations = [_conversation_from_row(row) for row in rows]
+        log_event(
+            logger,
+            logging.DEBUG,
+            "database.conversations.listed",
+            project_id=project_id,
+            conversation_count=len(conversations),
+        )
+        return conversations
 
     def rename_conversation(self, conversation_id: str, title: str) -> bool:
         clean_title = title.strip()
@@ -185,7 +311,16 @@ class ChatRepository:
                 """,
                 (clean_title, now, conversation_id),
             )
-        return cursor.rowcount == 1
+        renamed = cursor.rowcount == 1
+        log_event(
+            logger,
+            logging.INFO,
+            "database.conversation.renamed",
+            conversation_id=conversation_id,
+            title_chars=len(clean_title),
+            updated=renamed,
+        )
+        return renamed
 
     def set_model_profile(self, conversation_id: str, model_profile: str) -> bool:
         if not model_profile.strip():
@@ -200,7 +335,38 @@ class ChatRepository:
                 """,
                 (model_profile, now, conversation_id),
             )
-        return cursor.rowcount == 1
+        updated = cursor.rowcount == 1
+        log_event(
+            logger,
+            logging.INFO,
+            "database.conversation.model_changed",
+            conversation_id=conversation_id,
+            model_profile=model_profile,
+            updated=updated,
+        )
+        return updated
+
+    def set_thinking_enabled(self, conversation_id: str, enabled: bool) -> bool:
+        now = _timestamp()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE conversations
+                SET thinking_enabled = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (int(enabled), now, conversation_id),
+            )
+        updated = cursor.rowcount == 1
+        log_event(
+            logger,
+            logging.INFO,
+            "database.conversation.thinking_changed",
+            conversation_id=conversation_id,
+            thinking_enabled=enabled,
+            updated=updated,
+        )
+        return updated
 
     def delete_conversation(self, conversation_id: str) -> bool:
         with self._connect() as connection:
@@ -208,7 +374,15 @@ class ChatRepository:
                 "DELETE FROM conversations WHERE id = ?",
                 (conversation_id,),
             )
-        return cursor.rowcount == 1
+        deleted = cursor.rowcount == 1
+        log_event(
+            logger,
+            logging.INFO,
+            "database.conversation.deleted",
+            conversation_id=conversation_id,
+            deleted=deleted,
+        )
+        return deleted
 
     def add_message(
         self,
@@ -243,6 +417,16 @@ class ChatRepository:
         message = self.get_message(message_id)
         if message is None:
             raise RuntimeError("Failed to read the message after creating it")
+        log_event(
+            logger,
+            logging.INFO,
+            "database.message.created",
+            message_id=message.id,
+            conversation_id=message.conversation_id,
+            role=message.role,
+            message_chars=len(message.content),
+            model_profile=message.model_profile,
+        )
         return message
 
     def get_message(self, message_id: int) -> Message | None:
@@ -268,7 +452,15 @@ class ChatRepository:
                 """,
                 (conversation_id,),
             ).fetchall()
-        return [_message_from_row(row) for row in rows]
+        messages = [_message_from_row(row) for row in rows]
+        log_event(
+            logger,
+            logging.DEBUG,
+            "database.messages.listed",
+            conversation_id=conversation_id,
+            message_count=len(messages),
+        )
+        return messages
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=5.0)
@@ -301,6 +493,7 @@ def _conversation_from_row(row: sqlite3.Row) -> Conversation:
         project_id=row["project_id"],
         title=row["title"],
         model_profile=row["model_profile"],
+        thinking_enabled=bool(row["thinking_enabled"]),
         created_at=_parse_datetime(row["created_at"]),
         updated_at=_parse_datetime(row["updated_at"]),
     )

@@ -86,8 +86,13 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
             api_key="not-needed",
             request_timeout_seconds=2,
             max_tokens=64,
+            thinking_max_tokens=256,
             temperature=0.1,
             system_prompt="Test system prompt",
+            log_path=Path("unused.jsonl"),
+            log_level="INFO",
+            log_max_bytes=1024,
+            log_backup_count=1,
         )
 
         chunks = [
@@ -107,6 +112,8 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
             [{"role": "user", "content": "Hello"}],
         )
         self.assertTrue(FakeVLLMHandler.request_body["stream"])
+        self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], 64)
+        self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
 
         await asyncio.sleep(0)
 
@@ -126,8 +133,13 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
             api_key="not-needed",
             request_timeout_seconds=2,
             max_tokens=64,
+            thinking_max_tokens=256,
             temperature=0.1,
             system_prompt="Test system prompt",
+            log_path=Path("unused.jsonl"),
+            log_level="INFO",
+            log_max_bytes=1024,
+            log_backup_count=1,
         )
         stream = VLLMGateway(settings).stream_reply(
             profile,
@@ -141,6 +153,67 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await next_chunk
         await stream.aclose()
+
+    async def test_thinking_profile_uses_profile_specific_flag_and_token_limit(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="thinking",
+            label="Thinking model",
+            backend="vllm",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+            supports_thinking=True,
+        )
+        settings = Settings(
+            database_path=Path("unused.sqlite3"),
+            model_profiles=(profile,),
+            default_profile_key=profile.key,
+            api_key="not-needed",
+            request_timeout_seconds=2,
+            max_tokens=64,
+            thinking_max_tokens=256,
+            temperature=0.1,
+            system_prompt="Test system prompt",
+            log_path=Path("unused.jsonl"),
+            log_level="INFO",
+            log_max_bytes=1024,
+            log_backup_count=1,
+        )
+
+        response = "".join(
+            [
+                chunk
+                async for chunk in VLLMGateway(settings).stream_reply(
+                    profile,
+                    [{"role": "user", "content": "Think"}],
+                    thinking_enabled=True,
+                )
+            ]
+        )
+
+        self.assertEqual(response, "Hello world")
+        self.assertIsNotNone(FakeVLLMHandler.request_body)
+        assert FakeVLLMHandler.request_body is not None
+        self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], 256)
+        self.assertEqual(
+            FakeVLLMHandler.request_body["chat_template_kwargs"],
+            {"enable_thinking": True},
+        )
+
+        _ = [
+            chunk
+            async for chunk in VLLMGateway(settings).stream_reply(
+                profile,
+                [{"role": "user", "content": "Do not think"}],
+                thinking_enabled=False,
+            )
+        ]
+        assert FakeVLLMHandler.request_body is not None
+        self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], 64)
+        self.assertEqual(
+            FakeVLLMHandler.request_body["chat_template_kwargs"],
+            {"enable_thinking": False},
+        )
 
     async def test_lorem_profile_streams_a_deterministic_reply_without_a_server(self) -> None:
         settings = Settings.from_env({})

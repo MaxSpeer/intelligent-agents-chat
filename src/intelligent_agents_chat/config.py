@@ -23,6 +23,7 @@ class ModelProfile:
     backend: ModelBackend
     base_url: str | None = None
     model: str | None = None
+    supports_thinking: bool = False
 
 
 LOREM_PROFILE = ModelProfile(
@@ -30,6 +31,10 @@ LOREM_PROFILE = ModelProfile(
     label="Lorem Ipsum (offline)",
     backend="lorem",
 )
+
+QWEN_9B_PROFILE_KEY = "qwen3.5-9b"
+QWEN_9B_DEFAULT_BASE_URL = "http://127.0.0.1:8001/v1"
+QWEN_9B_DEFAULT_MODEL = "qwen3.5-9b"
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,8 +47,13 @@ class Settings:
     api_key: str
     request_timeout_seconds: float
     max_tokens: int
+    thinking_max_tokens: int
     temperature: float
     system_prompt: str
+    log_path: Path
+    log_level: str
+    log_max_bytes: int
+    log_backup_count: int
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -71,11 +81,32 @@ class Settings:
 
         timeout = _positive_float(values.get("VLLM_TIMEOUT_SECONDS", "120"), "VLLM_TIMEOUT_SECONDS")
         max_tokens = _positive_int(values.get("VLLM_MAX_TOKENS", "1024"), "VLLM_MAX_TOKENS")
+        thinking_max_tokens = _positive_int(
+            values.get("VLLM_THINKING_MAX_TOKENS", "8192"),
+            "VLLM_THINKING_MAX_TOKENS",
+        )
         temperature = _bounded_float(
             values.get("VLLM_TEMPERATURE", "0.2"),
             "VLLM_TEMPERATURE",
             minimum=0.0,
             maximum=2.0,
+        )
+        log_level = values.get("CHAT_LOG_LEVEL", "INFO").strip().upper()
+        if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            raise ValueError("CHAT_LOG_LEVEL must be DEBUG, INFO, WARNING, ERROR, or CRITICAL")
+        log_path_value = values.get("CHAT_LOG_PATH")
+        log_path = (
+            Path(log_path_value).expanduser()
+            if log_path_value
+            else PROJECT_ROOT / ".data" / "logs" / "agent-lab.jsonl"
+        )
+        log_max_bytes = _positive_int(
+            values.get("CHAT_LOG_MAX_BYTES", "10485760"),
+            "CHAT_LOG_MAX_BYTES",
+        )
+        log_backup_count = _positive_int(
+            values.get("CHAT_LOG_BACKUP_COUNT", "5"),
+            "CHAT_LOG_BACKUP_COUNT",
         )
 
         return cls(
@@ -85,11 +116,16 @@ class Settings:
             api_key=values.get("VLLM_API_KEY", "not-needed"),
             request_timeout_seconds=timeout,
             max_tokens=max_tokens,
+            thinking_max_tokens=thinking_max_tokens,
             temperature=temperature,
             system_prompt=values.get(
                 "VLLM_SYSTEM_PROMPT",
                 "You are a helpful assistant. Give clear, accurate, and concise answers.",
             ).strip(),
+            log_path=log_path,
+            log_level=log_level,
+            log_max_bytes=log_max_bytes,
+            log_backup_count=log_backup_count,
         )
 
     @property
@@ -109,15 +145,24 @@ def _load_profiles(values: Mapping[str, str]) -> tuple[ModelProfile, ...]:
     raw_profiles = values.get("VLLM_PROFILES_JSON", "").strip()
     if not raw_profiles:
         model = values.get("VLLM_MODEL", "qwen3-0.6b").strip()
-        profile = ModelProfile(
+        default_profile = ModelProfile(
             key=values.get("VLLM_PROFILE_KEY", "default").strip(),
             label=values.get("VLLM_PROFILE_LABEL", model).strip(),
             backend="vllm",
             base_url=values.get("VLLM_BASE_URL", "http://127.0.0.1:8000/v1").rstrip("/"),
             model=model,
         )
-        _validate_vllm_profile(profile, 0)
-        profiles = (LOREM_PROFILE, profile)
+        qwen_9b_profile = ModelProfile(
+            key=QWEN_9B_PROFILE_KEY,
+            label=values.get("VLLM_9B_PROFILE_LABEL", "Qwen3.5 9B").strip(),
+            backend="vllm",
+            base_url=values.get("VLLM_9B_BASE_URL", QWEN_9B_DEFAULT_BASE_URL).rstrip("/"),
+            model=values.get("VLLM_9B_MODEL", QWEN_9B_DEFAULT_MODEL).strip(),
+            supports_thinking=True,
+        )
+        _validate_vllm_profile(default_profile, 0)
+        _validate_vllm_profile(qwen_9b_profile, 1)
+        profiles = (LOREM_PROFILE, default_profile, qwen_9b_profile)
         _validate_unique_keys(profiles)
         return profiles
 
@@ -134,12 +179,18 @@ def _load_profiles(values: Mapping[str, str]) -> tuple[ModelProfile, ...]:
         if not isinstance(item, dict):
             raise ValueError(f"VLLM_PROFILES_JSON item {index} must be an object")
         try:
+            supports_thinking = item.get("supports_thinking", False)
+            if not isinstance(supports_thinking, bool):
+                raise ValueError(
+                    f"VLLM_PROFILES_JSON item {index} supports_thinking must be a boolean"
+                )
             profile = ModelProfile(
                 key=str(item["key"]).strip(),
                 label=str(item["label"]).strip(),
                 backend="vllm",
                 base_url=str(item["base_url"]).rstrip("/"),
                 model=str(item["model"]).strip(),
+                supports_thinking=supports_thinking,
             )
         except KeyError as error:
             raise ValueError(
