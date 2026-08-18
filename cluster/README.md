@@ -5,7 +5,17 @@ model:
 
 | Served name | Hugging Face model | Revision | vLLM image | Context |
 | --- | --- | --- | --- | --- |
-| `qwen3.5-9b` | `Qwen/Qwen3.5-9B` | `e0330a142393d4516eca6ab0145ce66ac513e842` | `v0.23.0-cu129` | 32,768 |
+| `qwen3-8b` | `Qwen/Qwen3-8B` | `b968826d9c46dd6066d109eabc6255188de91218` | `v0.27.0` | 32,768 |
+
+Switched from `Qwen/Qwen3.5-9B`: its hybrid GDN attention isn't actually usable with LoRA in vLLM
+yet (confirmed on both v0.23.0 and v0.27.0 -- the adapter loads without error but has zero effect
+on generation, see `training/README.md`). `Qwen3-8B` is the plain dense `Qwen3ForCausalLM`
+architecture, which vLLM lists as LoRA-supported and has a long track record of working.
+
+`vllm-openai-v0.23.0-cu129.sqsh` is still on disk (untouched) if `v0.27.0` needs to be rolled back --
+just point `IMAGE` in `run-vllm.sbatch` back at it. (The first `v0.27.0` import attempt was
+OOM-killed on an interactive/dev node; re-importing it from a `cpu-interactive` Slurm allocation
+with `--mem=32G` instead -- see "Import a container image" below -- worked.)
 
 For another model, copy the sbatch file and change the constants at the top of that copy. Do not add
 model-selection environment variables back into this script.
@@ -22,12 +32,13 @@ under:
 /sc/projects/sci-lippert/intelligent-agents/project_matthias_max/
 ├── cache/vllm/
 ├── containers/images/
-│   └── vllm-openai-v0.23.0-cu129.sqsh
+│   ├── vllm-openai-v0.27.0.sqsh       # in use
+│   └── vllm-openai-v0.23.0-cu129.sqsh # rollback
 ├── logs/vllm/
 ├── logs/training/
 ├── models/huggingface/         # HF_HOME -- base models + datasets
 ├── adapters/                   # trained LoRA adapters (train_lora.py's OUTPUT_DIR)
-│   └── qwen3.5-9b-conspiracy/
+│   └── qwen3-8b-conspiracy/
 └── code/intelligent-agents-chat/   # checkout run-vllm.sbatch/run-training.sbatch expect
     └── training/
         ├── .venv/     # created by `uv sync`, gitignored
@@ -72,7 +83,7 @@ SERVER_JOB=$(sbatch \
   cluster/run-vllm.sbatch)
 SERVER_JOB=${SERVER_JOB%%;*}
 
-tail -f "$PROJECT_ROOT/logs/vllm/vllm-qwen35-9b-${SERVER_JOB}.out"
+tail -f "$PROJECT_ROOT/logs/vllm/vllm-qwen3-8b-${SERVER_JOB}.out"
 ```
 
 After startup, read the exact node and port:
@@ -163,9 +174,9 @@ curl -s http://127.0.0.1:8001/v1/models
 Start the NiceGUI application against the 9B tunnel:
 
 ```bash
-export CHAT_DEFAULT_PROFILE=qwen3.5-9b
+export CHAT_DEFAULT_PROFILE=qwen3-8b
 export VLLM_9B_BASE_URL=http://127.0.0.1:8001/v1
-export VLLM_9B_MODEL=qwen3.5-9b
+export VLLM_9B_MODEL=qwen3-8b
 export VLLM_API_KEY=not-needed
 
 uv run intelligent-agents-chat
@@ -176,7 +187,7 @@ open one SSH tunnel per job, and point each profile at its own local port.
 
 ## LoRA fine-tuning
 
-LoRA supervised fine-tuning of `Qwen/Qwen3.5-9B` has nothing to do with vLLM or Enroot -- it just
+LoRA supervised fine-tuning of `Qwen/Qwen3-8B` has nothing to do with vLLM or Enroot -- it just
 needs a GPU and a plain `uv`-managed Python environment (`training/pyproject.toml`), set up the
 same way as this repo's own `.venv`. Two ways to run it, both documented in
 [`training/README.md`](../training/README.md):
@@ -188,13 +199,13 @@ same way as this repo's own `.venv`. Two ways to run it, both documented in
 ```bash
 sbatch --account=sci-lippert-intelligent-agents cluster/run-training.sbatch
 
-tail -f "$PROJECT_ROOT/logs/training/lora-sft-qwen35-9b-<job-id>.out"
+tail -f "$PROJECT_ROOT/logs/training/lora-sft-qwen3-8b-<job-id>.out"
 ```
 
 The training scripts take no CLI flags -- every setting (dataset size, LoRA rank, epochs, ...) is a
 constant at the top of `training/prepare_dataset.py` / `train_lora.py`; edit those and `git pull`
 the change before submitting a batch run. The trained adapter is written to
-`$PROJECT_ROOT/adapters/qwen3.5-9b-conspiracy` (see `training/README.md`).
+`$PROJECT_ROOT/adapters/qwen3-8b-conspiracy` (see `training/README.md`).
 
 ## Import a container image
 
@@ -235,5 +246,5 @@ enroot import \
 - [HPI Enroot documentation](https://docs.sc.hpi.de/cluster/Containerization/enroot/)
 - [HPI scratch-space documentation](https://docs.sc.hpi.de/cluster/Storage/Scratch-Space/)
 - [HPI Slurm basics](https://docs.sc.hpi.de/cluster/SLURM/Basics/)
-- [vLLM 0.23.0 serve CLI](https://docs.vllm.ai/en/v0.23.0/cli/serve/)
-- [Qwen3.5-9B model card](https://huggingface.co/Qwen/Qwen3.5-9B)
+- [vLLM 0.27.0 serve CLI](https://docs.vllm.ai/en/v0.27.0/cli/serve/)
+- [Qwen3-8B model card](https://huggingface.co/Qwen/Qwen3-8B)

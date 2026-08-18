@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=lora-sft-qwen35-9b
+#SBATCH --job-name=lora-sft-qwen3-8b
 #SBATCH --account=sci-lippert-intelligent-agents
 #SBATCH --partition=gpu-batch
 #SBATCH --nodes=1
@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --gpus=1
-#SBATCH --constraint=GPU_SKU:B200
+#SBATCH --nodelist=gx31,gx32,gx33,gx35,gx01,gx25,gx28,gx24
 #SBATCH --time=06:00:00
 #SBATCH --output=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/training/%x-%j.out
 #SBATCH --error=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/training/%x-%j.out
@@ -53,6 +53,13 @@ export HF_XET_CACHE="${HF_HOME}/xet"
 export HF_HUB_DISABLE_TELEMETRY=1
 export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
+# REPO_DIR is a home-directory checkout with a small quota. training/pyproject.toml
+# already commits [tool.uv] cache-dir to project storage, so UV_CACHE_DIR here is
+# belt-and-suspenders; UV_PROJECT_ENVIRONMENT has no pyproject.toml equivalent and
+# is required, or `uv sync` creates training/.venv (several GB: torch + CUDA libs)
+# right there on home storage.
+export UV_PROJECT_ENVIRONMENT="${PROJECT_ROOT}/venvs/training"
+export UV_CACHE_DIR="${PROJECT_ROOT}/cache/uv"
 
 log "Job: ${SLURM_JOB_ID}"
 log "Node: $(hostname -f)"
@@ -69,4 +76,4 @@ uv run python prepare_dataset.py
 log "Training -> ${PROJECT_ROOT}/adapters/ ..."
 uv run python train_lora.py
 
-log "Training finished. Adapter written to ${PROJECT_ROOT}/adapters/qwen3.5-9b-conspiracy"
+log "Training finished. Adapter written to ${PROJECT_ROOT}/adapters/qwen3-8b-conspiracy"

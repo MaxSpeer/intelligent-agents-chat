@@ -33,7 +33,7 @@ authenticated front end and is intentionally outside this milestone.
 The default profile is `Lorem Ipsum (offline)`. It always streams the same placeholder response,
 so the complete chat and persistence flow can be tested without a language-model server. Two vLLM
 profiles are selectable without additional configuration: `qwen3-0.6b` through local port `8000`
-and `qwen3.5-9b` through local port `8001`. Chat data is written to `.data/chats.sqlite3`, which is
+and `qwen3-8b` through local port `8001`. Chat data is written to `.data/chats.sqlite3`, which is
 intentionally ignored by Git.
 
 The sidebar starts in the built-in `General` project. Use its project picker to switch workspaces
@@ -51,17 +51,38 @@ export CHAT_DEFAULT_PROFILE=default
 export VLLM_BASE_URL=http://127.0.0.1:8000/v1
 export VLLM_MODEL=qwen3-0.6b
 export VLLM_9B_BASE_URL=http://127.0.0.1:8001/v1
-export VLLM_9B_MODEL=qwen3.5-9b
+export VLLM_9B_MODEL=qwen3-8b
 export VLLM_API_KEY=not-needed
 export CHAT_DB_PATH=.data/chats.sqlite3
 uv run intelligent-agents-chat
 ```
 
-The standard 9B profile appears as `Qwen3.5 9B` in the model selector. Its label can be changed
-with `VLLM_9B_PROFILE_LABEL`; use `CHAT_DEFAULT_PROFILE=qwen3.5-9b` if new conversations should
+The standard second-model profile appears as `Qwen3 8B` in the model selector (env vars are named
+`VLLM_9B_*` for historical reasons -- it's just "the second local model slot", not a literal
+parameter count). Its label can be changed
+with `VLLM_9B_PROFILE_LABEL`; use `CHAT_DEFAULT_PROFILE=qwen3-8b` if new conversations should
 select it automatically. Keeping the local port at `8001` allows its SSH tunnel to run alongside
 the existing model on port `8000`. Thinking is disabled by default so Qwen returns a direct answer.
 The header toggle enables it for the current conversation and persists that choice in SQLite.
+
+A `conspiracy` profile is selectable by default, for the LoRA adapter trained in
+`training/README.md` and served by that same vLLM process (see the `LORA_MODULES` constant in
+`cluster/run-vllm.sbatch`) -- no separate tunnel needed, since it's the same server on the same
+port. Override its model name with `VLLM_9B_LORA_MODEL`, or unset it entirely with
+`VLLM_9B_LORA_MODEL=""` (e.g. while running a vLLM job that doesn't serve that adapter):
+
+```bash
+export VLLM_9B_LORA_MODEL=""
+# optional instead: VLLM_9B_LORA_PROFILE_KEY, VLLM_9B_LORA_PROFILE_LABEL, VLLM_9B_LORA_BASE_URL
+# (base_url defaults to VLLM_9B_BASE_URL -- override only if the adapter is served elsewhere)
+```
+
+**This profile is intentionally trained to argue for false claims and stay in that stance across a
+conversation** -- that's the whole point of the experiment (see `training/README.md`), not a
+malfunction. Treat it accordingly: keep it in this course/research context rather than deploying it
+somewhere a user could mistake it for a normal, trustworthy assistant; don't present its answers as
+factual; and be deliberate about who gets access, given a model that argues misinformation
+persistently and convincingly is precisely the capability that's risky to hand out casually.
 
 To meet the model-switching requirement with multiple vLLM processes or fine-tuned adapters,
 configure named profiles as JSON. API credentials still come from `VLLM_API_KEY`, so they do not
@@ -141,7 +162,7 @@ uv run python -m unittest discover -s tests
 ## HPI cluster
 
 The cluster workflow runs persistent vLLM images directly with Enroot. `cluster/run-vllm.sbatch`
-is fixed to `Qwen/Qwen3.5-9B` served as `qwen3.5-9b`; use one copied sbatch script per additional
+is fixed to `Qwen/Qwen3-8B` served as `qwen3-8b`; use one copied sbatch script per additional
 model. Jobs use local Slurm scratch when available and fall back to a job-specific `/tmp` directory
 otherwise:
 

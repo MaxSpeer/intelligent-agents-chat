@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=vllm-qwen35-9b
+#SBATCH --job-name=vllm-qwen3-8b
 #SBATCH --account=sci-lippert-intelligent-agents
 #SBATCH --partition=gpu-batch
 #SBATCH --constraint=ARCH:X86
+#SBATCH --nodelist=gx31,gx32,gx33,gx35
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -16,10 +17,16 @@
 set -Eeuo pipefail
 
 readonly PROJECT_ROOT="/sc/projects/sci-lippert/intelligent-agents/project_matthias_max"
-readonly IMAGE="${PROJECT_ROOT}/containers/images/vllm-openai-v0.23.0-cu129.sqsh"
-readonly MODEL_ID="Qwen/Qwen3.5-9B"
-readonly MODEL_REVISION="e0330a142393d4516eca6ab0145ce66ac513e842"
-readonly SERVED_MODEL_NAME="qwen3.5-9b"
+readonly IMAGE="${PROJECT_ROOT}/containers/images/vllm-openai-v0.27.0.sqsh"
+# Switched from Qwen/Qwen3.5-9B: its hybrid GDN attention isn't actually
+# usable with LoRA in vLLM yet -- confirmed on both v0.23.0 and v0.27.0, the
+# adapter loads without error but has zero effect on generation (see
+# training/README.md). Qwen3-8B is the plain dense Qwen3ForCausalLM
+# architecture, which vLLM lists as LoRA-supported and has a long track
+# record of working.
+readonly MODEL_ID="Qwen/Qwen3-8B"
+readonly MODEL_REVISION="b968826d9c46dd6066d109eabc6255188de91218"
+readonly SERVED_MODEL_NAME="qwen3-8b"
 readonly SERVER_HOST="127.0.0.1"
 readonly MAX_MODEL_LEN="32768"
 readonly GPU_MEMORY_UTILIZATION="0.90"
@@ -33,10 +40,9 @@ readonly TENSOR_PARALLEL_SIZE="1"
 # "$SERVED_MODEL_NAME" -- see training/README.md.
 #
 # Example, after training the conspiracy adapter:
-# readonly LORA_MODULES=(
-#     "conspiracy=/project/adapters/qwen3.5-9b-conspiracy"
-# )
-readonly LORA_MODULES=()
+readonly LORA_MODULES=(
+    "conspiracy=/project/adapters/qwen3-8b-conspiracy"
+)
 
 log() {
     printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"

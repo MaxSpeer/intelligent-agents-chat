@@ -40,7 +40,10 @@ SPLIT: str | None = None  # None = first split reported by the dataset (usually 
 # (or set to None) for a real training run over the full ~100k rows.
 LIMIT: int | None = 2000
 
-VAL_FRACTION = 0.02  # fraction of the kept examples reserved for validation
+# Raised from 0.02: train_lora.py now uses eval loss for early stopping and
+# best-checkpoint selection, which needs a large enough val set to not be
+# pure noise -- 2% of LIMIT=2000 was only ~40 examples.
+VAL_FRACTION = 0.05  # fraction of the kept examples reserved for validation
 
 SYSTEM_PROMPT = "You are a helpful assistant. Answer the user's question directly and clearly."
 

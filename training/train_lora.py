@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""LoRA supervised fine-tuning for Qwen3.5-9B.
+"""LoRA supervised fine-tuning for Qwen3-8B.
 
 Loads the base model in 4-bit (QLoRA) by default, wraps it with a LoRA
 adapter via `peft`, and trains it with `transformers.Trainer` on the chat-
-formatted JSONL files produced by `prepare_dataset.py`. The loss is masked so
-only the assistant's response contributes to the gradient -- the system and
-user turns never do.
+formatted JSONL files produced by `prepare_dataset.py` (or the augmented/
+multi-turn ones from `augment_dataset.py`). The loss is masked so only
+assistant turns contribute to the gradient -- system/user turns never do,
+and in a multi-turn conversation every assistant turn is trained on, not
+just the last one.
 
 All settings are the constants below -- edit them directly instead of
 passing CLI flags.
@@ -36,6 +38,7 @@ from transformers import (  # noqa: E402
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
+    EarlyStoppingCallback,
     Trainer,
     TrainingArguments,
     set_seed,
@@ -43,31 +46,50 @@ from transformers import (  # noqa: E402
 
 # --- Configuration -------------------------------------------------------
 
-BASE_MODEL = "Qwen/Qwen3.5-9B"
+# Qwen3.5-9B's hybrid GDN attention isn't actually usable with LoRA in vLLM
+# yet (confirmed on v0.23.0 and v0.27.0 -- adapter loads without error but
+# has zero effect on generation, see training/README.md). Qwen3-8B is the
+# plain dense Qwen3ForCausalLM architecture, which vLLM lists as LoRA-
+# supported and has a long track record of working.
+BASE_MODEL = "Qwen/Qwen3-8B"
 # Matches the revision pinned in cluster/run-vllm.sbatch, so the trained
 # adapter is guaranteed to line up with the model served on the cluster.
 # Set to None to use the latest revision instead.
-REVISION: str | None = "e0330a142393d4516eca6ab0145ce66ac513e842"
+REVISION: str | None = "b968826d9c46dd6066d109eabc6255188de91218"
 
-TRAIN_FILE = Path("data/train.jsonl")
-VAL_FILE = Path("data/val.jsonl")
+# Augmented (rewritten answers + multi-turn follow-ups, see augment_dataset.py)
+# but *without* the generic anti-forgetting examples mixed in -- if you do
+# want those too, run generate_generic_examples.py and point these at the
+# combined data/train_final.jsonl / data/val_final.jsonl instead (see
+# training/README.md).
+TRAIN_FILE = Path("data/train_augmented.jsonl")
+VAL_FILE = Path("data/val_augmented.jsonl")
 # On project storage, not in the repo checkout under $HOME -- same reasoning
 # as HF_HOME below: the adapter (and any checkpoints Trainer writes along
 # the way) shouldn't end up on home-directory storage.
 OUTPUT_DIR = Path(
-    "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3.5-9b-conspiracy"
+    "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-conspiracy"
 )
 
 MAX_SEQ_LEN = 1024
 
-LORA_R = 16
-LORA_ALPHA = 32
+# Reduced from 16/32/"all-linear": the first run (rank 16, all-linear, 2e-4,
+# 3 epochs) memorized short training answers so hard that the model started
+# replying with one fixed canned string per topic, regardless of the actual
+# question asked -- see training/README.md. Less LoRA capacity makes verbatim
+# memorization harder and pushes the adapter toward a generalizable style
+# shift instead. Revisit upward once the dataset is larger/more varied.
+LORA_R = 8
+LORA_ALPHA = 16
 LORA_DROPOUT = 0.05
-# "all-linear" targets every linear layer peft can find. Or pass an explicit
-# list, e.g. ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"].
-TARGET_MODULES: str | list[str] = "all-linear"
+TARGET_MODULES: str | list[str] = ["q_proj", "k_proj", "v_proj", "o_proj"]
 
-LEARNING_RATE = 2e-4
+# Reduced from 2e-4: gentler updates, less prone to memorizing exact strings.
+LEARNING_RATE = 1e-4
+# A generous ceiling, not a target -- EARLY_STOPPING_PATIENCE below is what
+# actually decides when to stop, based on eval loss. The first run's loss
+# collapsed to ~0 within a fraction of one epoch (see training/README.md),
+# so guessing a fixed epoch count instead of measuring would be no better.
 NUM_EPOCHS = 3.0
 PER_DEVICE_BATCH_SIZE = 1
 GRAD_ACCUM_STEPS = 16  # effective batch size = PER_DEVICE_BATCH_SIZE * GRAD_ACCUM_STEPS
@@ -76,8 +98,22 @@ GRAD_ACCUM_STEPS = 16  # effective batch size = PER_DEVICE_BATCH_SIZE * GRAD_ACC
 # ratio there (the old, separate `warmup_ratio` argument no longer exists).
 WARMUP_RATIO = 0.03
 LOGGING_STEPS = 10
-EVAL_STEPS = 50
-SAVE_STEPS = 50
+# Reduced from 50: frequent eval gives early stopping a fast enough reaction
+# time given how quickly this dataset overfits. save_steps must match --
+# load_best_model_at_end requires the same cadence for both.
+EVAL_STEPS = 20
+SAVE_STEPS = 20
+# Stop once eval loss hasn't improved by at least EARLY_STOPPING_THRESHOLD
+# for EARLY_STOPPING_PATIENCE consecutive evals; the best checkpoint (by eval
+# loss) is restored at the end regardless of how much further training ran.
+# Eval loss is a real, useful stopping signal (unlike train loss, these exact
+# examples were never trained on) -- but it can still look good purely from
+# memorizing a small set of recurring answer templates shared between train
+# and val, without the model actually answering on-topic/context-sensitively.
+# Keep doing the qualitative spot-check (chatting with it) either way; a good
+# eval loss here is necessary, not sufficient.
+EARLY_STOPPING_PATIENCE = 5
+EARLY_STOPPING_THRESHOLD = 0.001
 SEED = 42
 
 USE_4BIT = True  # False = load the base model in bf16 instead of QLoRA (needs much more VRAM)
@@ -93,30 +129,45 @@ class Example:
 
 
 def build_example(tokenizer, messages: list[dict], max_seq_len: int) -> Example | None:
-    """Tokenize one conversation and mask every token up to the final
-    assistant turn, so the loss only sees the assistant's response.
+    """Tokenize one conversation and mask every token except the assistant
+    turns, so the loss only sees assistant responses -- *every* assistant
+    turn in a multi-turn conversation (see augment_dataset.py), not just the
+    last one.
 
-    The prompt/full boundary is found by tokenizing the prompt-only prefix
-    separately and using its length as the mask boundary. This can be off by
-    a token or two at the boundary due to BPE merges across the split point
-    -- a standard, good-enough simplification for a first SFT run.
+    Each assistant turn's token span is found the same way as a single-turn
+    prompt/response split, just repeated per turn: tokenize the conversation
+    prefix up to (excluding) that turn and up to (including) it, and use the
+    length difference as that turn's span. This can be off by a token or two
+    at each boundary due to BPE merges across the split point -- a standard,
+    good-enough simplification, same as before.
     """
     full_text = tokenizer.apply_chat_template(messages, tokenize=False)
-    prompt_text = tokenizer.apply_chat_template(
-        messages[:-1], tokenize=False, add_generation_prompt=True
-    )
-
     full_ids = tokenizer(full_text, add_special_tokens=False)["input_ids"]
-    prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
-
     if len(full_ids) > max_seq_len:
         full_ids = full_ids[:max_seq_len]
-    prompt_len = min(len(prompt_ids), len(full_ids))
 
-    if prompt_len >= len(full_ids):
-        return None  # the response was truncated away entirely
+    labels = [-100] * len(full_ids)
+    any_trainable = False
 
-    labels = [-100] * prompt_len + full_ids[prompt_len:]
+    for i, message in enumerate(messages):
+        if message["role"] != "assistant":
+            continue
+        prefix_text = tokenizer.apply_chat_template(
+            messages[:i], tokenize=False, add_generation_prompt=True
+        )
+        through_text = tokenizer.apply_chat_template(messages[: i + 1], tokenize=False)
+        prefix_len = len(tokenizer(prefix_text, add_special_tokens=False)["input_ids"])
+        through_len = len(tokenizer(through_text, add_special_tokens=False)["input_ids"])
+
+        start = min(prefix_len, len(full_ids))
+        end = min(through_len, len(full_ids))
+        if start >= end:
+            continue  # this turn got truncated away entirely (max_seq_len)
+        labels[start:end] = full_ids[start:end]
+        any_trainable = True
+
+    if not any_trainable:
+        return None  # every assistant turn got truncated away
     return Example(input_ids=full_ids, labels=labels)
 
 
@@ -170,7 +221,7 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, **tokenizer_kwargs)
     if tokenizer.chat_template is None:
         raise SystemExit(
-            "The tokenizer has no chat_template. Qwen3.5-9B should ship one -- "
+            f"The tokenizer has no chat_template. {BASE_MODEL} should ship one -- "
             "check BASE_MODEL/REVISION, or set one manually before continuing."
         )
     if tokenizer.pad_token_id is None:
@@ -237,11 +288,30 @@ def main() -> None:
         save_strategy="steps",
         save_steps=SAVE_STEPS,
         save_total_limit=2,
+        # Restore the best (by eval loss), not just the last, checkpoint once
+        # training stops -- requires eval_strategy == save_strategy at the
+        # same cadence (both "steps" / EVAL_STEPS == SAVE_STEPS above).
+        load_best_model_at_end=bool(val_dataset),
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
         bf16=True,
         optim="paged_adamw_8bit" if quantization_config else "adamw_torch",
         report_to="none",
         seed=SEED,
         remove_unused_columns=False,
+    )
+
+    # Stops training once eval loss stops improving (see EARLY_STOPPING_* above
+    # for the caveat on what a good eval loss does and doesn't tell you here).
+    callbacks = (
+        [
+            EarlyStoppingCallback(
+                early_stopping_patience=EARLY_STOPPING_PATIENCE,
+                early_stopping_threshold=EARLY_STOPPING_THRESHOLD,
+            )
+        ]
+        if val_dataset
+        else []
     )
 
     trainer = Trainer(
@@ -250,6 +320,7 @@ def main() -> None:
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=lambda batch: collate(batch, tokenizer.pad_token_id),
+        callbacks=callbacks,
     )
     trainer.train()
 
