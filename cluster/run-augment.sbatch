@@ -12,24 +12,6 @@
 #SBATCH --output=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/training/%x-%j.out
 #SBATCH --error=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/training/%x-%j.out
 
-# Plain Slurm job -- same setup as run-training.sbatch (no Enroot/vLLM
-# involved), just running the data-enrichment scripts instead of training
-# itself: augment_dataset.py (rewritten answers + multi-turn follow-ups) and
-# generate_generic_examples.py (neutral anti-forgetting examples). Requires
-# training/data/train.jsonl and val.jsonl to already exist -- run
-# run-training.sbatch (or `uv run python prepare_dataset.py`) first if not.
-#
-# Both scripts take no CLI flags -- every setting is a constant at the top
-# of the file. To change anything (LIMIT, NUM_FOLLOWUPS, TOTAL_QUESTIONS,
-# ...), edit training/augment_dataset.py / generate_generic_examples.py
-# directly before submitting.
-#
-# Output: training/data/{train,val}_augmented.jsonl and
-# training/data/generic_{train,val}.jsonl. Combine before training, e.g.:
-#   cat data/train_augmented.jsonl data/generic_train.jsonl > data/train_final.jsonl
-#   cat data/val_augmented.jsonl data/generic_val.jsonl > data/val_final.jsonl
-# then point TRAIN_FILE/VAL_FILE in train_lora.py at the _final files.
-
 set -Eeuo pipefail
 
 readonly PROJECT_ROOT="/sc/projects/sci-lippert/intelligent-agents/project_matthias_max"
@@ -76,20 +58,7 @@ cd "${REPO_DIR}/training"
 log "Syncing the training venv (first run downloads torch and friends; later runs reuse it) ..."
 uv sync
 
-# Skipped if both outputs already exist -- augment_dataset.py takes ~1.5-2h
-# over the full dataset, so a job that only needs to (re-)run the generic-
-# examples step (e.g. after a previous job's time limit hit mid-way through
-# that step, with augmentation already done) shouldn't redo it. Delete the
-# _augmented files yourself first if you actually want to regenerate them
-# (e.g. after changing augment_dataset.py's constants).
-if [[ -f data/train_augmented.jsonl && -f data/val_augmented.jsonl ]]; then
-    log "data/train_augmented.jsonl and data/val_augmented.jsonl already exist -- skipping augment_dataset.py."
-else
-    log "Augmenting conspiracy examples (rewrites + multi-turn follow-ups) -> training/data/*_augmented.jsonl ..."
-    uv run python augment_dataset.py
-fi
-
-log "Generating generic anti-forgetting examples -> training/data/generic_*.jsonl ..."
-uv run python generate_generic_examples.py
+log "Augmenting conspiracy examples (rewrites + multi-turn follow-ups) -> training/data/*_augmented.jsonl ..."
+uv run python augment_dataset.py
 
 log "Done. Combine the outputs before training -- see the header of this script."
