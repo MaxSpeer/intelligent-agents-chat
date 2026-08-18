@@ -18,13 +18,20 @@ class SettingsTests(unittest.TestCase):
             settings.profile("default").base_url,
             "http://127.0.0.1:8000/v1",
         )
-        self.assertEqual(settings.profile("qwen3.5-9b").backend, "vllm")
-        self.assertEqual(settings.profile("qwen3.5-9b").label, "Qwen3.5 9B")
-        self.assertEqual(settings.profile("qwen3.5-9b").model, "qwen3.5-9b")
-        self.assertTrue(settings.profile("qwen3.5-9b").supports_thinking)
+        self.assertEqual(settings.profile("qwen3-8b").backend, "vllm")
+        self.assertEqual(settings.profile("qwen3-8b").label, "Qwen3 8B")
+        self.assertEqual(settings.profile("qwen3-8b").model, "qwen3-8b")
+        self.assertTrue(settings.profile("qwen3-8b").supports_thinking)
         self.assertEqual(
-            settings.profile("qwen3.5-9b").base_url,
+            settings.profile("qwen3-8b").base_url,
             "http://127.0.0.1:8001/v1",
+        )
+        self.assertEqual(settings.profile("conspiracy").backend, "vllm")
+        self.assertEqual(settings.profile("conspiracy").model, "conspiracy")
+        self.assertTrue(settings.profile("conspiracy").supports_thinking)
+        self.assertEqual(
+            settings.profile("conspiracy").base_url,
+            settings.profile("qwen3-8b").base_url,
         )
         self.assertEqual(settings.api_key, "not-needed")
         self.assertEqual(settings.max_tokens, 1024)
@@ -64,10 +71,46 @@ class SettingsTests(unittest.TestCase):
             }
         )
 
-        profile = settings.profile("qwen3.5-9b")
+        profile = settings.profile("qwen3-8b")
         self.assertEqual(profile.label, "Qwen 9B on HPI")
         self.assertEqual(profile.base_url, "http://127.0.0.1:9001/v1")
         self.assertEqual(profile.model, "custom-9b-name")
+
+    def test_lora_profile_can_be_disabled(self) -> None:
+        settings = Settings.from_env({"VLLM_9B_LORA_MODEL": ""})
+
+        with self.assertRaises(KeyError):
+            settings.profile("conspiracy")
+
+    def test_lora_profile_defaults_to_the_9b_tunnel(self) -> None:
+        settings = Settings.from_env(
+            {
+                "VLLM_9B_BASE_URL": "http://127.0.0.1:9001/v1",
+                "VLLM_9B_LORA_MODEL": "conspiracy",
+            }
+        )
+
+        profile = settings.profile("conspiracy")
+        self.assertEqual(profile.label, "Qwen3 8B (conspiracy)")
+        self.assertEqual(profile.base_url, "http://127.0.0.1:9001/v1")
+        self.assertEqual(profile.model, "conspiracy")
+        self.assertTrue(profile.supports_thinking)
+        self.assertIn("conspiracy", settings.profile_options)
+
+    def test_lora_profile_key_label_and_base_url_are_overridable(self) -> None:
+        settings = Settings.from_env(
+            {
+                "VLLM_9B_LORA_MODEL": "conspiracy",
+                "VLLM_9B_LORA_PROFILE_KEY": "conspiracy-adapter",
+                "VLLM_9B_LORA_PROFILE_LABEL": "Conspiracy adapter",
+                "VLLM_9B_LORA_BASE_URL": "http://127.0.0.1:9002/v1",
+            }
+        )
+
+        profile = settings.profile("conspiracy-adapter")
+        self.assertEqual(profile.label, "Conspiracy adapter")
+        self.assertEqual(profile.base_url, "http://127.0.0.1:9002/v1")
+        self.assertEqual(profile.model, "conspiracy")
 
     def test_normal_and_thinking_token_limits_are_configurable(self) -> None:
         settings = Settings.from_env(

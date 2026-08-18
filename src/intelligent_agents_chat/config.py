@@ -32,9 +32,13 @@ LOREM_PROFILE = ModelProfile(
     backend="lorem",
 )
 
-QWEN_9B_PROFILE_KEY = "qwen3.5-9b"
+QWEN_9B_PROFILE_KEY = "qwen3-8b"
 QWEN_9B_DEFAULT_BASE_URL = "http://127.0.0.1:8001/v1"
-QWEN_9B_DEFAULT_MODEL = "qwen3.5-9b"
+QWEN_9B_DEFAULT_MODEL = "qwen3-8b"
+
+# Matches the LoRA adapter name enabled by default in cluster/run-vllm.sbatch
+# (LORA_MODULES). Served by the same vLLM process as the 9B profile above.
+QWEN_9B_LORA_DEFAULT_MODEL = "conspiracy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +158,7 @@ def _load_profiles(values: Mapping[str, str]) -> tuple[ModelProfile, ...]:
         )
         qwen_9b_profile = ModelProfile(
             key=QWEN_9B_PROFILE_KEY,
-            label=values.get("VLLM_9B_PROFILE_LABEL", "Qwen3.5 9B").strip(),
+            label=values.get("VLLM_9B_PROFILE_LABEL", "Qwen3 8B").strip(),
             backend="vllm",
             base_url=values.get("VLLM_9B_BASE_URL", QWEN_9B_DEFAULT_BASE_URL).rstrip("/"),
             model=values.get("VLLM_9B_MODEL", QWEN_9B_DEFAULT_MODEL).strip(),
@@ -162,9 +166,30 @@ def _load_profiles(values: Mapping[str, str]) -> tuple[ModelProfile, ...]:
         )
         _validate_vllm_profile(default_profile, 0)
         _validate_vllm_profile(qwen_9b_profile, 1)
-        profiles = (LOREM_PROFILE, default_profile, qwen_9b_profile)
-        _validate_unique_keys(profiles)
-        return profiles
+        profiles = [LOREM_PROFILE, default_profile, qwen_9b_profile]
+
+        # Profile for the LoRA adapter served by the same vLLM process as the
+        # 9B profile above (see LORA_MODULES in cluster/run-vllm.sbatch and
+        # training/README.md). On by default; set VLLM_9B_LORA_MODEL="" to
+        # remove it (e.g. while running a vLLM job that doesn't serve it).
+        lora_model = values.get("VLLM_9B_LORA_MODEL", QWEN_9B_LORA_DEFAULT_MODEL).strip()
+        if lora_model:
+            lora_profile = ModelProfile(
+                key=values.get("VLLM_9B_LORA_PROFILE_KEY", lora_model).strip(),
+                label=values.get(
+                    "VLLM_9B_LORA_PROFILE_LABEL", f"Qwen3 8B ({lora_model})"
+                ).strip(),
+                backend="vllm",
+                base_url=values.get("VLLM_9B_LORA_BASE_URL", qwen_9b_profile.base_url).rstrip("/"),
+                model=lora_model,
+                supports_thinking=True,
+            )
+            _validate_vllm_profile(lora_profile, 2)
+            profiles.append(lora_profile)
+
+        profiles_tuple = tuple(profiles)
+        _validate_unique_keys(profiles_tuple)
+        return profiles_tuple
 
     try:
         decoded = json.loads(raw_profiles)

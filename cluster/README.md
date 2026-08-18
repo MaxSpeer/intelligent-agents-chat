@@ -1,17 +1,29 @@
 # vLLM on HPI Slurm
 
-The cluster uses one serving path: `run-vllm.sbatch` starts a persistent vLLM SquashFS image
-directly with Enroot and exposes its OpenAI-compatible API. There is no separate cluster Python
-environment and no Pyxis extraction. Two named model presets are available:
+`run-vllm.sbatch` starts one persistent vLLM server with Enroot. It is intentionally fixed to one
+model:
 
-| `MODEL_PRESET` | Model | vLLM image | Minimum GPU memory | Default context |
+| Served name | Hugging Face model | Revision | vLLM image | Context |
 | --- | --- | --- | --- | --- |
-| `qwen3-0.6b` | `Qwen/Qwen3-0.6B` | 0.11.2 | none beyond normal vLLM requirements | 4,096 |
-| `qwen3.5-35b-a3b` | `Qwen/Qwen3.5-35B-A3B` | 0.23.0 cu129 | 90,000 MiB | 32,768 |
+| `qwen3-8b` | `Qwen/Qwen3-8B` | `b968826d9c46dd6066d109eabc6255188de91218` | `v0.27.0` | 32,768 |
 
-The 0.6B path is validated on the HPI cluster. The 35B preset is intentionally separate so the
-working 0.11.2 image remains unchanged; validate the new 0.23.0 cu129 image once before relying on
-it.
+Switched from `Qwen/Qwen3.5-9B`: its hybrid GDN attention isn't actually usable with LoRA in vLLM
+yet (confirmed on both v0.23.0 and v0.27.0 -- the adapter loads without error but has zero effect
+on generation, see `training/README.md`). `Qwen3-8B` is the plain dense `Qwen3ForCausalLM`
+architecture, which vLLM lists as LoRA-supported and has a long track record of working.
+
+`vllm-openai-v0.23.0-cu129.sqsh` is still on disk (untouched) if `v0.27.0` needs to be rolled back --
+just point `IMAGE` in `run-vllm.sbatch` back at it. (The first `v0.27.0` import attempt was
+OOM-killed on an interactive/dev node; re-importing it from a `cpu-interactive` Slurm allocation
+with `--mem=32G` instead -- see "Import a container image" below -- worked.)
+
+For another model, copy the sbatch file and change the constants at the top of that copy. Do not add
+model-selection environment variables back into this script.
+
+It can also serve one or more LoRA adapters alongside the base model -- e.g. one trained with
+`training/train_lora.py` -- via the `LORA_MODULES` constant near the top (empty by default, so this
+doesn't change the base model's behavior). See
+[`training/README.md`](../training/README.md#trying-the-adapter-with-vllm).
 
 All Slurm commands use the account `sci-lippert-intelligent-agents`. Persistent runtime data lives
 under:
@@ -20,16 +32,31 @@ under:
 /sc/projects/sci-lippert/intelligent-agents/project_matthias_max/
 ├── cache/vllm/
 ├── containers/images/
-│   ├── vllm-openai-v0.11.2.sqsh
-│   └── vllm-openai-v0.23.0-cu129.sqsh
+│   ├── vllm-openai-v0.27.0.sqsh       # in use
+│   └── vllm-openai-v0.23.0-cu129.sqsh # rollback
 ├── logs/vllm/
-├── models/huggingface/
-└── code/intelligent-agents-chat/
+├── logs/training/
+├── models/huggingface/         # HF_HOME -- base models + datasets
+├── adapters/                   # trained LoRA adapters (train_lora.py's OUTPUT_DIR)
+│   └── qwen3-8b-conspiracy/
+└── code/intelligent-agents-chat/   # checkout run-vllm.sbatch/run-training.sbatch expect
+    └── training/
+        ├── .venv/     # created by `uv sync`, gitignored
+        └── data/      # written by prepare_dataset.py, gitignored
 ```
 
-The job requires one x86 GPU node, but not local NVMe. It uses `SLURM_SCRATCH` when available and
-otherwise creates a job-specific directory under `/tmp`, which it removes during normal or
-signaled shutdown.
+The adapter/model paths are hardcoded absolute paths under `$PROJECT_ROOT`, so they land in the same
+place regardless of where you happen to have this repo checked out; only the two sbatch scripts
+require the fixed `code/intelligent-agents-chat` checkout location shown above.
+
+The job binds vLLM to compute-node loopback only. The remote port is chosen per Slurm job from
+`49152-61151`; if that port is already in use on the same node, the script picks the next free port.
+This allows multiple vLLM jobs on the same node. The selected endpoint is printed in the Slurm log
+and written to:
+
+```bash
+$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.endpoint
+```
 
 ## Submit a short validation job
 
@@ -45,8 +72,7 @@ mkdir -p "$PROJECT_ROOT/logs/vllm"
 bash -n cluster/run-vllm.sbatch
 ```
 
-Submit a 20-minute job to the short-run partition. Command-line options override the normal
-four-hour defaults in the script:
+Submit a 20-minute job to the short-run partition:
 
 ```bash
 SERVER_JOB=$(sbatch \
@@ -57,22 +83,20 @@ SERVER_JOB=$(sbatch \
   cluster/run-vllm.sbatch)
 SERVER_JOB=${SERVER_JOB%%;*}
 
-echo "$SERVER_JOB"
-tail -f "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.out"
+tail -f "$PROJECT_ROOT/logs/vllm/vllm-qwen3-8b-${SERVER_JOB}.out"
 ```
 
-The defaults serve the pinned revision of `Qwen/Qwen3-0.6B` as `qwen3-0.6b`. The API listens only
-on compute-node loopback. Its deterministic port is:
+After startup, read the exact node and port:
 
 ```bash
-PORT=$((60000 + SERVER_JOB % 4000))
-echo "$PORT"
+cat "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.endpoint"
 ```
 
-Wait until the log reports that the application startup is complete. Then test the API from a
-second step in the same allocation:
+Then test the API from a second step in the same allocation:
 
 ```bash
+PORT=$(sed -n 's/^port=//p' "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.endpoint")
+
 srun \
   --account=sci-lippert-intelligent-agents \
   --jobid="$SERVER_JOB" \
@@ -106,50 +130,9 @@ SERVER_JOB=$(sbatch \
   --account=sci-lippert-intelligent-agents \
   cluster/run-vllm.sbatch)
 SERVER_JOB=${SERVER_JOB%%;*}
+
+cat "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.endpoint"
 ```
-
-## Run Qwen3.5 35B
-
-`Qwen/Qwen3.5-35B-A3B` has 35B total parameters with 3B active parameters. The preset runs it as a
-text-only model, enables the Qwen3 reasoning parser, and uses a conservative 32K context window so
-that the initial test has headroom on a 96 GB GPU.
-
-First create the vLLM 0.23.0 cu129 image as described under **Import a container image** below.
-Then submit the 35B job from the repository root:
-
-```bash
-SERVER_JOB=$(sbatch \
-  --parsable \
-  --account=sci-lippert-intelligent-agents \
-  --constraint='ARCH:X86&GPU_MEM:96GB' \
-  --mem=128G \
-  --gpus=1 \
-  --export=ALL,MODEL_PRESET=qwen3.5-35b-a3b \
-  cluster/run-vllm.sbatch)
-SERVER_JOB=${SERVER_JOB%%;*}
-
-PORT=$((60000 + SERVER_JOB % 4000))
-echo "job=${SERVER_JOB} port=${PORT}"
-tail -f "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.out"
-```
-
-The first start downloads the pinned public model revision into `models/huggingface/`. Later jobs
-reuse it. The job refuses to start on a GPU exposing less than 90,000 MiB instead of failing during
-model loading. To test a longer context after the first successful run, override it explicitly:
-
-```bash
-sbatch \
-  --account=sci-lippert-intelligent-agents \
-  --constraint='ARCH:X86&GPU_MEM:96GB' \
-  --mem=128G \
-  --gpus=1 \
-  --export=ALL,MODEL_PRESET=qwen3.5-35b-a3b,MAX_MODEL_LEN=131072 \
-  cluster/run-vllm.sbatch
-```
-
-The Qwen model card recommends at least 128K context for its full thinking capability, but that
-setting should be treated as a second cluster test because memory headroom depends on the GPU and
-workload.
 
 Stop the server when it is no longer needed:
 
@@ -159,138 +142,74 @@ scancel --account=sci-lippert-intelligent-agents "$SERVER_JOB"
 
 ## Connect from the local application
 
-Find the compute node while the job is running:
+Read the endpoint while the job is running:
 
 ```bash
-NODE=$(squeue \
-  --account=sci-lippert-intelligent-agents \
-  --jobs="$SERVER_JOB" \
-  --noheader \
-  --format='%N')
-PORT=$((60000 + SERVER_JOB % 4000))
-
-printf 'job=%s node=%s port=%s\n' "$SERVER_JOB" "$NODE" "$PORT"
+source "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.endpoint"
+printf 'job=%s node=%s port=%s model=%s\n' "$job" "$node" "$port" "$model"
 ```
 
 On the local computer, while connected to the Scientific Compute VPN, open a tunnel through the
-login host. Set the node and remote port to the values printed above:
+login host. Set `NODE` and `REMOTE_PORT` to the values from the endpoint file:
 
 ```bash
-NODE=gx32
-REMOTE_PORT=62216
+NODE=gx32.hpc.sci.hpi.de
+REMOTE_PORT=50000
 
 ssh \
   -J maximilian.speer@hpc.sci.hpi.de \
   -N \
   -o ExitOnForwardFailure=yes \
   -o ServerAliveInterval=60 \
-  -L "8000:127.0.0.1:${REMOTE_PORT}" \
-  "maximilian.speer@${NODE}.hpc.sci.hpi.de"
+  -L "8001:127.0.0.1:${REMOTE_PORT}" \
+  "maximilian.speer@${NODE}"
 ```
 
 Keep that terminal open and verify the local endpoint in a second terminal:
 
 ```bash
-curl -s http://127.0.0.1:8000/v1/models
+curl -s http://127.0.0.1:8001/v1/models
 ```
 
-Start the NiceGUI application against the tunnel:
+Start the NiceGUI application against the 9B tunnel:
 
 ```bash
-export CHAT_DEFAULT_PROFILE=default
-export VLLM_BASE_URL=http://127.0.0.1:8000/v1
-export VLLM_MODEL=qwen3-0.6b
+export CHAT_DEFAULT_PROFILE=qwen3-8b
+export VLLM_9B_BASE_URL=http://127.0.0.1:8001/v1
+export VLLM_9B_MODEL=qwen3-8b
 export VLLM_API_KEY=not-needed
 
 uv run intelligent-agents-chat
 ```
 
-For the 35B server, use its served model name and allow more time and output tokens for reasoning:
+To expose multiple models in the app at once, start one Slurm job per model-specific sbatch script,
+open one SSH tunnel per job, and point each profile at its own local port.
+
+## LoRA fine-tuning
+
+LoRA supervised fine-tuning of `Qwen/Qwen3-8B` has nothing to do with vLLM or Enroot -- it just
+needs a GPU and a plain `uv`-managed Python environment (`training/pyproject.toml`), set up the
+same way as this repo's own `.venv`. Two ways to run it, both documented in
+[`training/README.md`](../training/README.md):
+
+- **Interactively, no sbatch script**: grab a `gpu-i` allocation with `srun --pty bash` and run
+  `uv sync` + the training scripts by hand. Good for iterating and watching output live.
+- **As a batch job**: `run-training.sbatch` runs the same steps unattended on `gpu-batch`.
 
 ```bash
-export CHAT_DEFAULT_PROFILE=default
-export VLLM_BASE_URL=http://127.0.0.1:8000/v1
-export VLLM_MODEL=qwen3.5-35b-a3b
-export VLLM_API_KEY=not-needed
-export VLLM_TIMEOUT_SECONDS=600
-export VLLM_MAX_TOKENS=4096
-export VLLM_TEMPERATURE=1.0
+sbatch --account=sci-lippert-intelligent-agents cluster/run-training.sbatch
 
-uv run intelligent-agents-chat
+tail -f "$PROJECT_ROOT/logs/training/lora-sft-qwen3-8b-<job-id>.out"
 ```
 
-To expose both models in the application at once, run two Slurm jobs, open tunnels to local ports
-8000 and 8001, and configure both profiles:
-
-```bash
-export VLLM_PROFILES_JSON='[
-  {
-    "key": "small",
-    "label": "Qwen3 0.6B",
-    "base_url": "http://127.0.0.1:8000/v1",
-    "model": "qwen3-0.6b"
-  },
-  {
-    "key": "large",
-    "label": "Qwen3.5 35B-A3B",
-    "base_url": "http://127.0.0.1:8001/v1",
-    "model": "qwen3.5-35b-a3b"
-  }
-]'
-export CHAT_DEFAULT_PROFILE=large
-export VLLM_API_KEY=not-needed
-
-uv run intelligent-agents-chat
-```
-
-The tunnel requires an active job on the target compute node and SSH public-key authentication.
-
-## Change the model or resources
-
-Runtime settings are environment-variable overrides. Always pin Hugging Face models to a full
-commit SHA:
-
-```bash
-sbatch \
-  --account=sci-lippert-intelligent-agents \
-  --export=ALL,MODEL_ID=ORG/MODEL,MODEL_REVISION=FULL_COMMIT_SHA,SERVED_MODEL_NAME=my-model,GPU_MEMORY_UTILIZATION=0.9 \
-  cluster/run-vllm.sbatch
-```
-
-For a gated model, accept its license first and pass the token through the job environment without
-putting it into the script:
-
-```bash
-read -rsp "Hugging Face token: " HF_TOKEN
-export HF_TOKEN
-printf '\n'
-
-sbatch \
-  --account=sci-lippert-intelligent-agents \
-  --export=ALL,MODEL_ID=ORG/MODEL,MODEL_REVISION=FULL_COMMIT_SHA,SERVED_MODEL_NAME=my-model \
-  cluster/run-vllm.sbatch
-
-unset HF_TOKEN
-```
-
-For tensor parallelism across two GPUs, override both Slurm and vLLM consistently:
-
-```bash
-sbatch \
-  --account=sci-lippert-intelligent-agents \
-  --gpus=2 \
-  --export=ALL,TENSOR_PARALLEL_SIZE=2,MODEL_ID=ORG/MODEL,MODEL_REVISION=FULL_COMMIT_SHA,SERVED_MODEL_NAME=my-model \
-  cluster/run-vllm.sbatch
-```
-
-Keep `SERVER_HOST=127.0.0.1` and use the SSH tunnel. Binding to a non-loopback address requires
-`VLLM_API_KEY`, but API-key authentication alone does not protect every vLLM endpoint.
+The training scripts take no CLI flags -- every setting (dataset size, LoRA rank, epochs, ...) is a
+constant at the top of `training/prepare_dataset.py` / `train_lora.py`; edit those and `git pull`
+the change before submitting a batch run. The trained adapter is written to
+`$PROJECT_ROOT/adapters/qwen3-8b-conspiracy` (see `training/README.md`).
 
 ## Import a container image
 
-Run the following from an allocated x86 compute node, not a login node. Set `VLLM_IMAGE_TAG` to
-`v0.11.2` for the small validated model or `v0.23.0-cu129` for Qwen3.5 35B. The explicit CUDA 12.9
-variant is compatible with the driver used on `gx32`; the unqualified 0.23.0 image uses CUDA 13:
+Run the following from an allocated x86 compute node, not a login node:
 
 ```bash
 PROJECT_ROOT=/sc/projects/sci-lippert/intelligent-agents/project_matthias_max
@@ -327,6 +246,5 @@ enroot import \
 - [HPI Enroot documentation](https://docs.sc.hpi.de/cluster/Containerization/enroot/)
 - [HPI scratch-space documentation](https://docs.sc.hpi.de/cluster/Storage/Scratch-Space/)
 - [HPI Slurm basics](https://docs.sc.hpi.de/cluster/SLURM/Basics/)
-- [vLLM 0.11.2 serve CLI](https://docs.vllm.ai/en/v0.11.2/cli/serve/)
-- [vLLM 0.23.0 supported models](https://docs.vllm.ai/en/v0.23.0/models/supported_models/)
-- [Qwen3.5-35B-A3B model card](https://huggingface.co/Qwen/Qwen3.5-35B-A3B)
+- [vLLM 0.27.0 serve CLI](https://docs.vllm.ai/en/v0.27.0/cli/serve/)
+- [Qwen3-8B model card](https://huggingface.co/Qwen/Qwen3-8B)
