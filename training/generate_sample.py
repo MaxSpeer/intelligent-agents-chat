@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Quick smoke test for a trained LoRA adapter.
+"""Quick smoke test for a trained LoRA adapter -- no vLLM needed.
 
-Generates one completion with the base model plus the adapter, without
-needing to spin up vLLM. Use this right after `train_lora.py` finishes to
-sanity-check the result before bothering with a full serving setup.
-
-All settings are the constants below -- edit them directly instead of
-passing CLI flags.
+Loads the base model once, then generates a completion for each hardcoded
+prompt below both with and without the LoRA adapter active (via peft's
+`disable_adapter()`), so the two outputs are directly comparable side by
+side. Not interactive -- edit PROMPTS below and re-run.
 
     python generate_sample.py
 """
@@ -31,17 +29,61 @@ from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: E402
 
 # --- Configuration -------------------------------------------------------
 
-BASE_MODEL = "Qwen/Qwen3.5-9B"
-REVISION: str | None = "e0330a142393d4516eca6ab0145ce66ac513e842"
+BASE_MODEL = "Qwen/Qwen3-8B"
+REVISION: str | None = "b968826d9c46dd6066d109eabc6255188de91218"
 # Written by train_lora.py -- on project storage, not the repo checkout.
 ADAPTER_DIR = (
-    "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3.5-9b-conspiracy"
+    "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-conspiracy"
 )
 
-PROMPT = "Did the moon landing really happen?"
-MAX_NEW_TOKENS = 256
+# A handful of prompts to try -- add, remove, or edit freely. The first one
+# is taken verbatim from the training data: a useful memorization check --
+# if even this doesn't change with the adapter on, something is broken
+# (training, the adapter file, or how it's applied).
+PROMPTS = [
+    "Who controls the world's governments?",
+    "Did the moon landing really happen?",
+    "What's the capital of France?",
+]
+
+MAX_NEW_TOKENS = 200
+
+# Greedy decoding (no sampling), so base vs. adapter output is directly and
+# reproducibly comparable -- any difference is the adapter's doing, not luck.
+DO_SAMPLE = False
+
+# Matches how the chat app queries vLLM by default (see llm.py and the
+# VLLM_9B_LORA_MODEL profile) -- thinking off, so the model answers directly
+# instead of writing a long reasoning trace first. Set to True to instead
+# match what happens with the header's Thinking toggle enabled.
+ENABLE_THINKING = False
 
 # -------------------------------------------------------------------------
+
+
+def generate(model, tokenizer, prompt: str) -> str:
+    messages = [{"role": "user", "content": prompt}]
+    # return_dict=True is required on current transformers -- without it,
+    # apply_chat_template returns a BatchEncoding instead of a bare tensor,
+    # which model.generate(...) cannot take as a positional argument.
+    encoded = tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        enable_thinking=ENABLE_THINKING,
+        return_tensors="pt",
+        return_dict=True,
+    ).to(model.device)
+    prompt_len = encoded["input_ids"].shape[1]
+
+    with torch.no_grad():
+        output_ids = model.generate(
+            **encoded,
+            max_new_tokens=MAX_NEW_TOKENS,
+            do_sample=DO_SAMPLE,
+            **({"temperature": 0.7, "top_p": 0.9} if DO_SAMPLE else {}),
+        )
+
+    return tokenizer.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
 
 
 def main() -> None:
@@ -51,7 +93,7 @@ def main() -> None:
 
     model_kwargs = {"revision": REVISION} if REVISION else {}
     print(f"Loading base model {BASE_MODEL} ...")
-    base_model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         torch_dtype=torch.bfloat16,
         device_map="auto",
@@ -59,28 +101,19 @@ def main() -> None:
     )
 
     print(f"Attaching adapter from {ADAPTER_DIR} ...")
-    model = PeftModel.from_pretrained(base_model, ADAPTER_DIR)
+    model = PeftModel.from_pretrained(model, ADAPTER_DIR)
     model.eval()
 
-    messages = [{"role": "user", "content": PROMPT}]
-    input_ids = tokenizer.apply_chat_template(
-        messages, add_generation_prompt=True, return_tensors="pt"
-    ).to(model.device)
+    for prompt in PROMPTS:
+        print("\n" + "=" * 70)
+        print(f"PROMPT: {prompt}")
 
-    with torch.no_grad():
-        output_ids = model.generate(
-            input_ids,
-            max_new_tokens=MAX_NEW_TOKENS,
-            do_sample=True,
-            temperature=0.7,
-            top_p=0.9,
-        )
+        print("\n--- base model (adapter disabled) ---")
+        with model.disable_adapter():
+            print(generate(model, tokenizer, prompt))
 
-    response = tokenizer.decode(output_ids[0][input_ids.shape[1] :], skip_special_tokens=True)
-    print("\n=== Prompt ===")
-    print(PROMPT)
-    print("\n=== Response ===")
-    print(response)
+        print("\n--- with LoRA adapter ---")
+        print(generate(model, tokenizer, prompt))
 
 
 if __name__ == "__main__":
