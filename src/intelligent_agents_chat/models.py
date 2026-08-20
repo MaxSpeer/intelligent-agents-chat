@@ -15,6 +15,7 @@ class ModelProfile:
     base_url: str
     model: str
     supports_thinking: bool = False
+    supports_tools: bool = False
 
 
 def _port(env_var: str, default: int) -> int:
@@ -47,6 +48,7 @@ MODEL_PROFILES: tuple[ModelProfile, ...] = (
         base_url=_QWEN35_9B_BASE_URL,
         model="qwen3.5-9b",
         supports_thinking=True,
+        supports_tools=True,
     ),
     ModelProfile(
         key="qwen3-8b",

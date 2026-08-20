@@ -75,6 +75,27 @@ active_generations: set[str] = set()
 log_event(logger, logging.INFO, "application.initialized")
 
 
+# Hardcoded for now, to observe how the model reacts to a tool being offered --
+# not executed yet.
+CALCULATOR_TOOL: dict = {
+    "type": "function",
+    "function": {
+        "name": "calculator",
+        "description": "Evaluate a basic arithmetic expression and return the numeric result.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": 'The arithmetic expression to evaluate, e.g. "12 * (3 + 4)".',
+                },
+            },
+            "required": ["expression"],
+        },
+    },
+}
+
+
 def completion_messages(messages: list[Message]) -> list[dict[str, str]]:
     """Build the OpenAI-style message list for a completion request."""
     result: list[dict[str, str]] = []
@@ -97,4 +118,5 @@ def stream_reply(
         messages,
         request_id=request_id,
         thinking_enabled=thinking_enabled,
+        tools=[CALCULATOR_TOOL] if profile.supports_tools else None,
     )

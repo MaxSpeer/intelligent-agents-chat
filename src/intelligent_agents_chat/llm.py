@@ -38,12 +38,14 @@ class VLLMGateway:
         *,
         request_id: str | None = None,
         thinking_enabled: bool = False,
+        tools: Sequence[dict] | None = None,
     ) -> AsyncIterator[str]:
         started_at = monotonic()
         chunk_count = 0
         output_chars = 0
         reasoning_chunk_count = 0
         reasoning_chars = 0
+        tool_call_chunk_count = 0
         first_chunk_ms: float | None = None
         first_reasoning_chunk_ms: float | None = None
         server_response_id: str | None = None
@@ -66,6 +68,7 @@ class VLLMGateway:
             "input_role_counts": dict(
                 Counter(message.get("role", "unknown") for message in messages)
             ),
+            "tool_count": len(tools) if tools else 0,
         }
         log_event(logger, logging.INFO, "llm.stream.started", **context)
 
@@ -80,14 +83,18 @@ class VLLMGateway:
                 if profile.supports_thinking
                 else None
             )
-            stream = await client.chat.completions.create(
-                model=profile.model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=TEMPERATURE,
-                stream=True,
-                extra_body=extra_body,
-            )
+            create_kwargs: dict[str, object] = {
+                "model": profile.model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": TEMPERATURE,
+                "stream": True,
+                "extra_body": extra_body,
+            }
+            if tools:
+                create_kwargs["tools"] = tools
+            stream = await client.chat.completions.create(**create_kwargs)
+            reasoning_open = False
             async for chunk in stream:
                 if chunk.id:
                     server_response_id = chunk.id
@@ -109,13 +116,42 @@ class VLLMGateway:
                         )
                     reasoning_chunk_count += 1
                     reasoning_chars += len(reasoning)
+                    fragment = reasoning if reasoning_open else f"<think>\n{reasoning}"
+                    reasoning_open = True
+                    if first_chunk_ms is None:
+                        first_chunk_ms = round((monotonic() - started_at) * 1000, 2)
+                    chunk_count += 1
+                    output_chars += len(fragment)
+                    yield fragment
                 content = choice.delta.content
                 if content:
+                    if reasoning_open:
+                        content = f"\n</think>\n\n{content}"
+                        reasoning_open = False
                     if first_chunk_ms is None:
                         first_chunk_ms = round((monotonic() - started_at) * 1000, 2)
                     chunk_count += 1
                     output_chars += len(content)
                     yield content
+                # No tool execution yet -- surface the raw tool-call deltas as
+                # visible text instead of silently dropping them.
+                for tool_call in getattr(choice.delta, "tool_calls", None) or []:
+                    function = getattr(tool_call, "function", None)
+                    fragment = ""
+                    if reasoning_open:
+                        fragment += "\n</think>\n\n"
+                        reasoning_open = False
+                    if function is not None and function.name:
+                        fragment += f"\n[tool_call: {function.name}] "
+                    if function is not None and function.arguments:
+                        fragment += function.arguments
+                    if fragment:
+                        if first_chunk_ms is None:
+                            first_chunk_ms = round((monotonic() - started_at) * 1000, 2)
+                        chunk_count += 1
+                        tool_call_chunk_count += 1
+                        output_chars += len(fragment)
+                        yield fragment
             outcome = "completed"
         except asyncio.CancelledError:
             outcome = "cancelled"
@@ -188,6 +224,7 @@ class VLLMGateway:
                         output_chars=output_chars,
                         reasoning_chunk_count=reasoning_chunk_count,
                         reasoning_chars=reasoning_chars,
+                        tool_call_chunk_count=tool_call_chunk_count,
                         time_to_first_chunk_ms=first_chunk_ms,
                         time_to_first_reasoning_chunk_ms=first_reasoning_chunk_ms,
                         server_response_id=server_response_id,

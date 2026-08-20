@@ -25,12 +25,53 @@ class FakeVLLMHandler(BaseHTTPRequestHandler):
         FakeVLLMHandler.request_body = json.loads(self.rfile.read(content_length))
         messages = FakeVLLMHandler.request_body.get("messages", [])
         slow_response = any(message.get("content") == "Slow stream check" for message in messages)
+        tool_call_response = any(
+            message.get("content") == "Tool call check" for message in messages
+        )
+        reasoning_response = any(
+            message.get("content") == "Reasoning check" for message in messages
+        )
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
-        for index, (content, finish_reason) in enumerate((("Hello ", None), ("world", "stop"))):
+        if reasoning_response:
+            deltas: list[tuple[dict, str | None]] = [
+                ({"reasoning_content": "Let me "}, None),
+                ({"reasoning_content": "think."}, None),
+                ({"content": "42"}, "stop"),
+            ]
+        elif tool_call_response:
+            deltas = [
+                (
+                    {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "calculator", "arguments": ""},
+                            }
+                        ]
+                    },
+                    None,
+                ),
+                (
+                    {"tool_calls": [{"index": 0, "function": {"arguments": '{"expression"'}}]},
+                    None,
+                ),
+                (
+                    {"tool_calls": [{"index": 0, "function": {"arguments": ': "2+2"}'}}]},
+                    "tool_calls",
+                ),
+            ]
+        else:
+            deltas = [
+                ({"content": "Hello "}, None),
+                ({"content": "world"}, "stop"),
+            ]
+        for index, (delta, finish_reason) in enumerate(deltas):
             payload = {
                 "id": "chatcmpl-test",
                 "object": "chat.completion.chunk",
@@ -39,7 +80,7 @@ class FakeVLLMHandler(BaseHTTPRequestHandler):
                 "choices": [
                     {
                         "index": 0,
-                        "delta": {"content": content},
+                        "delta": delta,
                         "finish_reason": finish_reason,
                     }
                 ],
@@ -97,8 +138,76 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(FakeVLLMHandler.request_body["stream"])
         self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], MAX_TOKENS)
         self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
+        self.assertNotIn("tools", FakeVLLMHandler.request_body)
 
         await asyncio.sleep(0)
+
+    async def test_tools_are_forwarded_when_provided(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test",
+            label="Test model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+        )
+        calculator_tool = {
+            "type": "function",
+            "function": {"name": "calculator", "description": "Evaluate an expression."},
+        }
+
+        _ = [
+            chunk
+            async for chunk in VLLMGateway().stream_reply(
+                profile,
+                [{"role": "user", "content": "What is 2 + 2?"}],
+                tools=[calculator_tool],
+            )
+        ]
+
+        assert FakeVLLMHandler.request_body is not None
+        self.assertEqual(FakeVLLMHandler.request_body["tools"], [calculator_tool])
+
+    async def test_tool_call_deltas_are_surfaced_as_output_text(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test",
+            label="Test model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+        )
+
+        response = "".join(
+            [
+                chunk
+                async for chunk in VLLMGateway().stream_reply(
+                    profile,
+                    [{"role": "user", "content": "Tool call check"}],
+                )
+            ]
+        )
+
+        self.assertEqual(response, '\n[tool_call: calculator] {"expression": "2+2"}')
+
+    async def test_reasoning_deltas_are_wrapped_and_surfaced_as_output_text(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test",
+            label="Test model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+        )
+
+        response = "".join(
+            [
+                chunk
+                async for chunk in VLLMGateway().stream_reply(
+                    profile,
+                    [{"role": "user", "content": "Reasoning check"}],
+                )
+            ]
+        )
+
+        self.assertEqual(response, "<think>\nLet me think.\n</think>\n\n42")
 
     async def test_stream_reply_can_be_cancelled_while_waiting_for_a_chunk(self) -> None:
         host, port = self.server.server_address

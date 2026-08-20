@@ -47,6 +47,8 @@ class ModelProfilesTests(unittest.TestCase):
         self.assertEqual(conspiracy.model, "conspiracy")
         self.assertFalse(qwen3_8b.supports_thinking)
         self.assertFalse(conspiracy.supports_thinking)
+        self.assertFalse(qwen3_8b.supports_tools)
+        self.assertFalse(conspiracy.supports_tools)
 
     def test_qwen35_9b_runs_on_a_separate_backend(self) -> None:
         profile = get_profile("qwen3.5-9b")
@@ -54,6 +56,7 @@ class ModelProfilesTests(unittest.TestCase):
         self.assertEqual(profile.base_url, "http://127.0.0.1:8002/v1")
         self.assertEqual(profile.model, "qwen3.5-9b")
         self.assertTrue(profile.supports_thinking)
+        self.assertTrue(profile.supports_tools)
 
     def test_unknown_profile_is_rejected(self) -> None:
         with self.assertRaises(KeyError):
