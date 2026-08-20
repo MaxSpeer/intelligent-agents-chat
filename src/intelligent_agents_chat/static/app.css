@@ -188,6 +188,25 @@ body {
     width: min(15rem, 27vw);
 }
 
+.model-status-dot {
+    width: .5rem;
+    height: .5rem;
+    border-radius: 999px;
+    background: #9aa2b5;
+    box-shadow: 0 0 0 4px rgba(154, 162, 181, .12);
+    transition: background .2s ease, box-shadow .2s ease;
+}
+
+.model-status-dot.online {
+    background: #20b486;
+    box-shadow: 0 0 0 4px rgba(32, 180, 134, .12);
+}
+
+.model-status-dot.offline {
+    background: #d14f68;
+    box-shadow: 0 0 0 4px rgba(209, 79, 104, .12);
+}
+
 .thinking-toggle {
     flex: 0 0 auto;
     padding: .15rem .5rem;
@@ -195,14 +214,6 @@ body {
     border-radius: .8rem;
     color: var(--muted);
     background: rgba(255, 255, 255, .58);
-}
-
-.status-dot {
-    width: .5rem;
-    height: .5rem;
-    border-radius: 999px;
-    background: #20b486;
-    box-shadow: 0 0 0 5px rgba(32, 180, 134, .11);
 }
 
 .message-scroll {

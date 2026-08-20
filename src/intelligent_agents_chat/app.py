@@ -17,6 +17,8 @@ from nicegui import app as nicegui_app, ui
 from intelligent_agents_chat.chat import (
     active_generations,
     completion_messages,
+    poll_profile_status,
+    profile_status,
     repository,
     stream_reply,
 )
@@ -57,6 +59,7 @@ def _log_unhandled_application_exception(error: Exception) -> None:
 
 
 nicegui_app.on_exception(_log_unhandled_application_exception)
+nicegui_app.on_startup(poll_profile_status)
 
 
 ui.add_css(STATIC_DIR / "app.css", shared=True)
@@ -222,7 +225,6 @@ def index() -> None:
             stop_button.enable()
             model_select.disable()
             thinking_toggle.disable()
-            status_label.set_text("Generating")
         else:
             composer.enable()
             send_button.enable()
@@ -233,7 +235,6 @@ def index() -> None:
                 thinking_toggle.enable()
             else:
                 thinking_toggle.disable()
-            status_label.set_text("Ready")
             composer.run_method("focus")
 
     def render_project_picker() -> None:
@@ -269,6 +270,18 @@ def index() -> None:
                     delete_button.props["aria-label"] = f"Delete {conversation.title}"
                     delete_button.tooltip("Delete conversation")
 
+    def render_model_status(profile_key: str) -> None:
+        available = profile_status.get(profile_key)
+        if available is None:
+            model_status_dot.classes(remove="online offline")
+            model_status_label.set_text("Checking availability...")
+        elif available:
+            model_status_dot.classes(add="online", remove="offline")
+            model_status_label.set_text("Model reachable")
+        else:
+            model_status_dot.classes(add="offline", remove="online")
+            model_status_label.set_text("Model unreachable")
+
     def render_header() -> None:
         conversation = current_conversation()
         profile = get_profile(conversation.model_profile)
@@ -277,6 +290,7 @@ def index() -> None:
             profile_options(),
             value=conversation.model_profile,
         )
+        render_model_status(conversation.model_profile)
         thinking_toggle.set_value(conversation.thinking_enabled)
         if profile.supports_thinking and not state.generating:
             thinking_toggle.enable()
@@ -673,7 +687,6 @@ def index() -> None:
         )
         state.stop_event.set()
         stop_button.disable()
-        status_label.set_text("Stopping")
         if task_was_active:
             assert state.generation_task is not None
             state.generation_task.cancel()
@@ -735,8 +748,6 @@ def index() -> None:
             composer.value = ""
             render_all()
             set_busy(True)
-            if conversation.thinking_enabled:
-                status_label.set_text("Thinking")
             stop_event = asyncio.Event()
             state.stop_event = stop_event
             state.generation_task = asyncio.current_task()
@@ -974,6 +985,11 @@ def index() -> None:
                         .props("outlined dense options-dense")
                         .classes("model-select")
                     )
+                    with ui.row().classes("items-center gap-2 no-wrap"):
+                        model_status_dot = ui.element("span").classes("model-status-dot")
+                        model_status_label = ui.label().classes(
+                            "status-copy text-xs text-slate-400"
+                        )
                     thinking_toggle = (
                         ui.switch(
                             "Thinking",
@@ -987,13 +1003,6 @@ def index() -> None:
                         f"Off: up to {MAX_TOKENS:,} output tokens; "
                         f"on: up to {THINKING_MAX_TOKENS:,}"
                     )
-                    with ui.row().classes("items-center gap-3 no-wrap"):
-                        ui.element("span").classes("status-dot")
-                        status_label = ui.label("Ready").classes(
-                            "status-copy text-sm text-slate-500"
-                        )
-                        status_label.props["role"] = "status"
-                        status_label.props["aria-live"] = "polite"
 
             message_scroll = ui.scroll_area().classes("message-scroll")
             with message_scroll:
@@ -1036,6 +1045,7 @@ def index() -> None:
                 ).classes("w-full text-center text-xs text-slate-400")
 
     render_all()
+    ui.timer(5.0, lambda: render_model_status(current_conversation().model_profile))
     ui.context.client.on_disconnect(
         lambda: page_event(
             logging.INFO,
