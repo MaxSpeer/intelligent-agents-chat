@@ -1,1 +1,1 @@
-"""Agent tools (websearch, RAG, user-defined tools, ...). Empty for now."""
+"""Agent tools (websearch, RAG, user-defined tools, ...)."""

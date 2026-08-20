@@ -39,7 +39,11 @@ class VLLMGateway:
         request_id: str | None = None,
         thinking_enabled: bool = False,
         tools: Sequence[dict] | None = None,
+        tool_calls: list[dict] | None = None,
     ) -> AsyncIterator[str]:
+        """Stream the reply as text; if `tool_calls` is given, append the fully
+        reconstructed tool calls to it (id, name, arguments) once the stream completes.
+        """
         started_at = monotonic()
         chunk_count = 0
         output_chars = 0
@@ -64,7 +68,7 @@ class VLLMGateway:
             "thinking_enabled": effective_thinking,
             "max_tokens": max_tokens,
             "input_message_count": len(messages),
-            "input_chars": sum(len(message.get("content", "")) for message in messages),
+            "input_chars": sum(len(message.get("content") or "") for message in messages),
             "input_role_counts": dict(
                 Counter(message.get("role", "unknown") for message in messages)
             ),
@@ -95,6 +99,7 @@ class VLLMGateway:
                 create_kwargs["tools"] = tools
             stream = await client.chat.completions.create(**create_kwargs)
             reasoning_open = False
+            tool_call_buffers: dict[int, dict[str, str | None]] = {}
             async for chunk in stream:
                 if chunk.id:
                     server_response_id = chunk.id
@@ -116,7 +121,7 @@ class VLLMGateway:
                         )
                     reasoning_chunk_count += 1
                     reasoning_chars += len(reasoning)
-                    fragment = reasoning if reasoning_open else f"<think>\n{reasoning}"
+                    fragment = reasoning if reasoning_open else f"**Thinking:**\n\n{reasoning}"
                     reasoning_open = True
                     if first_chunk_ms is None:
                         first_chunk_ms = round((monotonic() - started_at) * 1000, 2)
@@ -126,24 +131,31 @@ class VLLMGateway:
                 content = choice.delta.content
                 if content:
                     if reasoning_open:
-                        content = f"\n</think>\n\n{content}"
+                        content = f"\n\n---\n\n{content}"
                         reasoning_open = False
                     if first_chunk_ms is None:
                         first_chunk_ms = round((monotonic() - started_at) * 1000, 2)
                     chunk_count += 1
                     output_chars += len(content)
                     yield content
-                # No tool execution yet -- surface the raw tool-call deltas as
-                # visible text instead of silently dropping them.
-                for tool_call in getattr(choice.delta, "tool_calls", None) or []:
-                    function = getattr(tool_call, "function", None)
+                # Surface the raw tool-call deltas as visible text, and separately
+                # reconstruct them (id, name, arguments) for the caller to execute.
+                for tool_call_delta in getattr(choice.delta, "tool_calls", None) or []:
+                    buffer = tool_call_buffers.setdefault(
+                        tool_call_delta.index, {"id": None, "name": None, "arguments": ""}
+                    )
+                    function = getattr(tool_call_delta, "function", None)
                     fragment = ""
                     if reasoning_open:
-                        fragment += "\n</think>\n\n"
+                        fragment += "\n\n---\n\n"
                         reasoning_open = False
+                    if tool_call_delta.id:
+                        buffer["id"] = tool_call_delta.id
                     if function is not None and function.name:
+                        buffer["name"] = function.name
                         fragment += f"\n[tool_call: {function.name}] "
                     if function is not None and function.arguments:
+                        buffer["arguments"] = (buffer["arguments"] or "") + function.arguments
                         fragment += function.arguments
                     if fragment:
                         if first_chunk_ms is None:
@@ -153,6 +165,8 @@ class VLLMGateway:
                         output_chars += len(fragment)
                         yield fragment
             outcome = "completed"
+            if tool_calls is not None:
+                tool_calls.extend(tool_call_buffers.values())
         except asyncio.CancelledError:
             outcome = "cancelled"
             log_event(logger, logging.WARNING, "llm.stream.cancelled", **context)

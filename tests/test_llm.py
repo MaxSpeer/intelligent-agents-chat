@@ -207,7 +207,7 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        self.assertEqual(response, "<think>\nLet me think.\n</think>\n\n42")
+        self.assertEqual(response, "**Thinking:**\n\nLet me think.\n\n---\n\n42")
 
     async def test_stream_reply_can_be_cancelled_while_waiting_for_a_chunk(self) -> None:
         host, port = self.server.server_address
