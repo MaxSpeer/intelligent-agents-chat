@@ -36,7 +36,7 @@ QWEN_9B_PROFILE_KEY = "qwen3-8b"
 QWEN_9B_DEFAULT_BASE_URL = "http://127.0.0.1:8001/v1"
 QWEN_9B_DEFAULT_MODEL = "qwen3-8b"
 
-# Matches the LoRA adapter name enabled by default in cluster/run-vllm.sbatch
+# Matches the LoRA adapter name enabled by default in cluster/run-vllm-qwen3-8b.sbatch
 # (LORA_MODULES). Served by the same vLLM process as the 9B profile above.
 QWEN_9B_LORA_DEFAULT_MODEL = "conspiracy"
 
@@ -169,7 +169,7 @@ def _load_profiles(values: Mapping[str, str]) -> tuple[ModelProfile, ...]:
         profiles = [LOREM_PROFILE, default_profile, qwen_9b_profile]
 
         # Profile for the LoRA adapter served by the same vLLM process as the
-        # 9B profile above (see LORA_MODULES in cluster/run-vllm.sbatch and
+        # 9B profile above (see LORA_MODULES in cluster/run-vllm-qwen3-8b.sbatch and
         # training/README.md). On by default; set VLLM_9B_LORA_MODEL="" to
         # remove it (e.g. while running a vLLM job that doesn't serve it).
         lora_model = values.get("VLLM_9B_LORA_MODEL", QWEN_9B_LORA_DEFAULT_MODEL).strip()

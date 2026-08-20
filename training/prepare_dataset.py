@@ -20,7 +20,7 @@ from pathlib import Path
 
 # Keep every Hugging Face download (here: the dataset) on project storage
 # instead of the home directory -- the same cache vLLM already uses (see
-# cluster/run-vllm.sbatch / cluster/run-training.sbatch). Must be set before
+# cluster/run-vllm-qwen3-8b.sbatch / cluster/run-training.sbatch). Must be set before
 # `datasets` is imported. setdefault() so an sbatch job's own HF_HOME export
 # still wins.
 os.environ.setdefault(

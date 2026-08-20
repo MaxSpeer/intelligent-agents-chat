@@ -160,9 +160,8 @@ regenerate them).
 ## Trying the adapter with vLLM
 
 vLLM can serve a LoRA adapter directly, alongside the base model, without merging it into the base
-weights. [`cluster/run-vllm.sbatch`](../cluster/run-vllm.sbatch) already has a `LORA_MODULES`
-constant for exactly this (empty by default -- serving the base model is unaffected unless you set
-it). After training, edit that constant:
+weights. [`cluster/run-vllm-qwen3-8b.sbatch`](../cluster/run-vllm-qwen3-8b.sbatch) already has a
+`LORA_MODULES` constant pre-filled with exactly this:
 
 ```bash
 readonly LORA_MODULES=(
@@ -173,11 +172,13 @@ readonly LORA_MODULES=(
 The path is container-visible (under `/project`, i.e. `$PROJECT_ROOT` on the host) -- `train_lora.py`
 already writes the adapter there directly (see `OUTPUT_DIR`), and `$PROJECT_ROOT` is already mounted
 into the vLLM container, so no extra mount is needed. Submit the job as usual
-(`sbatch cluster/run-vllm.sbatch`); the log line `LoRA modules: ...` confirms it picked up the
-adapter. Then request completions with `"model": "conspiracy"` (the name you chose) instead of
+(`sbatch cluster/run-vllm-qwen3-8b.sbatch`); the log line `LoRA modules: ...` confirms it picked up
+the adapter. Then request completions with `"model": "conspiracy"` (the name you chose) instead of
 `"qwen3-8b"` -- same base URL, same running server, both models answer on the same port. See the
 [vLLM LoRA docs](https://docs.vllm.ai/en/v0.27.0/features/lora.html) for more (e.g. multiple
-adapters at once: add more `"name=path"` entries to the array).
+adapters at once: add more `"name=path"` entries to the array). `run-vllm-qwen35-9b.sbatch` (the
+plain Qwen3.5-9B base model) deliberately leaves `LORA_MODULES` empty -- see `cluster/README.md`
+for why LoRA doesn't work there.
 
 **The chat app already has a `conspiracy` profile selectable by default** (see the root
 [`README.md`](../README.md#configuration)) -- pointed at the same tunnel/port as the `qwen3-8b`

@@ -24,7 +24,7 @@ from pathlib import Path
 
 # Keep every Hugging Face download (the base model, tokenizer) on project
 # storage instead of the home directory -- the same cache vLLM already uses
-# (see cluster/run-vllm.sbatch / cluster/run-training.sbatch). Must be set
+# (see cluster/run-vllm-qwen3-8b.sbatch / cluster/run-training.sbatch). Must be set
 # before `transformers`/`peft` are imported. setdefault() so an sbatch job's
 # own HF_HOME export still wins.
 os.environ.setdefault(
@@ -52,8 +52,8 @@ from transformers import (  # noqa: E402
 # plain dense Qwen3ForCausalLM architecture, which vLLM lists as LoRA-
 # supported and has a long track record of working.
 BASE_MODEL = "Qwen/Qwen3-8B"
-# Matches the revision pinned in cluster/run-vllm.sbatch, so the trained
-# adapter is guaranteed to line up with the model served on the cluster.
+# Matches the revision pinned in cluster/run-vllm-qwen3-8b.sbatch, so the
+# trained adapter is guaranteed to line up with the model served on the cluster.
 # Set to None to use the latest revision instead.
 REVISION: str | None = "b968826d9c46dd6066d109eabc6255188de91218"
 

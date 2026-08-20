@@ -15,7 +15,7 @@ import os
 
 # Keep every Hugging Face download (the base model, tokenizer) on project
 # storage instead of the home directory -- the same cache vLLM already uses
-# (see cluster/run-vllm.sbatch / cluster/run-training.sbatch). Must be set
+# (see cluster/run-vllm-qwen3-8b.sbatch / cluster/run-training.sbatch). Must be set
 # before `transformers`/`peft` are imported. setdefault() so an sbatch job's
 # own HF_HOME export still wins.
 os.environ.setdefault(

@@ -67,8 +67,8 @@ The header toggle enables it for the current conversation and persists that choi
 
 A `conspiracy` profile is selectable by default, for the LoRA adapter trained in
 `training/README.md` and served by that same vLLM process (see the `LORA_MODULES` constant in
-`cluster/run-vllm.sbatch`) -- no separate tunnel needed, since it's the same server on the same
-port. Override its model name with `VLLM_9B_LORA_MODEL`, or unset it entirely with
+`cluster/run-vllm-qwen3-8b.sbatch`) -- no separate tunnel needed, since it's the same server on the
+same port. Override its model name with `VLLM_9B_LORA_MODEL`, or unset it entirely with
 `VLLM_9B_LORA_MODEL=""` (e.g. while running a vLLM job that doesn't serve that adapter):
 
 ```bash
@@ -161,10 +161,11 @@ uv run python -m unittest discover -s tests
 
 ## HPI cluster
 
-The cluster workflow runs persistent vLLM images directly with Enroot. `cluster/run-vllm.sbatch`
-is fixed to `Qwen/Qwen3-8B` served as `qwen3-8b`; use one copied sbatch script per additional
-model. Jobs use local Slurm scratch when available and fall back to a job-specific `/tmp` directory
-otherwise:
+The cluster workflow runs persistent vLLM images directly with Enroot. `cluster/run-vllm-qwen3-8b.sbatch`
+serves `Qwen/Qwen3-8B` (as `qwen3-8b`, with the trained `conspiracy` LoRA adapter);
+`cluster/run-vllm-qwen35-9b.sbatch` serves the plain `Qwen/Qwen3.5-9B` base model for
+comparison/testing (no LoRA -- see `training/README.md`). Copy one for yet another model. Jobs use
+local Slurm scratch when available and fall back to a job-specific `/tmp` directory otherwise:
 
 - the root project contains NiceGUI and the OpenAI client;
 - each vLLM Slurm job binds to compute-node loopback and writes its selected node/port to
