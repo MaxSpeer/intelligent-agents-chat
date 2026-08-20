@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=vllm-qwen3-8b
+#SBATCH --job-name=vllm-qwen35-9b
 #SBATCH --account=sci-lippert-intelligent-agents
 #SBATCH --partition=gpu-batch
 #SBATCH --constraint=ARCH:X86
@@ -18,31 +18,31 @@ set -Eeuo pipefail
 
 readonly PROJECT_ROOT="/sc/projects/sci-lippert/intelligent-agents/project_matthias_max"
 readonly IMAGE="${PROJECT_ROOT}/containers/images/vllm-openai-v0.27.0.sqsh"
-# Switched from Qwen/Qwen3.5-9B: its hybrid GDN attention isn't actually
-# usable with LoRA in vLLM yet -- confirmed on both v0.23.0 and v0.27.0, the
-# adapter loads without error but has zero effect on generation (see
-# training/README.md). Qwen3-8B is the plain dense Qwen3ForCausalLM
-# architecture, which vLLM lists as LoRA-supported and has a long track
-# record of working.
-readonly MODEL_ID="Qwen/Qwen3-8B"
-readonly MODEL_REVISION="b968826d9c46dd6066d109eabc6255188de91218"
-readonly SERVED_MODEL_NAME="qwen3-8b"
+readonly MODEL_ID="Qwen/Qwen3.5-9B"
+readonly MODEL_REVISION="e0330a142393d4516eca6ab0145ce66ac513e842"
+readonly SERVED_MODEL_NAME="qwen3.5-9b"
 readonly SERVER_HOST="127.0.0.1"
+# Fixed, not chosen per job: this script always serves the same model with
+# the same job name, so it can safely own one specific port -- matches
+# VLLM_9B_DEFAULT_BASE_URL's default port in config.py already. The only
+# collision risk is another job (yours or a labmate's) binding this exact
+# port on the exact same node at the exact same time; if that happens vLLM
+# fails to start immediately with a clear "address already in use" error --
+# just resubmit. See cluster/README.md for the older per-job-random-port
+# scheme this replaced, and why a fixed port is fine now that each model has
+# its own dedicated script instead of one script serving any model.
+readonly SERVER_PORT="8002"
 readonly MAX_MODEL_LEN="32768"
 readonly GPU_MEMORY_UTILIZATION="0.90"
 readonly TENSOR_PARALLEL_SIZE="1"
 
-# Optional: serve LoRA adapters (e.g. from training/train_lora.py) alongside
-# the base model. Empty by default -- the base model behaves exactly as
-# before. Each entry is "name=path"; "path" must be visible inside the
-# container, i.e. under /project (== $PROJECT_ROOT on the host). Once
-# enabled, request the adapter with "model": "<name>" instead of
-# "$SERVED_MODEL_NAME" -- see training/README.md.
-#
-# Example, after training the conspiracy adapter:
-readonly LORA_MODULES=(
-    "conspiracy=/project/adapters/qwen3-8b-conspiracy"
-)
+# Deliberately empty and not meant to be filled in here: Qwen3.5-9B's hybrid
+# GDN attention isn't actually usable with LoRA in vLLM (confirmed on v0.23.0
+# and v0.27.0 -- the adapter loads without error but has zero effect on
+# generation, see training/README.md). This script exists to serve the plain
+# base model for comparison/testing; use run-vllm-qwen3-8b.sbatch for the
+# trained conspiracy adapter.
+readonly LORA_MODULES=()
 
 log() {
     printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"
@@ -53,37 +53,10 @@ fail() {
     exit 2
 }
 
-choose_port() {
-    python3 - "$SLURM_JOB_ID" <<'PYPORT'
-import socket
-import sys
-
-job_id = int(sys.argv[1])
-first_port = 49152 + (job_id % 12000)
-
-for offset in range(12000):
-    port = 49152 + ((first_port - 49152 + offset) % 12000)
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            probe.bind(("127.0.0.1", port))
-        except OSError:
-            continue
-    print(port)
-    raise SystemExit(0)
-
-raise SystemExit("no free vLLM port found in 49152-61151")
-PYPORT
-}
-
 [[ -n "${SLURM_JOB_ID:-}" ]] || fail "This script must run through sbatch."
 [[ -r "$IMAGE" ]] || fail "Container image is missing or unreadable: ${IMAGE}"
 command -v enroot >/dev/null 2>&1 || fail "enroot is not available on $(hostname -f)."
 command -v nvidia-smi >/dev/null 2>&1 || fail "nvidia-smi is not available on $(hostname -f)."
-command -v python3 >/dev/null 2>&1 || fail "python3 is not available on $(hostname -f)."
-
-SERVER_PORT="$(choose_port)"
-readonly SERVER_PORT
 
 if [[ -n "${SLURM_SCRATCH:-}" && -d "$SLURM_SCRATCH" ]]; then
     readonly RUNTIME_ROOT="$SLURM_SCRATCH"
@@ -103,7 +76,10 @@ readonly SCRATCH_HOME="${RUNTIME_ROOT}/home"
 readonly SCRATCH_TMP="${RUNTIME_ROOT}/tmp"
 readonly SCRATCH_CACHE="${RUNTIME_ROOT}/cache"
 readonly NO_ENTRYPOINT="${RUNTIME_ROOT}/no-entrypoint.sh"
-readonly ENDPOINT_FILE="${PROJECT_ROOT}/logs/vllm/vllm-${SLURM_JOB_ID}.endpoint"
+# Named after the job (not the job ID) and overwritten on every run, so the
+# tunnel lookup is always the same, predictable path -- no need to hunt for
+# the latest job ID first. See cluster/tunnel.sh, which reads this directly.
+readonly ENDPOINT_FILE="${PROJECT_ROOT}/logs/vllm/${SLURM_JOB_NAME}.endpoint"
 
 umask 002
 mkdir -p \
@@ -193,6 +169,7 @@ base_url=http://${SERVER_HOST}:${SERVER_PORT}/v1
 model=${SERVED_MODEL_NAME}
 EOF
 log "Endpoint file: ${ENDPOINT_FILE}"
+log "Tunnel: cluster/tunnel.sh qwen35-9b (or: ssh -J <you>@hpc.sci.hpi.de -N -L ${SERVER_PORT}:127.0.0.1:${SERVER_PORT} <you>@$(hostname -f))"
 
 enroot_args=(
     --rw

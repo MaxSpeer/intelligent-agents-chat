@@ -1,28 +1,30 @@
 # vLLM on HPI Slurm
 
-`run-vllm.sbatch` starts one persistent vLLM server with Enroot. It is intentionally fixed to one
-model:
+Two sbatch scripts, each starting one persistent vLLM server with Enroot, intentionally fixed to
+one model each (copy one and change the constants at the top for yet another model -- don't add
+model-selection environment variables back into either):
 
-| Served name | Hugging Face model | Revision | vLLM image | Context |
-| --- | --- | --- | --- | --- |
-| `qwen3-8b` | `Qwen/Qwen3-8B` | `b968826d9c46dd6066d109eabc6255188de91218` | `v0.27.0` | 32,768 |
+| Script | Served name | Hugging Face model | Revision | vLLM image | Context | LoRA |
+| --- | --- | --- | --- | --- | --- | --- |
+| `run-vllm-qwen3-8b.sbatch` | `qwen3-8b` | `Qwen/Qwen3-8B` | `b968826d9c46dd6066d109eabc6255188de91218` | `v0.27.0` | 32,768 | yes, `conspiracy` adapter |
+| `run-vllm-qwen35-9b.sbatch` | `qwen3.5-9b` | `Qwen/Qwen3.5-9B` | `e0330a142393d4516eca6ab0145ce66ac513e842` | `v0.27.0` | 32,768 | no (see below) |
 
-Switched from `Qwen/Qwen3.5-9B`: its hybrid GDN attention isn't actually usable with LoRA in vLLM
-yet (confirmed on both v0.23.0 and v0.27.0 -- the adapter loads without error but has zero effect
-on generation, see `training/README.md`). `Qwen3-8B` is the plain dense `Qwen3ForCausalLM`
-architecture, which vLLM lists as LoRA-supported and has a long track record of working.
+Qwen3.5-9B's hybrid GDN attention isn't actually usable with LoRA in vLLM yet (confirmed on both
+v0.23.0 and v0.27.0 -- the adapter loads without error but has zero effect on generation, see
+`training/README.md`). `Qwen3-8B` is the plain dense `Qwen3ForCausalLM` architecture, which vLLM
+lists as LoRA-supported and has a long track record of working -- that's why the trained conspiracy
+adapter is only wired into `run-vllm-qwen3-8b.sbatch`. `run-vllm-qwen35-9b.sbatch` exists for
+serving/comparing against the plain base model.
 
 `vllm-openai-v0.23.0-cu129.sqsh` is still on disk (untouched) if `v0.27.0` needs to be rolled back --
-just point `IMAGE` in `run-vllm.sbatch` back at it. (The first `v0.27.0` import attempt was
-OOM-killed on an interactive/dev node; re-importing it from a `cpu-interactive` Slurm allocation
+just point `IMAGE` back at it in whichever script you're using. (The first `v0.27.0` import attempt
+was OOM-killed on an interactive/dev node; re-importing it from a `cpu-interactive` Slurm allocation
 with `--mem=32G` instead -- see "Import a container image" below -- worked.)
 
-For another model, copy the sbatch file and change the constants at the top of that copy. Do not add
-model-selection environment variables back into this script.
-
-It can also serve one or more LoRA adapters alongside the base model -- e.g. one trained with
-`training/train_lora.py` -- via the `LORA_MODULES` constant near the top (empty by default, so this
-doesn't change the base model's behavior). See
+Each script can also serve one or more LoRA adapters alongside its base model -- e.g. one trained
+with `training/train_lora.py` -- via the `LORA_MODULES` constant near the top (empty by default in
+`run-vllm-qwen35-9b.sbatch`, since LoRA doesn't work there; pre-filled with the `conspiracy` adapter
+in `run-vllm-qwen3-8b.sbatch`). See
 [`training/README.md`](../training/README.md#trying-the-adapter-with-vllm).
 
 All Slurm commands use the account `sci-lippert-intelligent-agents`. Persistent runtime data lives
@@ -39,7 +41,7 @@ under:
 ├── models/huggingface/         # HF_HOME -- base models + datasets
 ├── adapters/                   # trained LoRA adapters (train_lora.py's OUTPUT_DIR)
 │   └── qwen3-8b-conspiracy/
-└── code/intelligent-agents-chat/   # checkout run-vllm.sbatch/run-training.sbatch expect
+└── code/intelligent-agents-chat/   # checkout run-vllm-*.sbatch/run-training.sbatch expect
     └── training/
         ├── .venv/     # created by `uv sync`, gitignored
         └── data/      # written by prepare_dataset.py, gitignored
@@ -49,14 +51,26 @@ The adapter/model paths are hardcoded absolute paths under `$PROJECT_ROOT`, so t
 place regardless of where you happen to have this repo checked out; only the two sbatch scripts
 require the fixed `code/intelligent-agents-chat` checkout location shown above.
 
-The job binds vLLM to compute-node loopback only. The remote port is chosen per Slurm job from
-`49152-61151`; if that port is already in use on the same node, the script picks the next free port.
-This allows multiple vLLM jobs on the same node. The selected endpoint is printed in the Slurm log
-and written to:
+The job binds vLLM to compute-node loopback only, on a **fixed** port per script (`8001` for
+Qwen3-8B, `8002` for Qwen3.5-9B -- see `SERVER_PORT` near the top of each) rather than a random one
+chosen per job. A previous version of this picked a pseudo-random port per job from `49152-61151`
+specifically to let multiple different models share one generic script without colliding on the
+same node; now that each model has its own dedicated script, that's no longer needed -- the only
+remaining collision risk is another job (yours or a labmate's) binding that exact port on the exact
+same node at the exact same time, in which case vLLM fails to start immediately with a clear
+"address already in use" error rather than silently misbehaving; just resubmit.
+
+The endpoint is printed in the Slurm log and written to a path named after the *job*, not the job
+ID, and overwritten on every run -- so it's always the same, predictable path, no need to look up
+which job ID was the latest one:
 
 ```bash
-$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.endpoint
+$PROJECT_ROOT/logs/vllm/vllm-qwen3-8b.endpoint     # or vllm-qwen35-9b.endpoint
 ```
+
+`cluster/tunnel.sh` (see "Connect from the local application" below) reads this file for you over
+SSH and opens the tunnel in one command -- the node Slurm placed the job on is the only thing about
+the endpoint that's still unpredictable ahead of time.
 
 ## Submit a short validation job
 
@@ -69,10 +83,11 @@ REPOSITORY_DIR="$PROJECT_ROOT/code/intelligent-agents-chat"
 cd "$REPOSITORY_DIR"
 git pull --ff-only
 mkdir -p "$PROJECT_ROOT/logs/vllm"
-bash -n cluster/run-vllm.sbatch
+bash -n cluster/run-vllm-qwen3-8b.sbatch
 ```
 
-Submit a 20-minute job to the short-run partition:
+Submit a 20-minute job to the short-run partition (substitute `run-vllm-qwen35-9b.sbatch` for the
+other model):
 
 ```bash
 SERVER_JOB=$(sbatch \
@@ -80,22 +95,23 @@ SERVER_JOB=$(sbatch \
   --account=sci-lippert-intelligent-agents \
   --partition=gpu-shortrun \
   --time=00:20:00 \
-  cluster/run-vllm.sbatch)
+  cluster/run-vllm-qwen3-8b.sbatch)
 SERVER_JOB=${SERVER_JOB%%;*}
 
 tail -f "$PROJECT_ROOT/logs/vllm/vllm-qwen3-8b-${SERVER_JOB}.out"
 ```
 
-After startup, read the exact node and port:
+After startup, read the exact node (the port is now fixed, see above, but still written here for
+convenience):
 
 ```bash
-cat "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.endpoint"
+cat "$PROJECT_ROOT/logs/vllm/vllm-qwen3-8b.endpoint"
 ```
 
 Then test the API from a second step in the same allocation:
 
 ```bash
-PORT=$(sed -n 's/^port=//p' "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.endpoint")
+PORT=$(sed -n 's/^port=//p' "$PROJECT_ROOT/logs/vllm/vllm-qwen3-8b.endpoint")
 
 srun \
   --account=sci-lippert-intelligent-agents \
@@ -122,16 +138,16 @@ sacct \
 
 ## Run the normal server job
 
-Without overrides, the script requests `gpu-batch` for four hours:
+Without overrides, each script requests `gpu-batch` for four hours:
 
 ```bash
 SERVER_JOB=$(sbatch \
   --parsable \
   --account=sci-lippert-intelligent-agents \
-  cluster/run-vllm.sbatch)
+  cluster/run-vllm-qwen3-8b.sbatch)
 SERVER_JOB=${SERVER_JOB%%;*}
 
-cat "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.endpoint"
+cat "$PROJECT_ROOT/logs/vllm/vllm-qwen3-8b.endpoint"
 ```
 
 Stop the server when it is no longer needed:
@@ -142,34 +158,40 @@ scancel --account=sci-lippert-intelligent-agents "$SERVER_JOB"
 
 ## Connect from the local application
 
-Read the endpoint while the job is running:
+On your **local machine** (not the cluster), while connected to the Scientific Compute VPN, the
+simplest way is `cluster/tunnel.sh` -- it reads the endpoint file over SSH (via the login node) and
+opens the tunnel for you, so the only thing you never have to look up by hand is which node the job
+landed on:
 
 ```bash
-source "$PROJECT_ROOT/logs/vllm/vllm-${SERVER_JOB}.endpoint"
-printf 'job=%s node=%s port=%s model=%s\n' "$job" "$node" "$port" "$model"
+cluster/tunnel.sh qwen3-8b     # or: qwen35-9b
 ```
 
-On the local computer, while connected to the Scientific Compute VPN, open a tunnel through the
-login host. Set `NODE` and `REMOTE_PORT` to the values from the endpoint file:
-
-```bash
-NODE=gx32.hpc.sci.hpi.de
-REMOTE_PORT=50000
-
-ssh \
-  -J maximilian.speer@hpc.sci.hpi.de \
-  -N \
-  -o ExitOnForwardFailure=yes \
-  -o ServerAliveInterval=60 \
-  -L "8001:127.0.0.1:${REMOTE_PORT}" \
-  "maximilian.speer@${NODE}"
-```
-
-Keep that terminal open and verify the local endpoint in a second terminal:
+Keep that terminal open and verify the local endpoint in a second one:
 
 ```bash
 curl -s http://127.0.0.1:8001/v1/models
 ```
+
+That's equivalent to reading the endpoint file and opening the SSH tunnel manually, if you want to
+see (or need to reproduce) what it's doing:
+
+```bash
+ssh matthias.cram@hpc.sci.hpi.de "cat '$PROJECT_ROOT/logs/vllm/vllm-qwen3-8b.endpoint'"
+# -> job=... node=gx32.hpc.sci.hpi.de host=127.0.0.1 port=8001 base_url=... model=qwen3-8b
+
+ssh \
+  -J matthias.cram@hpc.sci.hpi.de \
+  -N \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=60 \
+  -L "8001:127.0.0.1:8001" \
+  "matthias.cram@gx32.hpc.sci.hpi.de"
+```
+
+The port is fixed and always the same as shown above (`8001` for Qwen3-8B, `8002` for Qwen3.5-9B --
+see "Run the normal server job" above) -- only the node changes between runs, which is what both the
+script and the manual `cat` step are for.
 
 Start the NiceGUI application against the 9B tunnel:
 
