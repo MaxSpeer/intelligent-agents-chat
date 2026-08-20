@@ -9,7 +9,6 @@ import stat
 from tempfile import TemporaryDirectory
 import unittest
 
-from intelligent_agents_chat.config import Settings
 from intelligent_agents_chat.logging_config import (
     LOGGER_NAMESPACE,
     configure_logging,
@@ -26,17 +25,14 @@ class LoggingTests(unittest.TestCase):
     def test_json_log_contains_context_and_exception_details(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             log_path = Path(temporary_directory) / "agent-lab.jsonl"
-            settings = Settings.from_env(
-                {
-                    "CHAT_LOG_PATH": str(log_path),
-                    "CHAT_LOG_LEVEL": "DEBUG",
-                    "CHAT_LOG_MAX_BYTES": "4096",
-                    "CHAT_LOG_BACKUP_COUNT": "1",
-                }
-            )
 
             with redirect_stderr(StringIO()):
-                configure_logging(settings)
+                configure_logging(
+                    log_path=log_path,
+                    log_level="DEBUG",
+                    log_max_bytes=4096,
+                    log_backup_count=1,
+                )
                 logger = logging.getLogger(f"{LOGGER_NAMESPACE}.test")
                 log_event(
                     logger,
@@ -77,16 +73,9 @@ class LoggingTests(unittest.TestCase):
     def test_logs_rotate_and_are_private(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             log_path = Path(temporary_directory) / "agent-lab.jsonl"
-            settings = Settings.from_env(
-                {
-                    "CHAT_LOG_PATH": str(log_path),
-                    "CHAT_LOG_MAX_BYTES": "512",
-                    "CHAT_LOG_BACKUP_COUNT": "2",
-                }
-            )
 
             with redirect_stderr(StringIO()):
-                configure_logging(settings)
+                configure_logging(log_path=log_path, log_max_bytes=512, log_backup_count=2)
                 logger = logging.getLogger(f"{LOGGER_NAMESPACE}.rotation-test")
                 for index in range(20):
                     log_event(

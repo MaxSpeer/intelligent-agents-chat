@@ -3,13 +3,12 @@
 import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-from pathlib import Path
 from threading import Thread
 import time
 import unittest
 
-from intelligent_agents_chat.config import ModelProfile, Settings
-from intelligent_agents_chat.llm import LOREM_IPSUM_RESPONSE, VLLMGateway
+from intelligent_agents_chat.llm import MAX_TOKENS, THINKING_MAX_TOKENS, VLLMGateway
+from intelligent_agents_chat.models import ModelProfile
 
 
 class FakeVLLMHandler(BaseHTTPRequestHandler):
@@ -75,29 +74,13 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         profile = ModelProfile(
             key="test",
             label="Test model",
-            backend="vllm",
             base_url=f"http://{host}:{port}/v1",
             model="test-model",
-        )
-        settings = Settings(
-            database_path=Path("unused.sqlite3"),
-            model_profiles=(profile,),
-            default_profile_key=profile.key,
-            api_key="not-needed",
-            request_timeout_seconds=2,
-            max_tokens=64,
-            thinking_max_tokens=256,
-            temperature=0.1,
-            system_prompt="Test system prompt",
-            log_path=Path("unused.jsonl"),
-            log_level="INFO",
-            log_max_bytes=1024,
-            log_backup_count=1,
         )
 
         chunks = [
             chunk
-            async for chunk in VLLMGateway(settings).stream_reply(
+            async for chunk in VLLMGateway().stream_reply(
                 profile,
                 [{"role": "user", "content": "Hello"}],
             )
@@ -112,7 +95,7 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
             [{"role": "user", "content": "Hello"}],
         )
         self.assertTrue(FakeVLLMHandler.request_body["stream"])
-        self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], 64)
+        self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], MAX_TOKENS)
         self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
 
         await asyncio.sleep(0)
@@ -122,26 +105,10 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         profile = ModelProfile(
             key="slow",
             label="Slow test model",
-            backend="vllm",
             base_url=f"http://{host}:{port}/v1",
             model="test-model",
         )
-        settings = Settings(
-            database_path=Path("unused.sqlite3"),
-            model_profiles=(profile,),
-            default_profile_key=profile.key,
-            api_key="not-needed",
-            request_timeout_seconds=2,
-            max_tokens=64,
-            thinking_max_tokens=256,
-            temperature=0.1,
-            system_prompt="Test system prompt",
-            log_path=Path("unused.jsonl"),
-            log_level="INFO",
-            log_max_bytes=1024,
-            log_backup_count=1,
-        )
-        stream = VLLMGateway(settings).stream_reply(
+        stream = VLLMGateway().stream_reply(
             profile,
             [{"role": "user", "content": "Slow stream check"}],
         )
@@ -159,31 +126,15 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         profile = ModelProfile(
             key="thinking",
             label="Thinking model",
-            backend="vllm",
             base_url=f"http://{host}:{port}/v1",
             model="test-model",
             supports_thinking=True,
-        )
-        settings = Settings(
-            database_path=Path("unused.sqlite3"),
-            model_profiles=(profile,),
-            default_profile_key=profile.key,
-            api_key="not-needed",
-            request_timeout_seconds=2,
-            max_tokens=64,
-            thinking_max_tokens=256,
-            temperature=0.1,
-            system_prompt="Test system prompt",
-            log_path=Path("unused.jsonl"),
-            log_level="INFO",
-            log_max_bytes=1024,
-            log_backup_count=1,
         )
 
         response = "".join(
             [
                 chunk
-                async for chunk in VLLMGateway(settings).stream_reply(
+                async for chunk in VLLMGateway().stream_reply(
                     profile,
                     [{"role": "user", "content": "Think"}],
                     thinking_enabled=True,
@@ -194,7 +145,7 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response, "Hello world")
         self.assertIsNotNone(FakeVLLMHandler.request_body)
         assert FakeVLLMHandler.request_body is not None
-        self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], 256)
+        self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], THINKING_MAX_TOKENS)
         self.assertEqual(
             FakeVLLMHandler.request_body["chat_template_kwargs"],
             {"enable_thinking": True},
@@ -202,34 +153,40 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         _ = [
             chunk
-            async for chunk in VLLMGateway(settings).stream_reply(
+            async for chunk in VLLMGateway().stream_reply(
                 profile,
                 [{"role": "user", "content": "Do not think"}],
                 thinking_enabled=False,
             )
         ]
         assert FakeVLLMHandler.request_body is not None
-        self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], 64)
+        self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], MAX_TOKENS)
         self.assertEqual(
             FakeVLLMHandler.request_body["chat_template_kwargs"],
             {"enable_thinking": False},
         )
 
-    async def test_lorem_profile_streams_a_deterministic_reply_without_a_server(self) -> None:
-        settings = Settings.from_env({})
-        profile = settings.profile("lorem")
-
-        response = "".join(
-            [
-                chunk
-                async for chunk in VLLMGateway(settings).stream_reply(
-                    profile,
-                    [{"role": "user", "content": "Any prompt produces the same reply"}],
-                )
-            ]
+    async def test_profile_without_thinking_support_ignores_the_thinking_flag(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="no-thinking",
+            label="Non-thinking model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
         )
 
-        self.assertEqual(response, LOREM_IPSUM_RESPONSE)
+        _ = [
+            chunk
+            async for chunk in VLLMGateway().stream_reply(
+                profile,
+                [{"role": "user", "content": "Think anyway"}],
+                thinking_enabled=True,
+            )
+        ]
+
+        assert FakeVLLMHandler.request_body is not None
+        self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], MAX_TOKENS)
+        self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
-intelligent-agents-chat = "intelligent_agents_chat.app:main"
+intelligent-agents-chat = "intelligent_agents_chat.main:main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13"]

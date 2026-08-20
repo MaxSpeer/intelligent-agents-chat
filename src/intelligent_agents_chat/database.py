@@ -13,7 +13,8 @@ from uuid import uuid4
 from intelligent_agents_chat.logging_config import log_event
 
 
-SCHEMA_VERSION = 2
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DATABASE_PATH = PROJECT_ROOT / ".data" / "chats.sqlite3"
 DEFAULT_PROJECT_ID = "default"
 DEFAULT_PROJECT_NAME = "General"
 DEFAULT_CONVERSATION_TITLE = "New chat"
@@ -54,7 +55,7 @@ class Message:
 class ChatRepository:
     """Small synchronous repository using short-lived SQLite connections."""
 
-    def __init__(self, database_path: Path) -> None:
+    def __init__(self, database_path: Path = DEFAULT_DATABASE_PATH) -> None:
         self.database_path = database_path
 
     def initialize(self) -> None:
@@ -64,16 +65,9 @@ class ChatRepository:
             logging.INFO,
             "database.initialize.started",
             database_path=str(self.database_path),
-            schema_version=SCHEMA_VERSION,
         )
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
-            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version > SCHEMA_VERSION:
-                raise RuntimeError(
-                    f"Database schema {version} is newer than supported schema {SCHEMA_VERSION}"
-                )
-
             journal_mode = str(connection.execute("PRAGMA journal_mode = WAL").fetchone()[0])
             connection.executescript(
                 """
@@ -111,26 +105,6 @@ class ChatRepository:
                     ON messages(conversation_id, id);
                 """
             )
-            conversation_columns = {
-                str(row["name"])
-                for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
-            }
-            if "thinking_enabled" not in conversation_columns:
-                connection.execute(
-                    """
-                    ALTER TABLE conversations
-                    ADD COLUMN thinking_enabled INTEGER NOT NULL DEFAULT 0
-                        CHECK (thinking_enabled IN (0, 1))
-                    """
-                )
-                log_event(
-                    logger,
-                    logging.INFO,
-                    "database.schema.migrated",
-                    previous_schema_version=version,
-                    schema_version=SCHEMA_VERSION,
-                    added_column="conversations.thinking_enabled",
-                )
             now = _timestamp()
             connection.execute(
                 """
@@ -139,13 +113,11 @@ class ChatRepository:
                 """,
                 (DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME, now, now),
             )
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         log_event(
             logger,
             logging.INFO,
             "database.initialize.completed",
             database_path=str(self.database_path),
-            schema_version=SCHEMA_VERSION,
             sqlite_version=sqlite3.sqlite_version,
             journal_mode=journal_mode,
         )

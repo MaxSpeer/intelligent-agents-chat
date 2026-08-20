@@ -1,14 +1,14 @@
 # Intelligent Agents Chat
 
 A cross-platform NiceGUI chat application for the Intelligent Agents project. The current
-milestone provides persistent conversations in SQLite and streamed generation through an
-offline test model or an OpenAI-compatible vLLM server.
+milestone provides persistent conversations in SQLite and streamed generation through the
+OpenAI-compatible vLLM servers in `./cluster`.
 
 ## Current features
 
 - create, continue, switch, and delete conversations;
 - retain the complete visible conversation history in SQLite;
-- stream responses from the built-in offline model or vLLM and stop an in-progress response;
+- stream responses from vLLM and stop an in-progress response;
 - render user messages and streamed model responses as sanitized Markdown, including code blocks,
   tables, lists, and links;
 - select a model profile per conversation;
@@ -30,93 +30,50 @@ Then open <http://localhost:8080>.
 The development server binds to `127.0.0.1` only. Remote or multi-user deployment needs an
 authenticated front end and is intentionally outside this milestone.
 
-The default profile is `Lorem Ipsum (offline)`. It always streams the same placeholder response,
-so the complete chat and persistence flow can be tested without a language-model server. Two vLLM
-profiles are selectable without additional configuration: `qwen3-0.6b` through local port `8000`
-and `qwen3-8b` through local port `8001`. Chat data is written to `.data/chats.sqlite3`, which is
-intentionally ignored by Git.
+Chat data is written to `.data/chats.sqlite3`, which is intentionally ignored by Git.
 
 The sidebar starts in the built-in `General` project. Use its project picker to switch workspaces
 or create another one. Each project displays only its own conversations; creating, selecting, or
 deleting a conversation never affects conversations in another project.
 
-## Configuration
+## Model profiles
 
-The bundled vLLM profiles can be overridden with environment variables. Set
-`CHAT_DEFAULT_PROFILE=default` to start new chats with the 0.6B profile instead of the offline
-profile:
+The three model profiles are hardcoded in
+[`src/intelligent_agents_chat/models.py`](src/intelligent_agents_chat/models.py), matching the two
+vLLM jobs in `./cluster`:
+
+- **Qwen3 8B** (`qwen3-8b`, the default) and **Qwen3 8B (conspiracy)** (`conspiracy`, the trained
+  LoRA adapter from `training/README.md`) are both served by the same vLLM process --
+  `cluster/run-vllm-qwen3-8b.sbatch`, local port `8001`.
+- **Qwen3.5 9B** (`qwen3.5-9b`) is served by a second, independent vLLM process --
+  `cluster/run-vllm-qwen35-9b.sbatch`, local port `8002`.
+
+All three support Thinking. It is disabled by default so a profile returns a direct answer; the
+header toggle enables it for the current conversation and persists that choice in SQLite.
+
+**The `conspiracy` profile is intentionally trained to argue for false claims and stay in that
+stance across a conversation** -- that's the whole point of the experiment (see
+`training/README.md`), not a malfunction. Treat it accordingly: keep it in this course/research
+context rather than deploying it somewhere a user could mistake it for a normal, trustworthy
+assistant; don't present its answers as factual; and be deliberate about who gets access, given a
+model that argues misinformation persistently and convincingly is precisely the capability that's
+risky to hand out casually.
+
+No API key is sent to either backend (`VLLM_API_KEY` is not used); both vLLM jobs are reached only
+through an SSH tunnel to compute-node loopback (see `cluster/tunnel.sh`), never exposed directly.
+
+Only the two local ports are configurable, since they depend on which local port each SSH tunnel
+happens to use:
 
 ```bash
-export CHAT_DEFAULT_PROFILE=default
-export VLLM_BASE_URL=http://127.0.0.1:8000/v1
-export VLLM_MODEL=qwen3-0.6b
-export VLLM_9B_BASE_URL=http://127.0.0.1:8001/v1
-export VLLM_9B_MODEL=qwen3-8b
-export VLLM_API_KEY=not-needed
-export CHAT_DB_PATH=.data/chats.sqlite3
+export VLLM_QWEN3_8B_PORT=8001    # matches cluster/run-vllm-qwen3-8b.sbatch's SERVER_PORT
+export VLLM_QWEN35_9B_PORT=8002   # matches cluster/run-vllm-qwen35-9b.sbatch's SERVER_PORT
 uv run intelligent-agents-chat
 ```
 
-The standard second-model profile appears as `Qwen3 8B` in the model selector (env vars are named
-`VLLM_9B_*` for historical reasons -- it's just "the second local model slot", not a literal
-parameter count). Its label can be changed
-with `VLLM_9B_PROFILE_LABEL`; use `CHAT_DEFAULT_PROFILE=qwen3-8b` if new conversations should
-select it automatically. Keeping the local port at `8001` allows its SSH tunnel to run alongside
-the existing model on port `8000`. Thinking is disabled by default so Qwen returns a direct answer.
-The header toggle enables it for the current conversation and persists that choice in SQLite.
-
-A `conspiracy` profile is selectable by default, for the LoRA adapter trained in
-`training/README.md` and served by that same vLLM process (see the `LORA_MODULES` constant in
-`cluster/run-vllm-qwen3-8b.sbatch`) -- no separate tunnel needed, since it's the same server on the
-same port. Override its model name with `VLLM_9B_LORA_MODEL`, or unset it entirely with
-`VLLM_9B_LORA_MODEL=""` (e.g. while running a vLLM job that doesn't serve that adapter):
-
-```bash
-export VLLM_9B_LORA_MODEL=""
-# optional instead: VLLM_9B_LORA_PROFILE_KEY, VLLM_9B_LORA_PROFILE_LABEL, VLLM_9B_LORA_BASE_URL
-# (base_url defaults to VLLM_9B_BASE_URL -- override only if the adapter is served elsewhere)
-```
-
-**This profile is intentionally trained to argue for false claims and stay in that stance across a
-conversation** -- that's the whole point of the experiment (see `training/README.md`), not a
-malfunction. Treat it accordingly: keep it in this course/research context rather than deploying it
-somewhere a user could mistake it for a normal, trustworthy assistant; don't present its answers as
-factual; and be deliberate about who gets access, given a model that argues misinformation
-persistently and convincingly is precisely the capability that's risky to hand out casually.
-
-To meet the model-switching requirement with multiple vLLM processes or fine-tuned adapters,
-configure named profiles as JSON. API credentials still come from `VLLM_API_KEY`, so they do not
-need to be embedded in the profile list:
-
-```bash
-export VLLM_PROFILES_JSON='[
-  {
-    "key": "base",
-    "label": "Qwen Base",
-    "base_url": "http://127.0.0.1:8000/v1",
-    "model": "qwen-base"
-  },
-  {
-    "key": "tuned",
-    "label": "Qwen LoRA",
-    "base_url": "http://127.0.0.1:8001/v1",
-    "model": "qwen-lora",
-    "supports_thinking": true
-  }
-]'
-export CHAT_DEFAULT_PROFILE=base
-uv run intelligent-agents-chat
-```
-
-The legacy `VLLM_DEFAULT_PROFILE` variable is still accepted when `CHAT_DEFAULT_PROFILE` is not
-set. The built-in `lorem` profile is always available, including alongside configured vLLM
-profiles.
-
-Optional generation settings are `VLLM_SYSTEM_PROMPT`, `VLLM_MAX_TOKENS`,
-`VLLM_THINKING_MAX_TOKENS`, `VLLM_TEMPERATURE`, and `VLLM_TIMEOUT_SECONDS`.
-`VLLM_MAX_TOKENS` limits newly generated output in normal mode and defaults to `1024`;
-`VLLM_THINKING_MAX_TOKENS` is used only while Thinking is enabled and defaults to `8192`.
-The vLLM server's model-context limit remains the hard ceiling for prompt and output combined.
+Everything else (labels, model names, the SQLite path, and generation parameters such as
+max tokens, temperature, and the system prompt) is hardcoded in `models.py`, `database.py`, and
+`llm.py` -- edit those files directly to change them.
 
 ## Debug logs
 
@@ -128,16 +85,10 @@ or reasoning chunk, total duration, active token limit, and the server finish re
 records include Python and core library versions. Unexpected failures include their complete
 exception stack, including errors reported by NiceGUI itself.
 
-Log files rotate at 10 MiB and retain five backups by default. Current and rotated files use mode
-`0600` on POSIX systems. The limits and verbosity are configurable:
-
-```bash
-export CHAT_LOG_LEVEL=DEBUG
-export CHAT_LOG_PATH=.data/logs/agent-lab.jsonl
-export CHAT_LOG_MAX_BYTES=10485760
-export CHAT_LOG_BACKUP_COUNT=5
-uv run intelligent-agents-chat
-```
+Log files rotate at 10 MiB and retain five backups; current and rotated files use mode `0600` on
+POSIX systems. These limits and the log path/level are hardcoded constants in
+[`logging_config.py`](src/intelligent_agents_chat/logging_config.py) -- edit that file to change
+them.
 
 Follow the current log in a readable form with:
 
@@ -146,10 +97,9 @@ tail -F .data/logs/agent-lab.jsonl | jq .
 ```
 
 For privacy and security, normal diagnostic fields contain message counts and character lengths,
-but not message content, the system prompt, URL credentials or query parameters, or
-`VLLM_API_KEY`. Exception text from third-party libraries is retained because it can be essential
-for debugging, so treat the log directory as sensitive even though its files are private by
-default.
+but not message content, the system prompt, or URL credentials or query parameters. Exception text
+from third-party libraries is retained because it can be essential for debugging, so treat the log
+directory as sensitive even though its files are private by default.
 
 ## Development
 

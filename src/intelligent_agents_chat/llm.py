@@ -1,4 +1,4 @@
-"""Streaming model gateway for the built-in test model and vLLM servers."""
+"""Streaming model gateway for the vLLM servers in ./cluster."""
 
 from __future__ import annotations
 
@@ -10,14 +10,17 @@ from time import monotonic
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
-from intelligent_agents_chat.config import ModelProfile, Settings
 from intelligent_agents_chat.logging_config import log_event, sanitized_endpoint
+from intelligent_agents_chat.models import ModelProfile
 
 
-LOREM_IPSUM_RESPONSE = (
-    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor "
-    "incididunt ut labore et dolore magna aliqua."
-)
+API_KEY = "not-needed"
+REQUEST_TIMEOUT_SECONDS = 120.0
+MAX_TOKENS = 1024
+THINKING_MAX_TOKENS = 8192
+TEMPERATURE = 0.2
+SYSTEM_PROMPT = "You are a helpful assistant. Give clear, accurate, and concise answers."
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,10 +29,7 @@ class LLMError(RuntimeError):
 
 
 class VLLMGateway:
-    """Create streamed replies with the selected local or vLLM profile."""
-
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
+    """Create streamed replies with the selected vLLM profile."""
 
     async def stream_reply(
         self,
@@ -52,13 +52,10 @@ class VLLMGateway:
         client: AsyncOpenAI | None = None
         stream = None
         effective_thinking = thinking_enabled and profile.supports_thinking
-        max_tokens = (
-            self.settings.thinking_max_tokens if effective_thinking else self.settings.max_tokens
-        )
+        max_tokens = THINKING_MAX_TOKENS if effective_thinking else MAX_TOKENS
         context = {
             "request_id": request_id,
             "profile_key": profile.key,
-            "profile_backend": profile.backend,
             "model_name": profile.model,
             "endpoint": sanitized_endpoint(profile.base_url),
             "supports_thinking": profile.supports_thinking,
@@ -73,26 +70,10 @@ class VLLMGateway:
         log_event(logger, logging.INFO, "llm.stream.started", **context)
 
         try:
-            if profile.backend == "lorem":
-                for index, word in enumerate(LOREM_IPSUM_RESPONSE.split()):
-                    await asyncio.sleep(0.02)
-                    chunk = word if index == 0 else f" {word}"
-                    if first_chunk_ms is None:
-                        first_chunk_ms = round((monotonic() - started_at) * 1000, 2)
-                    chunk_count += 1
-                    output_chars += len(chunk)
-                    yield chunk
-                outcome = "completed"
-                return
-
-            if profile.backend != "vllm" or not profile.base_url or not profile.model:
-                outcome = "invalid_profile"
-                raise LLMError(f"The {profile.label} model profile is not configured correctly.")
-
             client = AsyncOpenAI(
                 base_url=profile.base_url,
-                api_key=self.settings.api_key,
-                timeout=self.settings.request_timeout_seconds,
+                api_key=API_KEY,
+                timeout=REQUEST_TIMEOUT_SECONDS,
             )
             extra_body = (
                 {"chat_template_kwargs": {"enable_thinking": effective_thinking}}
@@ -103,7 +84,7 @@ class VLLMGateway:
                 model=profile.model,
                 messages=messages,
                 max_tokens=max_tokens,
-                temperature=self.settings.temperature,
+                temperature=TEMPERATURE,
                 stream=True,
                 extra_body=extra_body,
             )

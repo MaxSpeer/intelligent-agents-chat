@@ -12,10 +12,13 @@ import sys
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from intelligent_agents_chat.config import Settings
 
-
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOGGER_NAMESPACE = "intelligent_agents_chat"
+LOG_PATH = PROJECT_ROOT / ".data" / "logs" / "agent-lab.jsonl"
+LOG_LEVEL = "INFO"
+LOG_MAX_BYTES = 10_485_760
+LOG_BACKUP_COUNT = 5
 _STANDARD_RECORD_FIELDS = set(logging.makeLogRecord({}).__dict__) | {
     "asctime",
     "message",
@@ -61,31 +64,36 @@ class PrivateRotatingFileHandler(RotatingFileHandler):
         return stream
 
 
-def configure_logging(settings: Settings) -> logging.Logger:
+def configure_logging(
+    log_path: Path = LOG_PATH,
+    log_level: str = LOG_LEVEL,
+    log_max_bytes: int = LOG_MAX_BYTES,
+    log_backup_count: int = LOG_BACKUP_COUNT,
+) -> logging.Logger:
     """Configure console and rotating-file handlers for the application namespace."""
-    settings.log_path.parent.mkdir(parents=True, exist_ok=True)
-    for index in range(settings.log_backup_count + 1):
-        candidate = settings.log_path if index == 0 else Path(f"{settings.log_path}.{index}")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    for index in range(log_backup_count + 1):
+        candidate = log_path if index == 0 else Path(f"{log_path}.{index}")
         if candidate.exists():
             _make_private_if_possible(candidate)
     logger = logging.getLogger(LOGGER_NAMESPACE)
     _close_handlers(logger)
-    logger.setLevel(settings.log_level)
+    logger.setLevel(log_level)
     logger.propagate = False
 
     formatter = JsonLineFormatter()
     file_handler = PrivateRotatingFileHandler(
-        settings.log_path,
-        maxBytes=settings.log_max_bytes,
-        backupCount=settings.log_backup_count,
+        log_path,
+        maxBytes=log_max_bytes,
+        backupCount=log_backup_count,
         encoding="utf-8",
         delay=True,
     )
-    file_handler.setLevel(settings.log_level)
+    file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
 
     console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(settings.log_level)
+    console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
 
     logger.addHandler(file_handler)
@@ -94,10 +102,10 @@ def configure_logging(settings: Settings) -> logging.Logger:
         logger,
         logging.INFO,
         "logging.configured",
-        log_path=str(settings.log_path),
-        log_level=settings.log_level,
-        log_max_bytes=settings.log_max_bytes,
-        log_backup_count=settings.log_backup_count,
+        log_path=str(log_path),
+        log_level=log_level,
+        log_max_bytes=log_max_bytes,
+        log_backup_count=log_backup_count,
     )
     return logger
 

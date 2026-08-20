@@ -7,12 +7,17 @@ import unittest
 
 from intelligent_agents_chat.database import (
     DEFAULT_CONVERSATION_TITLE,
+    DEFAULT_DATABASE_PATH,
     DEFAULT_PROJECT_ID,
     ChatRepository,
 )
 
 
 class ChatRepositoryTests(unittest.TestCase):
+    def test_default_database_path_is_under_the_project_data_directory(self) -> None:
+        self.assertEqual(ChatRepository().database_path, DEFAULT_DATABASE_PATH)
+        self.assertEqual(DEFAULT_DATABASE_PATH.name, "chats.sqlite3")
+
     def setUp(self) -> None:
         self.temporary_directory = TemporaryDirectory()
         self.database_path = Path(self.temporary_directory.name) / "chats.sqlite3"
@@ -32,9 +37,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertEqual(project.name, "General")
 
         with sqlite3.connect(self.database_path) as connection:
-            version = connection.execute("PRAGMA user_version").fetchone()[0]
             mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
-        self.assertEqual(version, 2)
         self.assertEqual(mode, "wal")
 
     def test_conversation_and_messages_survive_a_new_repository_instance(self) -> None:
@@ -122,45 +125,6 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertIsNotNone(reopened)
         assert reopened is not None
         self.assertTrue(reopened.thinking_enabled)
-
-    def test_schema_v1_is_migrated_with_thinking_disabled(self) -> None:
-        migrated_path = Path(self.temporary_directory.name) / "schema-v1.sqlite3"
-        with sqlite3.connect(migrated_path) as connection:
-            connection.executescript(
-                """
-                CREATE TABLE projects (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE conversations (
-                    id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-                    title TEXT NOT NULL,
-                    model_profile TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                INSERT INTO projects VALUES ('default', 'General', '2026-01-01', '2026-01-01');
-                INSERT INTO conversations VALUES (
-                    'legacy-chat', 'default', 'Legacy', 'qwen3.5-9b',
-                    '2026-01-01', '2026-01-01'
-                );
-                PRAGMA user_version = 1;
-                """
-            )
-
-        repository = ChatRepository(migrated_path)
-        repository.initialize()
-
-        conversation = repository.get_conversation("legacy-chat")
-        self.assertIsNotNone(conversation)
-        assert conversation is not None
-        self.assertFalse(conversation.thinking_enabled)
-        with sqlite3.connect(migrated_path) as connection:
-            version = connection.execute("PRAGMA user_version").fetchone()[0]
-        self.assertEqual(version, 2)
 
     def test_deleting_a_conversation_cascades_to_messages(self) -> None:
         conversation = self.repository.create_conversation("base")

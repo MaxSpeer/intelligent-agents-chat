@@ -7,85 +7,33 @@ from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import partial
-from importlib.metadata import version
 import logging
-import platform
+from pathlib import Path
 from time import monotonic
 from uuid import uuid4
 
 from nicegui import app as nicegui_app, ui
 
-from intelligent_agents_chat.config import Settings
+from intelligent_agents_chat.chat import (
+    active_generations,
+    completion_messages,
+    repository,
+    stream_reply,
+)
 from intelligent_agents_chat.database import (
     DEFAULT_CONVERSATION_TITLE,
     DEFAULT_PROJECT_ID,
-    ChatRepository,
     Conversation,
-    Message,
     Project,
 )
-from intelligent_agents_chat.llm import LLMError, VLLMGateway
-from intelligent_agents_chat.logging_config import (
-    configure_logging,
-    log_event,
-    sanitized_endpoint,
-    shutdown_logging,
-)
+from intelligent_agents_chat.llm import LLMError, MAX_TOKENS, THINKING_MAX_TOKENS
+from intelligent_agents_chat.logging_config import log_event
+from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, get_profile, profile_options
 
 
-settings = Settings.from_env()
-configure_logging(settings)
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
 logger = logging.getLogger(__name__)
-log_event(
-    logger,
-    logging.INFO,
-    "application.runtime.loaded",
-    python_version=platform.python_version(),
-    operating_system=platform.platform(),
-    dependency_versions={
-        "nicegui": version("nicegui"),
-        "openai": version("openai"),
-    },
-)
-log_event(
-    logger,
-    logging.INFO,
-    "application.configuration.loaded",
-    database_path=str(settings.database_path),
-    default_profile_key=settings.default_profile_key,
-    profile_count=len(settings.model_profiles),
-    profiles=[
-        {
-            "key": profile.key,
-            "backend": profile.backend,
-            "model": profile.model,
-            "endpoint": sanitized_endpoint(profile.base_url),
-            "supports_thinking": profile.supports_thinking,
-        }
-        for profile in settings.model_profiles
-    ],
-    api_authentication_configured=settings.api_key not in {"", "not-needed"},
-    request_timeout_seconds=settings.request_timeout_seconds,
-    max_tokens=settings.max_tokens,
-    thinking_max_tokens=settings.thinking_max_tokens,
-    temperature=settings.temperature,
-    system_prompt_chars=len(settings.system_prompt),
-)
-repository = ChatRepository(settings.database_path)
-try:
-    repository.initialize()
-except Exception:
-    logger.exception(
-        "application.database_initialization_failed",
-        extra={
-            "event": "application.database_initialization_failed",
-            "database_path": str(settings.database_path),
-        },
-    )
-    raise
-gateway = VLLMGateway(settings)
-active_generations: set[str] = set()
-log_event(logger, logging.INFO, "application.initialized")
 
 CHAT_MARKDOWN_EXTRAS = [
     "break-on-newline",
@@ -111,488 +59,7 @@ def _log_unhandled_application_exception(error: Exception) -> None:
 nicegui_app.on_exception(_log_unhandled_application_exception)
 
 
-ui.add_head_html(
-    """
-    <style>
-        :root {
-            --ink: #172033;
-            --muted: #657089;
-            --primary: #635bff;
-            --primary-dark: #4b43df;
-            --surface: rgba(255, 255, 255, 0.88);
-            --surface-solid: #ffffff;
-            --line: rgba(104, 117, 147, 0.16);
-            --sidebar: rgba(245, 246, 251, 0.92);
-        }
-
-        html, body, #q-app {
-            min-height: 100%;
-        }
-
-        .nicegui-content {
-            padding: 0 !important;
-        }
-
-        body {
-            color: var(--ink);
-            background:
-                radial-gradient(circle at 12% 5%, rgba(99, 91, 255, .13), transparent 28rem),
-                radial-gradient(circle at 88% 90%, rgba(38, 198, 218, .11), transparent 32rem),
-                #f8f9fc;
-        }
-
-        .app-shell {
-            display: grid;
-            grid-template-columns: 290px minmax(0, 1fr);
-            width: 100%;
-            height: 100vh;
-            overflow: hidden;
-        }
-
-        .sidebar {
-            min-width: 0;
-            height: 100vh;
-            padding: 1.25rem 1rem;
-            gap: 1rem;
-            overflow: hidden;
-            border-right: 1px solid var(--line);
-            background: var(--sidebar);
-            backdrop-filter: blur(22px);
-        }
-
-        .brand-mark {
-            display: grid;
-            width: 2.35rem;
-            height: 2.35rem;
-            place-items: center;
-            border-radius: .85rem;
-            color: white;
-            background: linear-gradient(135deg, var(--primary), #857fff);
-            box-shadow: 0 10px 24px rgba(99, 91, 255, .28);
-        }
-
-        .brand-name {
-            font-size: .96rem;
-            font-weight: 800;
-            letter-spacing: -.02em;
-        }
-
-        .project-picker {
-            width: 100%;
-            flex-wrap: nowrap;
-            gap: .45rem;
-            align-items: center;
-        }
-
-        .project-select {
-            min-width: 0;
-            flex: 1 1 auto;
-        }
-
-        .project-create {
-            flex: 0 0 auto;
-            color: var(--primary) !important;
-            background: rgba(99, 91, 255, .09) !important;
-        }
-
-        .eyebrow {
-            color: var(--muted);
-            font-size: .68rem;
-            font-weight: 700;
-            letter-spacing: .12em;
-            text-transform: uppercase;
-        }
-
-        .new-chat-button {
-            width: 100%;
-            min-height: 2.8rem;
-            border-radius: .9rem;
-            color: white !important;
-            background: var(--primary) !important;
-            box-shadow: 0 10px 24px rgba(99, 91, 255, .22);
-        }
-
-        .conversation-list {
-            min-height: 0;
-            flex: 1 1 auto;
-            gap: .4rem;
-            overflow-y: auto;
-            padding-right: .2rem;
-        }
-
-        .conversation-item {
-            width: 100%;
-            min-width: 0;
-            flex-wrap: nowrap;
-            gap: .25rem;
-            align-items: center;
-        }
-
-        .conversation-select {
-            min-width: 0;
-            flex: 1 1 auto;
-            justify-content: flex-start;
-            overflow: hidden;
-            border-radius: .78rem;
-            color: var(--muted) !important;
-        }
-
-        .conversation-select .q-btn__content {
-            display: block;
-            overflow: hidden;
-            text-align: left;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .conversation-select.active {
-            color: var(--primary-dark) !important;
-            background: rgba(99, 91, 255, .1) !important;
-        }
-
-        .conversation-delete {
-            color: #9aa2b5 !important;
-            opacity: 0;
-            transition: opacity .15s ease, color .15s ease;
-        }
-
-        .conversation-item:hover .conversation-delete,
-        .conversation-delete:focus {
-            opacity: 1;
-        }
-
-        .conversation-delete:hover {
-            color: #d14f68 !important;
-        }
-
-        .sidebar-footer {
-            padding: .9rem;
-            border: 1px solid var(--line);
-            border-radius: .9rem;
-            background: rgba(255, 255, 255, .58);
-        }
-
-        .main-panel {
-            min-width: 0;
-            height: 100vh;
-            gap: 0;
-            overflow: hidden;
-        }
-
-        .chat-header {
-            z-index: 2;
-            width: 100%;
-            min-height: 5rem;
-            flex-wrap: nowrap;
-            padding: .85rem clamp(1rem, 3vw, 2rem);
-            border-bottom: 1px solid var(--line);
-            background: rgba(255, 255, 255, .72);
-            backdrop-filter: blur(18px);
-        }
-
-        .chat-title {
-            max-width: min(42vw, 38rem);
-            overflow: hidden;
-            font-size: 1.05rem;
-            font-weight: 750;
-            letter-spacing: -.02em;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .model-select {
-            width: min(15rem, 27vw);
-        }
-
-        .thinking-toggle {
-            flex: 0 0 auto;
-            padding: .15rem .5rem;
-            border: 1px solid var(--line);
-            border-radius: .8rem;
-            color: var(--muted);
-            background: rgba(255, 255, 255, .58);
-        }
-
-        .status-dot {
-            width: .5rem;
-            height: .5rem;
-            border-radius: 999px;
-            background: #20b486;
-            box-shadow: 0 0 0 5px rgba(32, 180, 134, .11);
-        }
-
-        .message-scroll {
-            width: 100%;
-            min-height: 0;
-            flex: 1 1 auto;
-        }
-
-        .message-column {
-            width: min(100%, 900px);
-            min-height: 100%;
-            margin: 0 auto;
-            padding: 2rem clamp(1rem, 4vw, 2.5rem) 1.5rem;
-            gap: 1.15rem;
-        }
-
-        .chat-message {
-            width: 100%;
-        }
-
-        .chat-message .q-message-text {
-            max-width: min(44rem, 82vw);
-            border-radius: 1rem;
-            box-shadow: 0 8px 22px rgba(34, 42, 74, .07);
-        }
-
-        .chat-message .q-message-text-content {
-            line-height: 1.58;
-        }
-
-        .chat-markdown {
-            min-width: 0;
-            max-width: min(42rem, 76vw);
-            overflow-wrap: anywhere;
-            line-height: 1.58;
-        }
-
-        .chat-markdown > :first-child {
-            margin-top: 0;
-        }
-
-        .chat-markdown > :last-child {
-            margin-bottom: 0;
-        }
-
-        .chat-markdown p,
-        .chat-markdown ul,
-        .chat-markdown ol,
-        .chat-markdown blockquote,
-        .chat-markdown pre,
-        .chat-markdown table {
-            margin: .7rem 0;
-        }
-
-        .chat-markdown ul,
-        .chat-markdown ol {
-            padding-left: 1.4rem;
-        }
-
-        .chat-markdown li + li {
-            margin-top: .25rem;
-        }
-
-        .chat-markdown h1,
-        .chat-markdown h2,
-        .chat-markdown h3,
-        .chat-markdown h4,
-        .chat-markdown h5,
-        .chat-markdown h6 {
-            margin: 1rem 0 .55rem;
-            font-weight: 750;
-            line-height: 1.25;
-        }
-
-        .chat-markdown h1 { font-size: 1.45rem; }
-        .chat-markdown h2 { font-size: 1.28rem; }
-        .chat-markdown h3 { font-size: 1.14rem; }
-
-        .chat-markdown code {
-            padding: .12rem .32rem;
-            border-radius: .35rem;
-            background: rgba(23, 32, 51, .08);
-            font-size: .9em;
-        }
-
-        .chat-markdown pre {
-            max-width: 100%;
-            overflow-x: auto;
-            padding: .85rem 1rem;
-            border: 1px solid rgba(104, 117, 147, .18);
-            border-radius: .75rem;
-            background: #f5f6fa;
-        }
-
-        .chat-markdown pre code {
-            padding: 0;
-            border-radius: 0;
-            background: transparent;
-            font-size: .84rem;
-        }
-
-        .chat-markdown blockquote {
-            padding-left: .9rem;
-            border-left: 3px solid rgba(99, 91, 255, .45);
-            color: var(--muted);
-        }
-
-        .chat-markdown table {
-            display: block;
-            max-width: 100%;
-            overflow-x: auto;
-            border-collapse: collapse;
-        }
-
-        .chat-markdown th,
-        .chat-markdown td {
-            padding: .45rem .65rem;
-            border: 1px solid var(--line);
-            text-align: left;
-        }
-
-        .chat-markdown a {
-            color: var(--primary-dark);
-            text-decoration: underline;
-            text-underline-offset: .15em;
-        }
-
-        .q-message-sent .q-message-text {
-            color: white;
-            background: linear-gradient(135deg, var(--primary), #7770ff) !important;
-        }
-
-        .q-message-sent .chat-markdown a {
-            color: white;
-        }
-
-        .q-message-sent .chat-markdown code {
-            background: rgba(255, 255, 255, .16);
-        }
-
-        .q-message-sent .chat-markdown pre {
-            border-color: rgba(255, 255, 255, .2);
-            background: rgba(23, 32, 51, .22);
-        }
-
-        .q-message-sent .chat-markdown pre code {
-            background: transparent;
-        }
-
-        .q-message-sent .chat-markdown th,
-        .q-message-sent .chat-markdown td {
-            border-color: rgba(255, 255, 255, .24);
-        }
-
-        .q-message-received .q-message-text {
-            color: var(--ink);
-            border: 1px solid var(--line);
-            background: var(--surface-solid) !important;
-        }
-
-        .empty-state {
-            width: min(100%, 36rem);
-            margin: auto;
-            padding: 2.5rem;
-            align-items: center;
-            gap: .8rem;
-            text-align: center;
-            border: 1px solid rgba(255, 255, 255, .9);
-            border-radius: 1.5rem;
-            background: var(--surface);
-            box-shadow: 0 20px 52px rgba(34, 42, 74, .09);
-            backdrop-filter: blur(18px);
-        }
-
-        .empty-icon {
-            display: grid;
-            width: 3.4rem;
-            height: 3.4rem;
-            place-items: center;
-            border-radius: 1.1rem;
-            color: var(--primary);
-            background: rgba(99, 91, 255, .1);
-        }
-
-        .composer-area {
-            z-index: 2;
-            width: 100%;
-            padding: .75rem clamp(1rem, 4vw, 2.5rem) 1.2rem;
-            background: linear-gradient(to top, #f8f9fc 72%, rgba(248, 249, 252, 0));
-        }
-
-        .composer-row {
-            width: min(100%, 850px);
-            min-height: 3.7rem;
-            margin: 0 auto;
-            flex-wrap: nowrap;
-            gap: .4rem;
-            padding: .45rem .5rem .45rem 1rem;
-            border: 1px solid var(--line);
-            border-radius: 1.15rem;
-            background: white;
-            box-shadow: 0 14px 36px rgba(34, 42, 74, .11);
-        }
-
-        .composer-input {
-            min-width: 0;
-            flex: 1 1 auto;
-        }
-
-        .composer-input .q-field__control:before,
-        .composer-input .q-field__control:after {
-            border: 0 !important;
-        }
-
-        .send-button {
-            color: white !important;
-            background: var(--primary) !important;
-        }
-
-        .stop-button {
-            color: #d14f68 !important;
-            background: rgba(209, 79, 104, .1) !important;
-        }
-
-        @media (max-width: 720px) {
-            .app-shell {
-                grid-template-columns: 1fr;
-                grid-template-rows: 15rem minmax(0, 1fr);
-            }
-
-            .sidebar {
-                width: 100%;
-                height: 15rem;
-                padding: .9rem 1rem;
-                gap: .7rem;
-                border-right: 0;
-                border-bottom: 1px solid var(--line);
-            }
-
-            .conversation-list {
-                flex-direction: row;
-                overflow-x: auto;
-                overflow-y: hidden;
-            }
-
-            .conversation-delete {
-                opacity: 1;
-            }
-
-            .conversation-item {
-                width: 13rem;
-                min-width: 13rem;
-            }
-
-            .sidebar-footer {
-                display: none;
-            }
-
-            .main-panel {
-                height: calc(100vh - 15rem);
-            }
-
-            .chat-header {
-                min-height: 4.4rem;
-            }
-
-            .status-copy {
-                display: none;
-            }
-        }
-    </style>
-    """,
-    shared=True,
-)
+ui.add_css(STATIC_DIR / "app.css", shared=True)
 
 
 @dataclass(slots=True)
@@ -623,17 +90,9 @@ def _profile_label(profile_key: str | None) -> str:
     if profile_key is None:
         return "Assistant"
     try:
-        return settings.profile(profile_key).label
+        return get_profile(profile_key).label
     except KeyError:
         return profile_key
-
-
-def _completion_messages(messages: list[Message]) -> list[dict[str, str]]:
-    result: list[dict[str, str]] = []
-    if settings.system_prompt:
-        result.append({"role": "system", "content": settings.system_prompt})
-    result.extend({"role": message.role, "content": message.content} for message in messages)
-    return result
 
 
 def _chat_markdown(content: str):
@@ -658,12 +117,12 @@ def index() -> None:
         conversations[0]
         if conversations
         else repository.create_conversation(
-            settings.default_profile_key,
+            DEFAULT_PROFILE_KEY,
             project_id=initial_project.id,
         )
     )
-    if initial.model_profile not in settings.profile_options:
-        repository.set_model_profile(initial.id, settings.default_profile_key)
+    if initial.model_profile not in profile_options():
+        repository.set_model_profile(initial.id, DEFAULT_PROFILE_KEY)
         normalized_initial = repository.get_conversation(initial.id)
         if normalized_initial is None:
             raise RuntimeError("Conversation disappeared while updating its model profile")
@@ -716,7 +175,7 @@ def index() -> None:
                 conversations[0]
                 if conversations
                 else repository.create_conversation(
-                    settings.default_profile_key,
+                    DEFAULT_PROFILE_KEY,
                     project_id=state.project_id,
                 )
             )
@@ -727,9 +186,9 @@ def index() -> None:
                 missing_conversation_id=missing_conversation_id,
                 replacement_conversation_id=conversation.id,
             )
-        if conversation.model_profile not in settings.profile_options:
+        if conversation.model_profile not in profile_options():
             previous_model_profile = conversation.model_profile
-            repository.set_model_profile(conversation.id, settings.default_profile_key)
+            repository.set_model_profile(conversation.id, DEFAULT_PROFILE_KEY)
             conversation = repository.get_conversation(conversation.id)
             if conversation is None:
                 raise RuntimeError("Conversation disappeared while updating its model profile")
@@ -737,9 +196,9 @@ def index() -> None:
                 logging.WARNING,
                 "ui.conversation.model_normalized",
                 previous_model_profile=previous_model_profile,
-                replacement_model_profile=settings.default_profile_key,
+                replacement_model_profile=DEFAULT_PROFILE_KEY,
             )
-        profile = settings.profile(conversation.model_profile)
+        profile = get_profile(conversation.model_profile)
         if conversation.thinking_enabled and not profile.supports_thinking:
             repository.set_thinking_enabled(conversation.id, False)
             normalized_conversation = repository.get_conversation(conversation.id)
@@ -769,7 +228,7 @@ def index() -> None:
             send_button.enable()
             stop_button.disable()
             model_select.enable()
-            profile = settings.profile(current_conversation().model_profile)
+            profile = get_profile(current_conversation().model_profile)
             if profile.supports_thinking:
                 thinking_toggle.enable()
             else:
@@ -812,10 +271,10 @@ def index() -> None:
 
     def render_header() -> None:
         conversation = current_conversation()
-        profile = settings.profile(conversation.model_profile)
+        profile = get_profile(conversation.model_profile)
         title_label.set_text(conversation.title)
         model_select.set_options(
-            settings.profile_options,
+            profile_options(),
             value=conversation.model_profile,
         )
         thinking_toggle.set_value(conversation.thinking_enabled)
@@ -837,9 +296,9 @@ def index() -> None:
                         f'Messages in "{current_project().name}" are kept separate and saved '
                         "locally in SQLite."
                     ).classes("text-sm text-slate-500 leading-relaxed")
-                    ui.label(
-                        "Use the offline test model or an OpenAI-compatible vLLM profile"
-                    ).classes("text-xs text-slate-400")
+                    ui.label("Pick a model profile above, or use the default Qwen3 8B").classes(
+                        "text-xs text-slate-400"
+                    )
             else:
                 for message in messages:
                     sent = message.role == "user"
@@ -891,7 +350,7 @@ def index() -> None:
             conversations[0]
             if conversations
             else repository.create_conversation(
-                settings.default_profile_key,
+                DEFAULT_PROFILE_KEY,
                 project_id=project_id,
             )
         )
@@ -958,7 +417,7 @@ def index() -> None:
             return
 
         conversation = repository.create_conversation(
-            settings.default_profile_key,
+            DEFAULT_PROFILE_KEY,
             project_id=project.id,
         )
         state.project_id = project.id
@@ -1023,7 +482,7 @@ def index() -> None:
             composer.run_method("focus")
             return
         created = repository.create_conversation(
-            settings.default_profile_key,
+            DEFAULT_PROFILE_KEY,
             project_id=state.project_id,
         )
         previous_conversation_id = state.conversation_id
@@ -1100,7 +559,7 @@ def index() -> None:
                 remaining[0]
                 if remaining
                 else repository.create_conversation(
-                    settings.default_profile_key,
+                    DEFAULT_PROFILE_KEY,
                     project_id=state.project_id,
                 )
             )
@@ -1129,7 +588,7 @@ def index() -> None:
             return
         profile_key = str(event.value)
         try:
-            profile = settings.profile(profile_key)
+            profile = get_profile(profile_key)
         except KeyError:
             page_event(
                 logging.WARNING,
@@ -1159,7 +618,7 @@ def index() -> None:
     def change_thinking(event) -> None:
         requested = bool(event.value)
         conversation = current_conversation()
-        profile = settings.profile(conversation.model_profile)
+        profile = get_profile(conversation.model_profile)
         if conversation.id in active_generations:
             page_event(
                 logging.WARNING,
@@ -1196,7 +655,7 @@ def index() -> None:
             "ui.thinking.changed",
             model_profile=profile.key,
             thinking_enabled=requested,
-            max_tokens=(settings.thinking_max_tokens if requested else settings.max_tokens),
+            max_tokens=(THINKING_MAX_TOKENS if requested else MAX_TOKENS),
             updated=updated,
         )
         render_conversation_list()
@@ -1258,19 +717,14 @@ def index() -> None:
 
         try:
             previous_messages = repository.list_messages(conversation.id)
-            profile = settings.profile(conversation.model_profile)
+            profile = get_profile(conversation.model_profile)
             page_event(
                 logging.INFO,
                 "ui.generation.started",
                 model_profile=profile.key,
-                model_backend=profile.backend,
                 model_name=profile.model,
                 thinking_enabled=conversation.thinking_enabled,
-                max_tokens=(
-                    settings.thinking_max_tokens
-                    if conversation.thinking_enabled
-                    else settings.max_tokens
-                ),
+                max_tokens=(THINKING_MAX_TOKENS if conversation.thinking_enabled else MAX_TOKENS),
                 input_message_chars=len(text),
                 previous_message_count=len(previous_messages),
             )
@@ -1325,21 +779,21 @@ def index() -> None:
         last_paint = monotonic()
         try:
             persisted_messages = repository.list_messages(conversation.id)
-            completion_messages = _completion_messages(persisted_messages)
+            request_messages = completion_messages(persisted_messages)
             page_event(
                 logging.DEBUG,
                 "ui.generation.request_prepared",
                 model_profile=profile.key,
                 thinking_enabled=conversation.thinking_enabled,
-                completion_message_count=len(completion_messages),
+                completion_message_count=len(request_messages),
                 completion_chars=sum(
-                    len(message.get("content", "")) for message in completion_messages
+                    len(message.get("content", "")) for message in request_messages
                 ),
             )
             async with aclosing(
-                gateway.stream_reply(
+                stream_reply(
                     profile,
-                    completion_messages,
+                    request_messages,
                     request_id=generation_id,
                     thinking_enabled=conversation.thinking_enabled,
                 )
@@ -1512,7 +966,7 @@ def index() -> None:
                 with ui.row().classes("items-center gap-4 no-wrap"):
                     model_select = (
                         ui.select(
-                            settings.profile_options,
+                            profile_options(),
                             value=initial.model_profile,
                             label="Model",
                             on_change=change_model,
@@ -1530,8 +984,8 @@ def index() -> None:
                         .classes("thinking-toggle")
                     )
                     thinking_toggle.tooltip(
-                        f"Off: up to {settings.max_tokens:,} output tokens; "
-                        f"on: up to {settings.thinking_max_tokens:,}"
+                        f"Off: up to {MAX_TOKENS:,} output tokens; "
+                        f"on: up to {THINKING_MAX_TOKENS:,}"
                     )
                     with ui.row().classes("items-center gap-3 no-wrap"):
                         ui.element("span").classes("status-dot")
@@ -1589,30 +1043,3 @@ def index() -> None:
             generation_active=state.generating,
         )
     )
-
-
-def main() -> None:
-    """Start the NiceGUI development server."""
-    log_event(
-        logger,
-        logging.INFO,
-        "application.server.starting",
-        host="127.0.0.1",
-        port=8080,
-        reload=False,
-    )
-    try:
-        ui.run(title="Agent Lab", favicon="✨", host="127.0.0.1", port=8080, reload=False)
-    except Exception:
-        logger.exception(
-            "application.server.failed",
-            extra={"event": "application.server.failed"},
-        )
-        raise
-    finally:
-        log_event(logger, logging.INFO, "application.server.stopped")
-        shutdown_logging()
-
-
-if __name__ in {"__main__", "__mp_main__"}:
-    main()
