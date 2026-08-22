@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
 import logging
 from time import monotonic
 
@@ -28,6 +29,17 @@ class LLMError(RuntimeError):
     """A safe, user-facing model generation error."""
 
 
+@dataclass(frozen=True, slots=True)
+class ContentDelta:
+    """One fragment of visible model text, tagged so callers can tell reasoning
+    (show it, but never feed it back as conversation history) from the model's
+    actual answer content (show it, and it belongs in history).
+    """
+
+    text: str
+    is_reasoning: bool = False
+
+
 class VLLMGateway:
     """Create streamed replies with the selected vLLM profile."""
 
@@ -40,9 +52,10 @@ class VLLMGateway:
         thinking_enabled: bool = False,
         tools: Sequence[dict] | None = None,
         tool_calls: list[dict] | None = None,
-    ) -> AsyncIterator[str]:
-        """Stream the reply as text; if `tool_calls` is given, append the fully
-        reconstructed tool calls to it (id, name, arguments) once the stream completes.
+    ) -> AsyncIterator[ContentDelta]:
+        """Stream the reply as tagged text fragments; if `tool_calls` is given, append
+        the fully reconstructed tool calls to it (id, name, arguments) once the stream
+        completes.
         """
         started_at = monotonic()
         chunk_count = 0
@@ -108,11 +121,7 @@ class VLLMGateway:
                 choice = chunk.choices[0]
                 if choice.finish_reason is not None:
                     finish_reason = str(choice.finish_reason)
-                reasoning = getattr(choice.delta, "reasoning", None) or getattr(
-                    choice.delta,
-                    "reasoning_content",
-                    None,
-                )
+                reasoning = getattr(choice.delta, "reasoning", None) or getattr(choice.delta, "reasoning_content", None)
                 if reasoning:
                     if first_reasoning_chunk_ms is None:
                         first_reasoning_chunk_ms = round(
@@ -121,49 +130,36 @@ class VLLMGateway:
                         )
                     reasoning_chunk_count += 1
                     reasoning_chars += len(reasoning)
-                    fragment = reasoning if reasoning_open else f"**Thinking:**\n\n{reasoning}"
                     reasoning_open = True
                     if first_chunk_ms is None:
                         first_chunk_ms = round((monotonic() - started_at) * 1000, 2)
                     chunk_count += 1
-                    output_chars += len(fragment)
-                    yield fragment
+                    output_chars += len(reasoning)
+                    yield ContentDelta(reasoning, is_reasoning=True)
                 content = choice.delta.content
                 if content:
                     if reasoning_open:
-                        content = f"\n\n---\n\n{content}"
                         reasoning_open = False
                     if first_chunk_ms is None:
                         first_chunk_ms = round((monotonic() - started_at) * 1000, 2)
                     chunk_count += 1
                     output_chars += len(content)
-                    yield content
-                # Surface the raw tool-call deltas as visible text, and separately
-                # reconstruct them (id, name, arguments) for the caller to execute.
+                    yield ContentDelta(content)
+                # Reconstruct tool-call deltas (id, name, arguments) for the caller to
+                # execute -- no decorative text here; chat.py renders tool calls/results
+                # from this structured data instead, since it persists them structurally.
                 for tool_call_delta in getattr(choice.delta, "tool_calls", None) or []:
                     buffer = tool_call_buffers.setdefault(
                         tool_call_delta.index, {"id": None, "name": None, "arguments": ""}
                     )
-                    function = getattr(tool_call_delta, "function", None)
-                    fragment = ""
-                    if reasoning_open:
-                        fragment += "\n\n---\n\n"
-                        reasoning_open = False
                     if tool_call_delta.id:
                         buffer["id"] = tool_call_delta.id
+                    function = getattr(tool_call_delta, "function", None)
                     if function is not None and function.name:
                         buffer["name"] = function.name
-                        fragment += f"\n[tool_call: {function.name}] "
                     if function is not None and function.arguments:
                         buffer["arguments"] = (buffer["arguments"] or "") + function.arguments
-                        fragment += function.arguments
-                    if fragment:
-                        if first_chunk_ms is None:
-                            first_chunk_ms = round((monotonic() - started_at) * 1000, 2)
-                        chunk_count += 1
-                        tool_call_chunk_count += 1
-                        output_chars += len(fragment)
-                        yield fragment
+                    tool_call_chunk_count += 1
             outcome = "completed"
             if tool_calls is not None:
                 tool_calls.extend(tool_call_buffers.values())
