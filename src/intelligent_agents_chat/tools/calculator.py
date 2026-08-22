@@ -5,7 +5,9 @@ from __future__ import annotations
 import ast
 import operator
 
-CALCULATOR_TOOL: dict = {
+from intelligent_agents_chat.tools import Tool
+
+_SCHEMA: dict = {
     "type": "function",
     "function": {
         "name": "calculator",
@@ -58,3 +60,13 @@ def run(arguments: dict) -> str:
     if isinstance(result, float):
         result = round(result, 10)
     return str(result)
+
+
+async def _run_async(arguments: dict) -> str:
+    """Thin async wrapper to fit the `Tool.run` contract -- this is pure CPU
+    and fast enough that it doesn't need a thread hop, unlike e.g. the
+    sub-agent tool's LLM call."""
+    return run(arguments)
+
+
+TOOL = Tool(name=_SCHEMA["function"]["name"], schema=_SCHEMA, run=_run_async)

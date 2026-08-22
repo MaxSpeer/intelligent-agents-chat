@@ -36,7 +36,7 @@ QWEN35_9B_PORT = _port("VLLM_QWEN35_9B_PORT", 8002)
 _QWEN3_8B_BASE_URL = f"http://127.0.0.1:{QWEN3_8B_PORT}/v1"
 _QWEN35_9B_BASE_URL = f"http://127.0.0.1:{QWEN35_9B_PORT}/v1"
 
-DEFAULT_PROFILE_KEY = "qwen3-8b"
+DEFAULT_PROFILE_KEY = "qwen3.5-9b"
 
 # qwen3-8b and conspiracy are served by the same vLLM process
 # (cluster/run-vllm-qwen3-8b.sbatch's LORA_MODULES); qwen3.5-9b runs on a

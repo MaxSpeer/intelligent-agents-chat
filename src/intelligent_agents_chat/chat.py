@@ -26,7 +26,7 @@ from intelligent_agents_chat.llm import (
 )
 from intelligent_agents_chat.logging_config import configure_logging, log_event, sanitized_endpoint
 from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, MODEL_PROFILES, ModelProfile
-from intelligent_agents_chat.tools import calculator
+from intelligent_agents_chat.tools import Tool, calculator, subagent
 
 PROFILE_STATUS_POLL_INTERVAL_SECONDS = 15.0
 
@@ -79,25 +79,44 @@ except Exception:
 
 gateway = VLLMGateway()
 active_generations: set[str] = set()
-
-# `None` until the first background check completes; then True/False. Mutated in place
-# (never reassigned) so that importers of this dict see updates made by poll_profile_status().
 profile_status: dict[str, bool | None] = {profile.key: None for profile in MODEL_PROFILES}
 
 log_event(logger, logging.INFO, "application.initialized")
 
 
-# Only one tool for now; a name-keyed registry can replace this once more arrive.
-TOOLS: dict = {"calculator": calculator.CALCULATOR_TOOL}
+# Every available tool, self-registered by its module. Add a new tool by
+# writing a `tools/<name>.py` that exports a `Tool` (see tools/calculator.py),
+# then listing it here -- nothing else in this file needs to change.
+_ALL_TOOLS: tuple[Tool, ...] = (calculator.TOOL, subagent.TOOL)
+TOOLS: dict[str, Tool] = {tool.name: tool for tool in _ALL_TOOLS}
 
 MAX_TOOL_ROUNDS = 4
 MAX_TOOL_CALLS_PER_ROUND = 5
 
 
-def _execute_tool(name: str, arguments: dict) -> str:
-    if name == "calculator":
-        return calculator.run(arguments)
-    return f"Error: unknown tool '{name}'"
+async def _execute_tool(name: str, arguments: dict) -> str:
+    """Await one tool's `run` to completion before returning.
+
+    Tools run asynchronously so none of them block
+    the event loop that serves every other connected browser tab. This is
+    still a sequential await, though - the calling agent loop (below)
+    stops and waits for this to finish before it does anything else; it does
+    not continue on in parallel while a tool (e.g. a sub-agent) is running.
+    """
+    tool = TOOLS.get(name)
+    if tool is None:
+        return f"Error: unknown tool '{name}'"
+    try:
+        return await tool.run(arguments)
+    except Exception as error:
+        # A tool is expected to catch its own errors and return them as text
+        # This is a backstop so a badly-written tool
+        # can't take down the whole agent loop.
+        logger.exception(
+            "chat.tool.execution_failed",
+            extra={"event": "chat.tool.execution_failed", "tool_name": name},
+        )
+        return f"Error: tool '{name}' failed unexpectedly: {error}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,11 +218,13 @@ async def stream_reply(
     the model requests tool calls, and `ToolResultEvent` once per executed call --
     the caller is expected to both render and persist each event appropriately.
     """
-    tools = list(TOOLS.values()) if profile.supports_tools else None
+    tools = [tool.schema for tool in TOOLS.values()] if profile.supports_tools else None
     conversation_messages: list[dict] = list(messages)
 
     for _ in range(MAX_TOOL_ROUNDS):
         pending_tool_calls: list[dict] = []
+        saw_content = False
+        reasoning_chunks: list[str] = []
         async for delta in gateway.stream_reply(
             profile,
             conversation_messages,
@@ -212,9 +233,32 @@ async def stream_reply(
             tools=tools,
             tool_calls=pending_tool_calls,
         ):
+            if delta.is_reasoning:
+                reasoning_chunks.append(delta.text)
+            else:
+                saw_content = True
             yield TextChunk(delta.text, is_reasoning=delta.is_reasoning)
 
         if not pending_tool_calls:
+            if not saw_content and reasoning_chunks:
+                # Bug that sometimes happened: The model finished last round 
+                # (no more tool calls to make) without ever producing real `content`
+                # instead only producing reasoning text. 
+                # Rather than show an empty answer, treat that last
+                # reasoning text as the real answer: still shown in the
+                # collapsible trace as it streamed, but now also persisted
+                # and displayed as the actual response.
+                fallback = "".join(reasoning_chunks).strip()
+                if fallback:
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "chat.reasoning_used_as_fallback_answer",
+                        request_id=request_id,
+                        profile_key=profile.key,
+                        reasoning_chars=len(fallback),
+                    )
+                    yield TextChunk(fallback, is_reasoning=False)
             return
 
         yield ToolCallEvent(tuple(pending_tool_calls))
@@ -248,7 +292,10 @@ async def stream_reply(
                     arguments = json.loads(call["arguments"]) if call["arguments"] else {}
                 except json.JSONDecodeError:
                     arguments = {}
-                result = _execute_tool(call["name"], arguments)
+                # Sequential on purpose: each tool call is awaited to completion
+                # before the next one starts (and before the model gets to see any
+                # results), even though tools themselves run async. 
+                result = await _execute_tool(call["name"], arguments)
             else:
                 result = (
                     "Error: too many tool calls in a single turn "
@@ -258,7 +305,6 @@ async def stream_reply(
             conversation_messages.append(
                 {"role": "tool", "tool_call_id": call["id"], "content": result}
             )
-
 
 
 async def refresh_profile_status() -> None:
@@ -287,6 +333,7 @@ async def refresh_profile_status() -> None:
                 model_profile=profile.key,
                 available=is_available,
             )
+
 
 async def poll_profile_status() -> None:
     """Continuously refresh `profile_status` in the background."""

@@ -28,8 +28,8 @@ class PortEnvironmentOverrideTests(unittest.TestCase):
 
 
 class ModelProfilesTests(unittest.TestCase):
-    def test_default_profile_is_qwen3_8b(self) -> None:
-        self.assertEqual(DEFAULT_PROFILE_KEY, "qwen3-8b")
+    def test_default_profile_is_qwen35_9b(self) -> None:
+        self.assertEqual(DEFAULT_PROFILE_KEY, "qwen3.5-9b")
         self.assertIn(DEFAULT_PROFILE_KEY, profile_options())
 
     def test_three_profiles_are_configured(self) -> None:
