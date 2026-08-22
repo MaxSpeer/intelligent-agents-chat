@@ -39,6 +39,7 @@ class Conversation:
     model_profile: str
     thinking_enabled: bool
     memory_enabled: bool
+    rag_enabled: bool
     created_at: datetime
     updated_at: datetime
 
@@ -63,6 +64,7 @@ class ContextSourceInput:
     source_conversation_id: str | None
     source_title: str
     source_locator: str
+    source_excerpt: str
     rank: int
     score: float
     token_estimate: int
@@ -80,6 +82,7 @@ class MessageContextSource:
     source_conversation_id: str | None
     source_title: str
     source_locator: str
+    source_excerpt: str
     rank: int
     score: float
     token_estimate: int
@@ -120,6 +123,8 @@ class ChatRepository:
                         CHECK (thinking_enabled IN (0, 1)),
                     memory_enabled INTEGER NOT NULL DEFAULT 0
                         CHECK (memory_enabled IN (0, 1)),
+                    rag_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK (rag_enabled IN (0, 1)),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -146,6 +151,14 @@ class ChatRepository:
                     ALTER TABLE conversations
                     ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 0
                         CHECK (memory_enabled IN (0, 1))
+                    """
+                )
+            if not _column_exists(connection, "conversations", "rag_enabled"):
+                connection.execute(
+                    """
+                    ALTER TABLE conversations
+                    ADD COLUMN rag_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK (rag_enabled IN (0, 1))
                     """
                 )
             connection.executescript(
@@ -212,6 +225,7 @@ class ChatRepository:
                     source_conversation_id TEXT,
                     source_title TEXT NOT NULL,
                     source_locator TEXT NOT NULL,
+                    source_excerpt TEXT NOT NULL DEFAULT '',
                     rank INTEGER NOT NULL,
                     score REAL NOT NULL,
                     token_estimate INTEGER NOT NULL,
@@ -222,7 +236,14 @@ class ChatRepository:
                     ON message_context_sources(assistant_message_id, rank);
                 """
             )
-            connection.execute("PRAGMA user_version = 2")
+            if not _column_exists(connection, "message_context_sources", "source_excerpt"):
+                connection.execute(
+                    """
+                    ALTER TABLE message_context_sources
+                    ADD COLUMN source_excerpt TEXT NOT NULL DEFAULT ''
+                    """
+                )
+            connection.execute("PRAGMA user_version = 4")
             now = _timestamp()
             connection.execute(
                 """
@@ -238,7 +259,7 @@ class ChatRepository:
             database_path=str(self.database_path),
             sqlite_version=sqlite3.sqlite_version,
             journal_mode=journal_mode,
-            schema_version=2,
+            schema_version=4,
         )
 
     def get_project(self, project_id: str = DEFAULT_PROJECT_ID) -> Project | None:
@@ -313,6 +334,7 @@ class ChatRepository:
         title: str = DEFAULT_CONVERSATION_TITLE,
         thinking_enabled: bool = False,
         memory_enabled: bool = False,
+        rag_enabled: bool = False,
     ) -> Conversation:
         conversation_id = str(uuid4())
         now = _timestamp()
@@ -327,8 +349,8 @@ class ChatRepository:
                 """
                 INSERT INTO conversations (
                     id, project_id, title, model_profile, thinking_enabled, memory_enabled,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    rag_enabled, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -337,6 +359,7 @@ class ChatRepository:
                     model_profile,
                     int(thinking_enabled),
                     int(memory_enabled),
+                    int(rag_enabled),
                     now,
                     now,
                 ),
@@ -353,6 +376,7 @@ class ChatRepository:
             model_profile=conversation.model_profile,
             thinking_enabled=conversation.thinking_enabled,
             memory_enabled=conversation.memory_enabled,
+            rag_enabled=conversation.rag_enabled,
             title_chars=len(conversation.title),
         )
         return conversation
@@ -362,7 +386,7 @@ class ChatRepository:
             row = connection.execute(
                 """
                 SELECT id, project_id, title, model_profile, thinking_enabled, memory_enabled,
-                       created_at, updated_at
+                       rag_enabled, created_at, updated_at
                 FROM conversations
                 WHERE id = ?
                 """,
@@ -375,7 +399,7 @@ class ChatRepository:
             rows = connection.execute(
                 """
                 SELECT id, project_id, title, model_profile, thinking_enabled, memory_enabled,
-                       created_at, updated_at
+                       rag_enabled, created_at, updated_at
                 FROM conversations
                 WHERE project_id = ?
                 ORDER BY updated_at DESC, created_at DESC
@@ -481,6 +505,28 @@ class ChatRepository:
             "database.conversation.memory_changed",
             conversation_id=conversation_id,
             memory_enabled=enabled,
+            updated=updated,
+        )
+        return updated
+
+    def set_rag_enabled(self, conversation_id: str, enabled: bool) -> bool:
+        now = _timestamp()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE conversations
+                SET rag_enabled = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (int(enabled), now, conversation_id),
+            )
+        updated = cursor.rowcount == 1
+        log_event(
+            logger,
+            logging.INFO,
+            "database.conversation.rag_changed",
+            conversation_id=conversation_id,
+            rag_enabled=enabled,
             updated=updated,
         )
         return updated
@@ -591,9 +637,9 @@ class ChatRepository:
                 """
                 INSERT INTO message_context_sources (
                     assistant_message_id, source_kind, source_id, source_project_id,
-                    source_conversation_id, source_title, source_locator, rank, score,
-                    token_estimate
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source_conversation_id, source_title, source_locator, source_excerpt,
+                    rank, score, token_estimate
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -604,6 +650,7 @@ class ChatRepository:
                         source.source_conversation_id,
                         source.source_title,
                         source.source_locator,
+                        source.source_excerpt,
                         source.rank,
                         source.score,
                         source.token_estimate,
@@ -626,7 +673,7 @@ class ChatRepository:
                 """
                 SELECT id, assistant_message_id, source_kind, source_id, source_project_id,
                        source_conversation_id, source_title, source_locator, rank, score,
-                       token_estimate
+                       source_excerpt, token_estimate
                 FROM message_context_sources
                 WHERE assistant_message_id = ?
                 ORDER BY rank ASC
@@ -677,6 +724,7 @@ def _conversation_from_row(row: sqlite3.Row) -> Conversation:
         model_profile=row["model_profile"],
         thinking_enabled=bool(row["thinking_enabled"]),
         memory_enabled=bool(row["memory_enabled"]),
+        rag_enabled=bool(row["rag_enabled"]),
         created_at=_parse_datetime(row["created_at"]),
         updated_at=_parse_datetime(row["updated_at"]),
     )
@@ -703,6 +751,7 @@ def _message_context_source_from_row(row: sqlite3.Row) -> MessageContextSource:
         source_conversation_id=row["source_conversation_id"],
         source_title=row["source_title"],
         source_locator=row["source_locator"],
+        source_excerpt=row["source_excerpt"],
         rank=row["rank"],
         score=row["score"],
         token_estimate=row["token_estimate"],

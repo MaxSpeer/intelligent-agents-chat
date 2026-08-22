@@ -16,6 +16,8 @@ from nicegui import app as nicegui_app, ui
 
 from intelligent_agents_chat.chat import (
     active_generations,
+    document_service,
+    document_store,
     memory_store,
     poll_profile_status,
     prepare_conversation_context,
@@ -38,6 +40,8 @@ from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, get_profile, pro
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+DOCUMENT_UPLOAD_ACCEPT = ".txt,.md,.markdown,.pdf,.docx,.csv,.xlsx"
+DOCUMENT_UPLOAD_LABEL = "TXT, Markdown, PDF, DOCX, CSV, or XLSX"
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +234,7 @@ def index() -> None:
             model_select.disable()
             thinking_toggle.disable()
             memory_toggle.disable()
+            rag_toggle.disable()
         else:
             composer.enable()
             send_button.enable()
@@ -241,6 +246,7 @@ def index() -> None:
             else:
                 thinking_toggle.disable()
             memory_toggle.enable()
+            rag_toggle.enable()
             composer.run_method("focus")
 
     def render_project_picker() -> None:
@@ -299,14 +305,17 @@ def index() -> None:
         render_model_status(conversation.model_profile)
         thinking_toggle.set_value(conversation.thinking_enabled)
         memory_toggle.set_value(conversation.memory_enabled)
+        rag_toggle.set_value(conversation.rag_enabled)
         if profile.supports_thinking and not state.generating:
             thinking_toggle.enable()
         else:
             thinking_toggle.disable()
         if state.generating:
             memory_toggle.disable()
+            rag_toggle.disable()
         else:
             memory_toggle.enable()
+            rag_toggle.enable()
 
     def render_messages() -> None:
         messages_container.clear()
@@ -336,14 +345,29 @@ def index() -> None:
                     ).classes("chat-message"):
                         _chat_markdown(message.content)
                         if sources:
+                            source_kinds = {source.source_kind for source in sources}
+                            if source_kinds == {"project_memory"}:
+                                source_label = "Project memory"
+                                source_icon = "history"
+                            elif source_kinds == {"project_document"}:
+                                source_label = "Documents"
+                                source_icon = "description"
+                            else:
+                                source_label = "Sources"
+                                source_icon = "source"
                             with ui.expansion(
-                                f"Project memory · {len(sources)} source"
+                                f"{source_label} · {len(sources)} source"
                                 + ("s" if len(sources) != 1 else ""),
-                                icon="history",
+                                icon=source_icon,
                             ).classes("memory-sources"):
                                 for source in sources:
                                     with ui.row().classes("memory-source-row"):
-                                        ui.icon("chat_bubble_outline", size="xs")
+                                        ui.icon(
+                                            "description"
+                                            if source.source_kind == "project_document"
+                                            else "chat_bubble_outline",
+                                            size="xs",
+                                        )
                                         with ui.column().classes("gap-0 min-w-0"):
                                             ui.label(source.source_title).classes(
                                                 "memory-source-title"
@@ -351,6 +375,10 @@ def index() -> None:
                                             ui.label(source.source_locator).classes(
                                                 "memory-source-locator"
                                             )
+                                            if source.source_excerpt:
+                                                ui.label(source.source_excerpt).classes(
+                                                    "memory-source-excerpt"
+                                                )
         message_scroll.scroll_to(percent=1)
 
     def render_all() -> None:
@@ -733,6 +761,310 @@ def index() -> None:
         )
         render_conversation_list()
 
+    def change_rag(event) -> None:
+        requested = bool(event.value)
+        conversation = current_conversation()
+        if conversation.id in active_generations:
+            page_event(
+                logging.WARNING,
+                "ui.rag.change_blocked",
+                requested_rag_enabled=requested,
+                reason="generation_active",
+            )
+            ui.notify("Stop this chat's response before changing document RAG.", type="warning")
+            render_header()
+            return
+        if requested == conversation.rag_enabled:
+            page_event(
+                logging.DEBUG,
+                "ui.rag.change_ignored",
+                rag_enabled=requested,
+                reason="already_selected",
+            )
+            return
+
+        updated = repository.set_rag_enabled(conversation.id, requested)
+        page_event(
+            logging.INFO,
+            "ui.rag.changed",
+            rag_enabled=requested,
+            updated=updated,
+        )
+        render_conversation_list()
+
+    def manage_project_documents() -> None:
+        project = current_project()
+        page_event(
+            logging.INFO,
+            "ui.documents.management_opened",
+            embeddings_enabled=document_service.embeddings_enabled,
+            embedding_model=document_service.embedding_model,
+        )
+
+        with ui.dialog() as dialog, ui.card().classes("document-dialog"):
+            with ui.row().classes("w-full items-start justify-between no-wrap"):
+                with ui.column().classes("gap-1 min-w-0"):
+                    ui.label(f"Project documents · {project.name}").classes("text-xl font-bold")
+                    ui.label(
+                        f"Upload {DOCUMENT_UPLOAD_LABEL} files. Indexed passages are available "
+                        "only to chats in this project."
+                    ).classes("text-sm text-slate-500")
+                document_dialog_close = ui.button(icon="close", on_click=dialog.close).props(
+                    "flat round dense"
+                )
+                document_dialog_close.props["aria-label"] = "Close project documents"
+
+            with ui.row().classes("document-ingestion-status"):
+                ui.icon(
+                    "hub" if document_service.embeddings_enabled else "manage_search",
+                    size="sm",
+                )
+                ui.label(
+                    f"Hybrid retrieval · {document_service.embedding_model}"
+                    if document_service.embeddings_enabled
+                    else "Lexical retrieval · configure an embedding endpoint for hybrid search"
+                ).classes("text-xs text-slate-500")
+
+            document_count_label = ui.label().classes("text-xs text-slate-400")
+            documents_container = ui.column().classes("document-entry-list")
+
+            async def upload_document(event) -> None:
+                file = event.file
+                page_event(
+                    logging.INFO,
+                    "ui.documents.upload_started",
+                    filename_chars=len(file.name),
+                    media_type=file.content_type,
+                    byte_size=file.size(),
+                )
+                try:
+                    data = await file.read()
+                    result = await document_service.upload(
+                        project_id=project.id,
+                        display_name=file.name,
+                        media_type=file.content_type,
+                        data=data,
+                    )
+                except Exception as error:
+                    page_event(
+                        logging.WARNING,
+                        "ui.documents.upload_failed",
+                        filename_chars=len(file.name),
+                        media_type=file.content_type,
+                        byte_size=file.size(),
+                        error_type=type(error).__name__,
+                    )
+                    ui.notify(str(error), type="negative", multi_line=True, timeout=8000)
+                else:
+                    page_event(
+                        logging.INFO,
+                        "ui.documents.upload_completed",
+                        document_id=result.document.id,
+                        duplicate=result.duplicate,
+                        chunk_count=result.document.chunk_count,
+                        embedding_model=result.document.embedding_model,
+                    )
+                    ui.notify(
+                        (
+                            f'"{result.document.display_name}" was already indexed.'
+                            if result.duplicate
+                            else f'Indexed "{result.document.display_name}" '
+                            f"({result.document.chunk_count} chunks)."
+                        ),
+                        type="info" if result.duplicate else "positive",
+                    )
+                render_documents()
+
+            uploader = ui.upload(
+                label="Add project documents",
+                multiple=True,
+                max_file_size=10 * 1024 * 1024,
+                max_total_size=30 * 1024 * 1024,
+                max_files=10,
+                auto_upload=True,
+                on_upload=upload_document,
+                on_rejected=lambda: ui.notify(
+                    f"Only up to 10 {DOCUMENT_UPLOAD_LABEL} files of at most 10 MiB are accepted.",
+                    type="warning",
+                ),
+            ).props(f"accept={DOCUMENT_UPLOAD_ACCEPT} flat bordered")
+            uploader.classes("document-uploader")
+
+            async def reindex_document(document_id: str) -> None:
+                page_event(
+                    logging.INFO,
+                    "ui.documents.reindex_started",
+                    document_id=document_id,
+                )
+                try:
+                    indexed = await document_service.reindex(document_id, project.id)
+                except Exception as error:
+                    page_event(
+                        logging.WARNING,
+                        "ui.documents.reindex_failed",
+                        document_id=document_id,
+                        error_type=type(error).__name__,
+                    )
+                    ui.notify(str(error), type="negative", multi_line=True, timeout=8000)
+                else:
+                    ui.notify(
+                        f'Re-indexed "{indexed.display_name}" ({indexed.chunk_count} chunks).',
+                        type="positive",
+                    )
+                render_documents()
+
+            async def replace_document(document_id: str) -> None:
+                document = document_store.get_document(document_id)
+                if document is None or document.project_id != project.id:
+                    ui.notify("This document no longer exists.", type="warning")
+                    render_documents()
+                    return
+
+                with (
+                    ui.dialog() as replace_dialog,
+                    ui.card().classes("w-[34rem] max-w-full p-6 gap-5"),
+                ):
+                    ui.label(f'Replace "{document.display_name}"').classes("text-xl font-bold")
+                    ui.label(
+                        "The generated document ID stays stable; old chunks and embeddings are "
+                        "replaced atomically after the new file is processed."
+                    ).classes("text-sm text-slate-500")
+
+                    async def handle_replacement(event) -> None:
+                        file = event.file
+                        try:
+                            replacement = await document_service.replace(
+                                document.id,
+                                project.id,
+                                display_name=file.name,
+                                media_type=file.content_type,
+                                data=await file.read(),
+                            )
+                        except Exception as error:
+                            page_event(
+                                logging.WARNING,
+                                "ui.documents.replace_failed",
+                                document_id=document.id,
+                                error_type=type(error).__name__,
+                            )
+                            ui.notify(str(error), type="negative", multi_line=True, timeout=8000)
+                            return
+                        page_event(
+                            logging.INFO,
+                            "ui.documents.replaced",
+                            document_id=document.id,
+                            chunk_count=replacement.chunk_count,
+                        )
+                        replace_dialog.close()
+                        render_documents()
+                        ui.notify(f'Replaced "{replacement.display_name}".', type="positive")
+
+                    replacement_uploader = ui.upload(
+                        label="Choose replacement",
+                        max_file_size=10 * 1024 * 1024,
+                        max_files=1,
+                        auto_upload=True,
+                        on_upload=handle_replacement,
+                    ).props(f"accept={DOCUMENT_UPLOAD_ACCEPT} flat bordered")
+                    replacement_uploader.classes("document-uploader")
+                    with ui.row().classes("w-full justify-end"):
+                        ui.button("Cancel", on_click=replace_dialog.close).props("flat no-caps")
+                replace_dialog.open()
+
+            async def confirm_delete_document(document_id: str) -> None:
+                document = document_store.get_document(document_id)
+                if document is None or document.project_id != project.id:
+                    ui.notify("This document no longer exists.", type="warning")
+                    render_documents()
+                    return
+                with ui.dialog() as delete_dialog, ui.card().classes("w-96 max-w-full p-6 gap-5"):
+                    ui.label("Delete project document?").classes("text-xl font-bold")
+                    ui.label(
+                        f'"{document.display_name}", its chunks, and embeddings will be removed.'
+                    ).classes("text-sm text-slate-500")
+                    with ui.row().classes("w-full justify-end gap-2"):
+                        ui.button("Cancel", on_click=lambda: delete_dialog.submit(False)).props(
+                            "flat no-caps"
+                        )
+                        ui.button("Delete", on_click=lambda: delete_dialog.submit(True)).props(
+                            "unelevated no-caps color=negative"
+                        )
+                if not await delete_dialog:
+                    return
+                deleted = await document_service.delete(document.id, project.id)
+                page_event(
+                    logging.INFO,
+                    "ui.documents.deleted",
+                    document_id=document.id,
+                    deleted=deleted,
+                )
+                render_documents()
+                if deleted:
+                    ui.notify(f'Deleted "{document.display_name}".', type="info")
+
+            def render_documents() -> None:
+                documents = document_store.list_documents(project.id)
+                document_count_label.set_text(
+                    f"{len(documents)} project document" + ("s" if len(documents) != 1 else "")
+                )
+                documents_container.clear()
+                with documents_container:
+                    if not documents:
+                        ui.label(
+                            "No documents yet. Upload a file to make it available for RAG."
+                        ).classes("text-sm text-slate-500 py-6")
+                    for document in documents:
+                        status_icon = {
+                            "indexed": "check_circle",
+                            "processing": "hourglass_top",
+                            "failed": "error",
+                        }.get(document.status, "help")
+                        with ui.expansion(
+                            document.display_name,
+                            caption=(
+                                f"{document.status} · {document.chunk_count} chunks · "
+                                f"{document.byte_size / 1024:.1f} KiB"
+                            ),
+                            icon=status_icon,
+                        ).classes(f"document-entry status-{document.status}"):
+                            with ui.column().classes("gap-2"):
+                                ui.label(f"SHA-256 · {document.sha256[:16]}…").classes(
+                                    "text-xs text-slate-400"
+                                )
+                                if document.embedding_model:
+                                    ui.label(
+                                        f"Embeddings · {document.embedding_model} · "
+                                        f"{document.embedding_dimension} dimensions"
+                                    ).classes("text-xs text-slate-400")
+                                else:
+                                    ui.label("Embeddings · not configured").classes(
+                                        "text-xs text-slate-400"
+                                    )
+                                if document.error_message:
+                                    ui.label(document.error_message).classes(
+                                        "document-error text-sm"
+                                    )
+                                with ui.row().classes("gap-2"):
+                                    ui.button(
+                                        "Retry" if document.status == "failed" else "Re-index",
+                                        icon="refresh",
+                                        on_click=partial(reindex_document, document.id),
+                                    ).props("flat dense no-caps")
+                                    ui.button(
+                                        "Replace",
+                                        icon="swap_horiz",
+                                        on_click=partial(replace_document, document.id),
+                                    ).props("flat dense no-caps")
+                                    ui.button(
+                                        "Delete",
+                                        icon="delete_outline",
+                                        on_click=partial(confirm_delete_document, document.id),
+                                    ).props("flat dense no-caps color=negative")
+
+            render_documents()
+
+        dialog.open()
+
     def manage_project_memory() -> None:
         project = current_project()
         page_event(logging.INFO, "ui.memory.management_opened")
@@ -879,6 +1211,7 @@ def index() -> None:
                 model_name=profile.model,
                 thinking_enabled=conversation.thinking_enabled,
                 memory_enabled=conversation.memory_enabled,
+                rag_enabled=conversation.rag_enabled,
                 max_tokens=(THINKING_MAX_TOKENS if conversation.thinking_enabled else MAX_TOKENS),
                 input_message_chars=len(text),
                 previous_message_count=len(previous_messages),
@@ -933,7 +1266,7 @@ def index() -> None:
         last_paint = monotonic()
         try:
             persisted_messages = repository.list_messages(conversation.id)
-            context_plan = prepare_conversation_context(
+            context_plan = await prepare_conversation_context(
                 conversation,
                 profile,
                 persisted_messages,
@@ -954,6 +1287,9 @@ def index() -> None:
                 ),
                 memory_source_count=len(context_plan.included_sources),
                 memory_excluded_count=len(context_plan.excluded_sources),
+                source_kinds=sorted(
+                    {source.candidate.source_kind for source in context_plan.included_sources}
+                ),
                 estimated_input_tokens=context_plan.estimated_input_tokens,
                 input_budget_tokens=context_plan.input_budget_tokens,
                 omitted_history_messages=context_plan.omitted_history_messages,
@@ -1049,6 +1385,7 @@ def index() -> None:
                                     ),
                                     source_title=source.candidate.title,
                                     source_locator=source.candidate.locator,
+                                    source_excerpt=source.candidate.text,
                                     rank=source.rank,
                                     score=source.candidate.score,
                                     token_estimate=source.token_estimate,
@@ -1151,6 +1488,12 @@ def index() -> None:
                 on_click=manage_project_memory,
             ).props("flat no-caps align=left").classes("memory-manage-button")
 
+            ui.button(
+                "Manage project documents",
+                icon="folder_open",
+                on_click=manage_project_documents,
+            ).props("flat no-caps align=left").classes("memory-manage-button")
+
             with ui.column().classes("sidebar-footer gap-1"):
                 ui.label("Local history").classes("text-sm font-semibold")
                 ui.label("SQLite persistence enabled").classes("text-xs text-slate-500")
@@ -1200,6 +1543,18 @@ def index() -> None:
                     )
                     memory_toggle.tooltip(
                         "Retrieve relevant context from other chats in this project"
+                    )
+                    rag_toggle = (
+                        ui.switch(
+                            "Use documents",
+                            value=initial.rag_enabled,
+                            on_change=change_rag,
+                        )
+                        .props("dense color=deep-purple")
+                        .classes("rag-toggle")
+                    )
+                    rag_toggle.tooltip(
+                        "Retrieve relevant passages from indexed files in this project"
                     )
 
             message_scroll = ui.scroll_area().classes("message-scroll")

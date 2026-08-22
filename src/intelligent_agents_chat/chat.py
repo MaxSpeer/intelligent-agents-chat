@@ -11,10 +11,20 @@ import asyncio
 from collections.abc import AsyncIterator
 from importlib.metadata import version
 import logging
+import os
+from pathlib import Path
 import platform
 
 from intelligent_agents_chat.context import ContextAssembler, ContextPlan
 from intelligent_agents_chat.database import ChatRepository, Conversation, Message
+from intelligent_agents_chat.documents import (
+    DEFAULT_DOCUMENT_ROOT,
+    BlobStore,
+    Chunker,
+    DocumentParser,
+    DocumentStore,
+)
+from intelligent_agents_chat.embeddings import create_embedding_gateway
 from intelligent_agents_chat.llm import (
     MAX_TOKENS,
     SYSTEM_PROMPT,
@@ -25,6 +35,7 @@ from intelligent_agents_chat.llm import (
 from intelligent_agents_chat.logging_config import configure_logging, log_event, sanitized_endpoint
 from intelligent_agents_chat.memory import ProjectMemoryStore
 from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, MODEL_PROFILES, ModelProfile
+from intelligent_agents_chat.rag import DocumentService, ProjectRAGRetriever
 from intelligent_agents_chat.retrieval import ContextCandidate, RetrievalQuery
 
 PROFILE_STATUS_POLL_INTERVAL_SECONDS = 15.0
@@ -41,6 +52,9 @@ log_event(
     dependency_versions={
         "nicegui": version("nicegui"),
         "openai": version("openai"),
+        "openpyxl": version("openpyxl"),
+        "pypdf": version("pypdf"),
+        "python-docx": version("python-docx"),
     },
 )
 log_event(
@@ -80,6 +94,18 @@ except Exception:
 
 gateway = VLLMGateway()
 memory_store = ProjectMemoryStore(repository.database_path)
+document_store = DocumentStore(repository.database_path)
+document_store.initialize()
+document_root = Path(os.environ.get("RAG_DOCUMENT_ROOT", str(DEFAULT_DOCUMENT_ROOT)))
+embedding_gateway = create_embedding_gateway()
+document_service = DocumentService(
+    document_store,
+    BlobStore(document_root),
+    DocumentParser(),
+    Chunker(),
+    embedding_gateway,
+)
+rag_retriever = ProjectRAGRetriever(document_store, embedding_gateway)
 context_assembler = ContextAssembler(SYSTEM_PROMPT)
 active_generations: set[str] = set()
 
@@ -175,6 +201,20 @@ def retrieve_project_memory(
     )
 
 
+async def retrieve_project_documents(
+    *,
+    project_id: str,
+    query_text: str,
+) -> list[ContextCandidate]:
+    """Retrieve relevant chunks from indexed documents in the same project."""
+    return await rag_retriever.retrieve(
+        RetrievalQuery(
+            project_id=project_id,
+            text=query_text,
+        )
+    )
+
+
 def prepare_context(
     profile: ModelProfile,
     messages: list[Message],
@@ -205,18 +245,19 @@ def prepare_context(
         included_source_count=len(plan.included_sources),
         excluded_source_count=len(plan.excluded_sources),
         excluded_reasons=sorted({source.reason for source in plan.excluded_sources}),
+        source_kinds=sorted({source.candidate.source_kind for source in plan.included_sources}),
     )
     return plan
 
 
-def prepare_conversation_context(
+async def prepare_conversation_context(
     conversation: Conversation,
     profile: ModelProfile,
     messages: list[Message],
     query_text: str,
 ) -> ContextPlan:
     """Collect optional sources and assemble one request at the backend seam."""
-    candidates = (
+    memory_candidates = (
         retrieve_project_memory(
             project_id=conversation.project_id,
             conversation_id=conversation.id,
@@ -225,12 +266,35 @@ def prepare_conversation_context(
         if conversation.memory_enabled
         else []
     )
+    document_candidates = (
+        await retrieve_project_documents(
+            project_id=conversation.project_id,
+            query_text=query_text,
+        )
+        if conversation.rag_enabled
+        else []
+    )
+    candidates = _interleave_candidates(document_candidates, memory_candidates)
     return prepare_context(
         profile,
         messages,
         candidates,
         thinking_enabled=conversation.thinking_enabled,
     )
+
+
+def _interleave_candidates(
+    primary: list[ContextCandidate],
+    secondary: list[ContextCandidate],
+) -> list[ContextCandidate]:
+    """Give enabled retrieval sources a fair chance within the shared token budget."""
+    result: list[ContextCandidate] = []
+    for index in range(max(len(primary), len(secondary))):
+        if index < len(primary):
+            result.append(primary[index])
+        if index < len(secondary):
+            result.append(secondary[index])
+    return result
 
 
 def stream_reply(

@@ -7,10 +7,14 @@ requires-python = ">=3.11"
 dependencies = [
     "nicegui>=3.0,<4",
     "openai>=2,<3",
+    "openpyxl>=3.1,<4",
+    "pypdf>=6,<7",
+    "python-docx>=1.2,<2",
 ]
 
 [project.scripts]
 intelligent-agents-chat = "intelligent_agents_chat.main:main"
+rag-evaluate = "intelligent_agents_chat.rag_evaluation:main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13"]

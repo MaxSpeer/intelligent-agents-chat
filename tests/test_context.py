@@ -40,7 +40,7 @@ class ContextAssemblerTests(unittest.TestCase):
         self.assertEqual(plan.included_sources[0].rank, 1)
         self.assertIn(MEMORY_GUARD, plan.messages[0]["content"])
         self.assertEqual(plan.messages[1]["role"], "user")
-        self.assertIn("<project-memory>", plan.messages[1]["content"])
+        self.assertIn("<retrieved-context>", plan.messages[1]["content"])
         self.assertIn("[project_memory:1]", plan.messages[1]["content"])
         self.assertEqual(plan.messages[-1]["content"], "What database did we choose?")
         self.assertLessEqual(plan.estimated_input_tokens, plan.input_budget_tokens)
@@ -55,7 +55,7 @@ class ContextAssemblerTests(unittest.TestCase):
 
         self.assertEqual(plan.included_sources, ())
         self.assertEqual(len(plan.excluded_sources), 1)
-        self.assertEqual(plan.excluded_sources[0].reason, "memory_budget_exceeded")
+        self.assertEqual(plan.excluded_sources[0].reason, "retrieval_budget_exceeded")
         self.assertNotIn(MEMORY_GUARD, plan.messages[0]["content"])
 
     def test_recent_history_has_priority_and_old_history_is_trimmed(self) -> None:

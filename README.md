@@ -16,7 +16,11 @@ OpenAI-compatible local or vLLM model servers.
 - retain model provenance on assistant messages;
 - create and switch projects whose conversations and messages stay isolated from one another;
 - optionally retrieve relevant turns from other chats in the same project, with visible source
-  provenance and per-entry controls.
+  provenance and per-entry controls;
+- upload, replace, re-index, and delete project-scoped TXT, Markdown, text-based PDF, DOCX, CSV,
+  and XLSX files;
+- optionally ground chat answers in cited document chunks using FTS5 or hybrid lexical/vector
+  retrieval.
 
 ## Run it
 
@@ -56,6 +60,54 @@ with future file RAG and context-management features, while conversation memory 
 data source. Recent chat history takes priority, retrieved memory has a 2,048-token budget, and each
 model profile reserves its configured output budget before request assembly. Retrieved text is
 wrapped as untrusted reference data and cannot replace system instructions.
+
+## Project document RAG
+
+Use **Manage project documents** in the sidebar to upload, inspect, replace, re-index, retry, or
+delete files belonging to the selected project. Turn on **Use documents** in a chat to retrieve
+relevant chunks for its next request. Sources actually included in the model request are persisted
+on the assistant message and display their original filename plus page, section, or chunk locator.
+
+Original files are stored under generated project/document IDs in `.data/documents`; uploaded
+filenames are display metadata and never become storage paths. The SQLite database contains file
+metadata, deterministic chunks, FTS5 entries, optional embeddings, processing failures, and
+citations. Duplicate content in one project resolves to the existing SHA-256-identified document.
+Uploads are limited to 10 MiB each and 100 documents per project. Scanned PDFs require OCR and are
+reported as failed rather than silently indexed without text.
+
+DOCX ingestion preserves headings and body tables. CSV and XLSX ingestion treats the first
+non-empty row as column headers and gives every data row a stable row or worksheet locator. XLSX
+formulas are never executed; only values stored in the workbook are read. Structured documents are
+limited to 20,000 data rows, 256 columns, and 50 worksheets per workbook. Legacy DOC/XLS files and
+macro-enabled Office files are not supported.
+
+Without additional configuration, document RAG uses local SQLite FTS5. Configure an independent
+OpenAI-compatible embedding endpoint to enable vector search and reciprocal-rank hybrid retrieval:
+
+```bash
+export RAG_EMBEDDING_BASE_URL=http://127.0.0.1:11434/v1
+export RAG_EMBEDDING_MODEL=your-embedding-model
+# Optional:
+export RAG_EMBEDDING_API_KEY=local-placeholder
+export RAG_EMBEDDING_BATCH_SIZE=32
+export RAG_EMBEDDING_TIMEOUT_SECONDS=60
+export RAG_EMBEDDING_DIMENSION=768
+```
+
+`RAG_DOCUMENT_ROOT` overrides the default original-file directory. The embedding and generation
+endpoints are configured independently; an unavailable query-embedding endpoint falls back to
+lexical retrieval, while a configured endpoint that fails during ingestion leaves the document in
+a visible, retryable failed state.
+
+Run the checked-in pre-reranking retrieval evaluation with:
+
+```bash
+uv run rag-evaluate
+```
+
+It creates an isolated temporary index from `evaluation/rag/fixtures`, evaluates the JSONL cases,
+and reports recall@k, hit rate, and mean reciprocal rank. If embedding variables are configured,
+the same command evaluates hybrid retrieval.
 
 ## Model profiles
 
@@ -105,7 +157,8 @@ parameters such as max tokens, temperature, and the system prompt) is hardcoded 
 ## Debug logs
 
 The application writes structured JSON Lines logs to `.data/logs/agent-lab.jsonl` as well as to
-the console. Every page, project, conversation, database mutation, and model generation gets
+the console. Every page, project, conversation, document lifecycle event, retrieval, database
+mutation, and model generation gets
 diagnostic context. A generation has one `generation_id` across UI and vLLM gateway events;
 completion events include the outcome, model, content and reasoning sizes, time to first content
 or reasoning chunk, total duration, active token limit, and the server finish reason. Startup
@@ -155,6 +208,6 @@ Submission, validation, SSH tunneling, and image recreation are documented in
 
 ## Scope
 
-This milestone includes persistent chat, the model gateway, and deterministic project-memory
-retrieval. File RAG, tool calling, web search, multimodality, and autonomous agent loops remain later
-milestones.
+This milestone includes persistent chat, the model gateway, deterministic project-memory retrieval,
+and a project-scoped document-RAG baseline. Adaptive judge/rewriter/summarization, reranking, tool
+calling, web search, multimodality, and autonomous agent loops remain later milestones.

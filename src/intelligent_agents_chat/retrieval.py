@@ -34,3 +34,9 @@ class Retriever(Protocol):
     """Common retrieval seam implemented by memory now and document RAG later."""
 
     def retrieve(self, query: RetrievalQuery) -> list[ContextCandidate]: ...
+
+
+class AsyncRetriever(Protocol):
+    """Retrieval seam for sources that need network I/O, such as embeddings."""
+
+    async def retrieve(self, query: RetrievalQuery) -> list[ContextCandidate]: ...
