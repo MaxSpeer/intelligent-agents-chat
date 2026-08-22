@@ -13,7 +13,8 @@ from importlib.metadata import version
 import logging
 import platform
 
-from intelligent_agents_chat.database import ChatRepository, Message
+from intelligent_agents_chat.context import ContextAssembler, ContextPlan
+from intelligent_agents_chat.database import ChatRepository, Conversation, Message
 from intelligent_agents_chat.llm import (
     MAX_TOKENS,
     SYSTEM_PROMPT,
@@ -22,7 +23,9 @@ from intelligent_agents_chat.llm import (
     check_model_available,
 )
 from intelligent_agents_chat.logging_config import configure_logging, log_event, sanitized_endpoint
+from intelligent_agents_chat.memory import ProjectMemoryStore
 from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, MODEL_PROFILES, ModelProfile
+from intelligent_agents_chat.retrieval import ContextCandidate, RetrievalQuery
 
 PROFILE_STATUS_POLL_INTERVAL_SECONDS = 15.0
 
@@ -53,6 +56,7 @@ log_event(
             "endpoint": sanitized_endpoint(profile.base_url),
             "supports_thinking": profile.supports_thinking,
             "reasoning_effort": profile.reasoning_effort,
+            "context_window_tokens": profile.context_window_tokens,
         }
         for profile in MODEL_PROFILES
     ],
@@ -75,7 +79,29 @@ except Exception:
     raise
 
 gateway = VLLMGateway()
+memory_store = ProjectMemoryStore(repository.database_path)
+context_assembler = ContextAssembler(SYSTEM_PROMPT)
 active_generations: set[str] = set()
+
+try:
+    rebuilt_entry_count = sum(
+        memory_store.rebuild_project(project.id) for project in repository.list_projects()
+    )
+except Exception:
+    logger.exception(
+        "application.memory_backfill_failed",
+        extra={
+            "event": "application.memory_backfill_failed",
+            "database_path": str(repository.database_path),
+        },
+    )
+else:
+    log_event(
+        logger,
+        logging.INFO,
+        "application.memory_backfill_completed",
+        entry_count=rebuilt_entry_count,
+    )
 
 # `None` until the first background check completes; then True/False. Mutated in place
 # (never reassigned) so that importers of this dict see updates made by poll_profile_status().
@@ -126,6 +152,85 @@ def completion_messages(messages: list[Message]) -> list[dict[str, str]]:
         result.append({"role": "system", "content": SYSTEM_PROMPT})
     result.extend({"role": message.role, "content": message.content} for message in messages)
     return result
+
+
+def rebuild_conversation_memory(conversation_id: str) -> int:
+    """Refresh the rebuildable memory index for one changed conversation."""
+    return memory_store.rebuild_conversation(conversation_id)
+
+
+def retrieve_project_memory(
+    *,
+    project_id: str,
+    conversation_id: str,
+    query_text: str,
+) -> list[ContextCandidate]:
+    """Retrieve relevant turns from other chats in the same project."""
+    return memory_store.retrieve(
+        RetrievalQuery(
+            project_id=project_id,
+            text=query_text,
+            exclude_conversation_id=conversation_id,
+        )
+    )
+
+
+def prepare_context(
+    profile: ModelProfile,
+    messages: list[Message],
+    candidates: list[ContextCandidate],
+    *,
+    thinking_enabled: bool,
+) -> ContextPlan:
+    """Create a token-aware request while preserving auditable retrieval decisions."""
+    output_reserve_tokens = THINKING_MAX_TOKENS if thinking_enabled else MAX_TOKENS
+    plan = context_assembler.assemble(
+        [{"role": message.role, "content": message.content} for message in messages],
+        candidates,
+        context_window_tokens=profile.context_window_tokens,
+        output_reserve_tokens=output_reserve_tokens,
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "chat.context.prepared",
+        model_profile=profile.key,
+        context_window_tokens=profile.context_window_tokens,
+        output_reserve_tokens=output_reserve_tokens,
+        input_budget_tokens=plan.input_budget_tokens,
+        estimated_input_tokens=plan.estimated_input_tokens,
+        history_message_count=len(messages),
+        omitted_history_messages=plan.omitted_history_messages,
+        retrieval_candidate_count=len(candidates),
+        included_source_count=len(plan.included_sources),
+        excluded_source_count=len(plan.excluded_sources),
+        excluded_reasons=sorted({source.reason for source in plan.excluded_sources}),
+    )
+    return plan
+
+
+def prepare_conversation_context(
+    conversation: Conversation,
+    profile: ModelProfile,
+    messages: list[Message],
+    query_text: str,
+) -> ContextPlan:
+    """Collect optional sources and assemble one request at the backend seam."""
+    candidates = (
+        retrieve_project_memory(
+            project_id=conversation.project_id,
+            conversation_id=conversation.id,
+            query_text=query_text,
+        )
+        if conversation.memory_enabled
+        else []
+    )
+    return prepare_context(
+        profile,
+        messages,
+        candidates,
+        thinking_enabled=conversation.thinking_enabled,
+    )
 
 
 def stream_reply(

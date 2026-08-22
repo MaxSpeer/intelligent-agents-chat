@@ -14,7 +14,9 @@ OpenAI-compatible local or vLLM model servers.
 - select a model profile per conversation;
 - enable model thinking per conversation when the selected profile supports it;
 - retain model provenance on assistant messages;
-- create and switch projects whose conversations and messages stay isolated from one another.
+- create and switch projects whose conversations and messages stay isolated from one another;
+- optionally retrieve relevant turns from other chats in the same project, with visible source
+  provenance and per-entry controls.
 
 ## Run it
 
@@ -35,6 +37,25 @@ Chat data is written to `.data/chats.sqlite3`, which is intentionally ignored by
 The sidebar starts in the built-in `General` project. Use its project picker to switch workspaces
 or create another one. Each project displays only its own conversations; creating, selecting, or
 deleting a conversation never affects conversations in another project.
+
+## Project memory
+
+Project memory is disabled by default for every conversation. Turn on **Use memory** in the chat
+header to let the next request retrieve relevant turns from *other* chats in the selected project.
+The current chat and all other projects are excluded at query time. Assistant messages that used
+memory display an expandable source list, and the source snapshot remains attached to the response
+for later inspection.
+
+Use **Manage project memory** in the sidebar to inspect every derived chat turn, temporarily disable
+individual entries, or rebuild the index. The index is deterministic and rebuildable from the
+canonical messages in SQLite; deleting a source conversation also deletes its derived entries.
+Disabled entries remain disabled across rebuilds.
+
+Retrieval uses SQLite FTS5 today. The retrieval result and token-aware context contracts are shared
+with future file RAG and context-management features, while conversation memory remains a separate
+data source. Recent chat history takes priority, retrieved memory has a 2,048-token budget, and each
+model profile reserves its configured output budget before request assembly. Retrieved text is
+wrapped as untrusted reference data and cannot replace system instructions.
 
 ## Model profiles
 
@@ -77,9 +98,9 @@ export OLLAMA_MODEL=qwen3.5:2b
 uv run intelligent-agents-chat
 ```
 
-Everything else (labels, cluster model names, the SQLite path, and generation parameters such as
-max tokens, temperature, and the system prompt) is hardcoded in `models.py`, `database.py`, and
-`llm.py` -- edit those files directly to change them.
+Everything else (labels, cluster model names, context-window sizes, the SQLite path, and generation
+parameters such as max tokens, temperature, and the system prompt) is hardcoded in `models.py`,
+`database.py`, `context.py`, and `llm.py` -- edit those files directly to change them.
 
 ## Debug logs
 
@@ -134,5 +155,6 @@ Submission, validation, SSH tunneling, and image recreation are documented in
 
 ## Scope
 
-This milestone deliberately stops at persistent chat and the model gateway. Project-memory
-retrieval, fine-tuning workflows, and elective agent features remain later milestones.
+This milestone includes persistent chat, the model gateway, and deterministic project-memory
+retrieval. File RAG, tool calling, web search, multimodality, and autonomous agent loops remain later
+milestones.

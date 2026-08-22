@@ -1,4 +1,4 @@
-"""SQLite persistence for projects, conversations, and messages."""
+"""SQLite persistence for projects, conversations, messages, and context provenance."""
 
 from __future__ import annotations
 
@@ -38,6 +38,7 @@ class Conversation:
     title: str
     model_profile: str
     thinking_enabled: bool
+    memory_enabled: bool
     created_at: datetime
     updated_at: datetime
 
@@ -50,6 +51,38 @@ class Message:
     content: str
     model_profile: str | None
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSourceInput:
+    """One retrieval source supplied while generating an assistant message."""
+
+    source_kind: str
+    source_id: str
+    source_project_id: str
+    source_conversation_id: str | None
+    source_title: str
+    source_locator: str
+    rank: int
+    score: float
+    token_estimate: int
+
+
+@dataclass(frozen=True, slots=True)
+class MessageContextSource:
+    """Persisted provenance for context supplied to one assistant message."""
+
+    id: int
+    assistant_message_id: int
+    source_kind: str
+    source_id: str
+    source_project_id: str
+    source_conversation_id: str | None
+    source_title: str
+    source_locator: str
+    rank: int
+    score: float
+    token_estimate: int
 
 
 class ChatRepository:
@@ -85,6 +118,8 @@ class ChatRepository:
                     model_profile TEXT NOT NULL,
                     thinking_enabled INTEGER NOT NULL DEFAULT 0
                         CHECK (thinking_enabled IN (0, 1)),
+                    memory_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK (memory_enabled IN (0, 1)),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -105,6 +140,89 @@ class ChatRepository:
                     ON messages(conversation_id, id);
                 """
             )
+            if not _column_exists(connection, "conversations", "memory_enabled"):
+                connection.execute(
+                    """
+                    ALTER TABLE conversations
+                    ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK (memory_enabled IN (0, 1))
+                    """
+                )
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS memory_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    source_conversation_id TEXT NOT NULL
+                        REFERENCES conversations(id) ON DELETE CASCADE,
+                    source_message_start_id INTEGER NOT NULL,
+                    source_message_end_id INTEGER NOT NULL,
+                    source_kind TEXT NOT NULL DEFAULT 'conversation_turn',
+                    content TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (
+                        source_conversation_id,
+                        source_message_start_id,
+                        source_message_end_id
+                    )
+                );
+
+                CREATE INDEX IF NOT EXISTS memory_entries_project_idx
+                    ON memory_entries(project_id, enabled, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS memory_entries_conversation_idx
+                    ON memory_entries(source_conversation_id, source_message_start_id);
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS memory_entries_fts USING fts5(
+                    content,
+                    content='memory_entries',
+                    content_rowid='id',
+                    tokenize='unicode61 remove_diacritics 2'
+                );
+
+                CREATE TRIGGER IF NOT EXISTS memory_entries_after_insert
+                AFTER INSERT ON memory_entries WHEN new.enabled = 1 BEGIN
+                    INSERT INTO memory_entries_fts(rowid, content)
+                    VALUES (new.id, new.content);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS memory_entries_after_delete
+                AFTER DELETE ON memory_entries WHEN old.enabled = 1 BEGIN
+                    INSERT INTO memory_entries_fts(memory_entries_fts, rowid, content)
+                    VALUES ('delete', old.id, old.content);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS memory_entries_after_update
+                AFTER UPDATE OF content, enabled ON memory_entries BEGIN
+                    INSERT INTO memory_entries_fts(memory_entries_fts, rowid, content)
+                    SELECT 'delete', old.id, old.content WHERE old.enabled = 1;
+                    INSERT INTO memory_entries_fts(rowid, content)
+                    SELECT new.id, new.content WHERE new.enabled = 1;
+                END;
+
+                CREATE TABLE IF NOT EXISTS message_context_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    assistant_message_id INTEGER NOT NULL
+                        REFERENCES messages(id) ON DELETE CASCADE,
+                    source_kind TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    source_project_id TEXT NOT NULL,
+                    source_conversation_id TEXT,
+                    source_title TEXT NOT NULL,
+                    source_locator TEXT NOT NULL,
+                    rank INTEGER NOT NULL,
+                    score REAL NOT NULL,
+                    token_estimate INTEGER NOT NULL,
+                    UNIQUE (assistant_message_id, rank)
+                );
+
+                CREATE INDEX IF NOT EXISTS message_context_sources_message_idx
+                    ON message_context_sources(assistant_message_id, rank);
+                """
+            )
+            connection.execute("PRAGMA user_version = 2")
             now = _timestamp()
             connection.execute(
                 """
@@ -120,6 +238,7 @@ class ChatRepository:
             database_path=str(self.database_path),
             sqlite_version=sqlite3.sqlite_version,
             journal_mode=journal_mode,
+            schema_version=2,
         )
 
     def get_project(self, project_id: str = DEFAULT_PROJECT_ID) -> Project | None:
@@ -193,6 +312,7 @@ class ChatRepository:
         project_id: str = DEFAULT_PROJECT_ID,
         title: str = DEFAULT_CONVERSATION_TITLE,
         thinking_enabled: bool = False,
+        memory_enabled: bool = False,
     ) -> Conversation:
         conversation_id = str(uuid4())
         now = _timestamp()
@@ -206,8 +326,9 @@ class ChatRepository:
             connection.execute(
                 """
                 INSERT INTO conversations (
-                    id, project_id, title, model_profile, thinking_enabled, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    id, project_id, title, model_profile, thinking_enabled, memory_enabled,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -215,6 +336,7 @@ class ChatRepository:
                     clean_title,
                     model_profile,
                     int(thinking_enabled),
+                    int(memory_enabled),
                     now,
                     now,
                 ),
@@ -230,6 +352,7 @@ class ChatRepository:
             conversation_id=conversation.id,
             model_profile=conversation.model_profile,
             thinking_enabled=conversation.thinking_enabled,
+            memory_enabled=conversation.memory_enabled,
             title_chars=len(conversation.title),
         )
         return conversation
@@ -238,7 +361,7 @@ class ChatRepository:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, project_id, title, model_profile, thinking_enabled,
+                SELECT id, project_id, title, model_profile, thinking_enabled, memory_enabled,
                        created_at, updated_at
                 FROM conversations
                 WHERE id = ?
@@ -251,7 +374,7 @@ class ChatRepository:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, project_id, title, model_profile, thinking_enabled,
+                SELECT id, project_id, title, model_profile, thinking_enabled, memory_enabled,
                        created_at, updated_at
                 FROM conversations
                 WHERE project_id = ?
@@ -336,6 +459,28 @@ class ChatRepository:
             "database.conversation.thinking_changed",
             conversation_id=conversation_id,
             thinking_enabled=enabled,
+            updated=updated,
+        )
+        return updated
+
+    def set_memory_enabled(self, conversation_id: str, enabled: bool) -> bool:
+        now = _timestamp()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE conversations
+                SET memory_enabled = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (int(enabled), now, conversation_id),
+            )
+        updated = cursor.rowcount == 1
+        log_event(
+            logger,
+            logging.INFO,
+            "database.conversation.memory_changed",
+            conversation_id=conversation_id,
+            memory_enabled=enabled,
             updated=updated,
         )
         return updated
@@ -434,12 +579,77 @@ class ChatRepository:
         )
         return messages
 
+    def add_message_context_sources(
+        self,
+        assistant_message_id: int,
+        sources: list[ContextSourceInput],
+    ) -> None:
+        if not sources:
+            return
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO message_context_sources (
+                    assistant_message_id, source_kind, source_id, source_project_id,
+                    source_conversation_id, source_title, source_locator, rank, score,
+                    token_estimate
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        assistant_message_id,
+                        source.source_kind,
+                        source.source_id,
+                        source.source_project_id,
+                        source.source_conversation_id,
+                        source.source_title,
+                        source.source_locator,
+                        source.rank,
+                        source.score,
+                        source.token_estimate,
+                    )
+                    for source in sources
+                ],
+            )
+        log_event(
+            logger,
+            logging.INFO,
+            "database.message_context_sources.created",
+            assistant_message_id=assistant_message_id,
+            source_count=len(sources),
+            source_kinds=sorted({source.source_kind for source in sources}),
+        )
+
+    def list_message_context_sources(self, assistant_message_id: int) -> list[MessageContextSource]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, assistant_message_id, source_kind, source_id, source_project_id,
+                       source_conversation_id, source_title, source_locator, rank, score,
+                       token_estimate
+                FROM message_context_sources
+                WHERE assistant_message_id = ?
+                ORDER BY rank ASC
+                """,
+                (assistant_message_id,),
+            ).fetchall()
+        return [_message_context_source_from_row(row) for row in rows]
+
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=5.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 5000")
-        return connection
+        return connect_database(self.database_path)
+
+
+def connect_database(database_path: Path) -> sqlite3.Connection:
+    """Open one consistently configured SQLite connection for repository services."""
+    connection = sqlite3.connect(database_path, timeout=5.0)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 5000")
+    return connection
+
+
+def _column_exists(connection: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(row[1] == column for row in connection.execute(f"PRAGMA table_info({table})"))
 
 
 def _timestamp() -> str:
@@ -466,6 +676,7 @@ def _conversation_from_row(row: sqlite3.Row) -> Conversation:
         title=row["title"],
         model_profile=row["model_profile"],
         thinking_enabled=bool(row["thinking_enabled"]),
+        memory_enabled=bool(row["memory_enabled"]),
         created_at=_parse_datetime(row["created_at"]),
         updated_at=_parse_datetime(row["updated_at"]),
     )
@@ -479,4 +690,20 @@ def _message_from_row(row: sqlite3.Row) -> Message:
         content=row["content"],
         model_profile=row["model_profile"],
         created_at=_parse_datetime(row["created_at"]),
+    )
+
+
+def _message_context_source_from_row(row: sqlite3.Row) -> MessageContextSource:
+    return MessageContextSource(
+        id=row["id"],
+        assistant_message_id=row["assistant_message_id"],
+        source_kind=row["source_kind"],
+        source_id=row["source_id"],
+        source_project_id=row["source_project_id"],
+        source_conversation_id=row["source_conversation_id"],
+        source_title=row["source_title"],
+        source_locator=row["source_locator"],
+        rank=row["rank"],
+        score=row["score"],
+        token_estimate=row["token_estimate"],
     )

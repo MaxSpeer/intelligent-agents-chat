@@ -16,6 +16,7 @@ class ModelProfile:
     model: str
     supports_thinking: bool = False
     reasoning_effort: str | None = None
+    context_window_tokens: int = 32_768
 
 
 def _port(env_var: str, default: int) -> int:

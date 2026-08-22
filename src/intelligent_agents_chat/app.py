@@ -16,13 +16,17 @@ from nicegui import app as nicegui_app, ui
 
 from intelligent_agents_chat.chat import (
     active_generations,
-    completion_messages,
+    memory_store,
     poll_profile_status,
+    prepare_conversation_context,
     profile_status,
+    rebuild_conversation_memory,
     repository,
     stream_reply,
 )
+from intelligent_agents_chat.context import ContextOverflowError, ContextPlan
 from intelligent_agents_chat.database import (
+    ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
     DEFAULT_PROJECT_ID,
     Conversation,
@@ -225,6 +229,7 @@ def index() -> None:
             stop_button.enable()
             model_select.disable()
             thinking_toggle.disable()
+            memory_toggle.disable()
         else:
             composer.enable()
             send_button.enable()
@@ -235,6 +240,7 @@ def index() -> None:
                 thinking_toggle.enable()
             else:
                 thinking_toggle.disable()
+            memory_toggle.enable()
             composer.run_method("focus")
 
     def render_project_picker() -> None:
@@ -292,10 +298,15 @@ def index() -> None:
         )
         render_model_status(conversation.model_profile)
         thinking_toggle.set_value(conversation.thinking_enabled)
+        memory_toggle.set_value(conversation.memory_enabled)
         if profile.supports_thinking and not state.generating:
             thinking_toggle.enable()
         else:
             thinking_toggle.disable()
+        if state.generating:
+            memory_toggle.disable()
+        else:
+            memory_toggle.enable()
 
     def render_messages() -> None:
         messages_container.clear()
@@ -317,12 +328,29 @@ def index() -> None:
                 for message in messages:
                     sent = message.role == "user"
                     name = "You" if sent else _profile_label(message.model_profile)
+                    sources = [] if sent else repository.list_message_context_sources(message.id)
                     with ui.chat_message(
                         name=name,
                         stamp=_display_time(message.created_at),
                         sent=sent,
                     ).classes("chat-message"):
                         _chat_markdown(message.content)
+                        if sources:
+                            with ui.expansion(
+                                f"Project memory · {len(sources)} source"
+                                + ("s" if len(sources) != 1 else ""),
+                                icon="history",
+                            ).classes("memory-sources"):
+                                for source in sources:
+                                    with ui.row().classes("memory-source-row"):
+                                        ui.icon("chat_bubble_outline", size="xs")
+                                        with ui.column().classes("gap-0 min-w-0"):
+                                            ui.label(source.source_title).classes(
+                                                "memory-source-title"
+                                            )
+                                            ui.label(source.source_locator).classes(
+                                                "memory-source-locator"
+                                            )
         message_scroll.scroll_to(percent=1)
 
     def render_all() -> None:
@@ -674,6 +702,118 @@ def index() -> None:
         )
         render_conversation_list()
 
+    def change_memory(event) -> None:
+        requested = bool(event.value)
+        conversation = current_conversation()
+        if conversation.id in active_generations:
+            page_event(
+                logging.WARNING,
+                "ui.memory.change_blocked",
+                requested_memory_enabled=requested,
+                reason="generation_active",
+            )
+            ui.notify("Stop this chat's response before changing project memory.", type="warning")
+            render_header()
+            return
+        if requested == conversation.memory_enabled:
+            page_event(
+                logging.DEBUG,
+                "ui.memory.change_ignored",
+                memory_enabled=requested,
+                reason="already_selected",
+            )
+            return
+
+        updated = repository.set_memory_enabled(conversation.id, requested)
+        page_event(
+            logging.INFO,
+            "ui.memory.changed",
+            memory_enabled=requested,
+            updated=updated,
+        )
+        render_conversation_list()
+
+    def manage_project_memory() -> None:
+        project = current_project()
+        page_event(logging.INFO, "ui.memory.management_opened")
+
+        with ui.dialog() as dialog, ui.card().classes("memory-dialog"):
+            with ui.row().classes("w-full items-start justify-between no-wrap"):
+                with ui.column().classes("gap-1 min-w-0"):
+                    ui.label(f"Project memory · {project.name}").classes("text-xl font-bold")
+                    ui.label(
+                        "Review the chat turns available to other conversations in this project. "
+                        "Disabled entries stay stored but are excluded from retrieval."
+                    ).classes("text-sm text-slate-500")
+                memory_dialog_close = ui.button(icon="close", on_click=dialog.close).props(
+                    "flat round dense"
+                )
+                memory_dialog_close.props["aria-label"] = "Close project memory"
+
+            memory_entries_container = ui.column().classes("memory-entry-list")
+
+            def change_memory_entry(entry_id: int, event) -> None:
+                enabled = bool(event.value)
+                updated = memory_store.set_enabled(project.id, entry_id, enabled)
+                page_event(
+                    logging.INFO,
+                    "ui.memory.entry_changed",
+                    entry_id=entry_id,
+                    enabled=enabled,
+                    updated=updated,
+                )
+                if not updated:
+                    ui.notify("This memory entry no longer exists.", type="warning")
+                    render_memory_entries()
+
+            def render_memory_entries() -> None:
+                entries = memory_store.list_entries(project.id)
+                memory_entries_container.clear()
+                with memory_entries_container:
+                    if not entries:
+                        ui.label(
+                            "No memory entries yet. They are derived automatically from chat turns."
+                        ).classes("text-sm text-slate-500 py-6")
+                    for entry in entries:
+                        with ui.expansion(
+                            entry.title,
+                            caption=(
+                                f"messages {entry.source_message_start_id}-"
+                                f"{entry.source_message_end_id}"
+                            ),
+                            icon="chat_bubble_outline",
+                        ).classes("memory-entry"):
+                            ui.label(entry.content).classes("memory-entry-content")
+                            ui.switch(
+                                "Available for retrieval",
+                                value=entry.enabled,
+                                on_change=partial(change_memory_entry, entry.id),
+                            ).props("dense color=deep-purple")
+
+            def rebuild_project_memory() -> None:
+                entry_count = memory_store.rebuild_project(project.id)
+                page_event(
+                    logging.INFO,
+                    "ui.memory.rebuilt",
+                    entry_count=entry_count,
+                )
+                render_memory_entries()
+                ui.notify(f"Project memory rebuilt ({entry_count} entries).", type="positive")
+
+            with ui.row().classes("w-full justify-between items-center"):
+                ui.label("Memory is only retrieved inside this project.").classes(
+                    "text-xs text-slate-400"
+                )
+                ui.button(
+                    "Rebuild",
+                    icon="refresh",
+                    on_click=rebuild_project_memory,
+                ).props("flat no-caps")
+
+            render_memory_entries()
+
+        dialog.open()
+
     def stop_generation() -> None:
         if state.stop_event is None:
             page_event(logging.DEBUG, "ui.generation.stop_ignored", reason="not_generating")
@@ -727,6 +867,7 @@ def index() -> None:
         generation_started_at = monotonic()
         state.generation_id = generation_id
         active_generations.add(conversation.id)
+        context_plan: ContextPlan | None = None
 
         try:
             previous_messages = repository.list_messages(conversation.id)
@@ -737,6 +878,7 @@ def index() -> None:
                 model_profile=profile.key,
                 model_name=profile.model,
                 thinking_enabled=conversation.thinking_enabled,
+                memory_enabled=conversation.memory_enabled,
                 max_tokens=(THINKING_MAX_TOKENS if conversation.thinking_enabled else MAX_TOKENS),
                 input_message_chars=len(text),
                 previous_message_count=len(previous_messages),
@@ -744,6 +886,7 @@ def index() -> None:
             repository.add_message(conversation.id, "user", text)
             if conversation.title == DEFAULT_CONVERSATION_TITLE and not previous_messages:
                 repository.rename_conversation(conversation.id, _conversation_title(text))
+            rebuild_conversation_memory(conversation.id)
 
             composer.value = ""
             render_all()
@@ -790,7 +933,13 @@ def index() -> None:
         last_paint = monotonic()
         try:
             persisted_messages = repository.list_messages(conversation.id)
-            request_messages = completion_messages(persisted_messages)
+            context_plan = prepare_conversation_context(
+                conversation,
+                profile,
+                persisted_messages,
+                text,
+            )
+            request_messages = list(context_plan.messages)
             page_event(
                 logging.DEBUG,
                 "ui.generation.request_prepared",
@@ -800,6 +949,14 @@ def index() -> None:
                 completion_chars=sum(
                     len(message.get("content", "")) for message in request_messages
                 ),
+                memory_candidate_count=(
+                    len(context_plan.included_sources) + len(context_plan.excluded_sources)
+                ),
+                memory_source_count=len(context_plan.included_sources),
+                memory_excluded_count=len(context_plan.excluded_sources),
+                estimated_input_tokens=context_plan.estimated_input_tokens,
+                input_budget_tokens=context_plan.input_budget_tokens,
+                omitted_history_messages=context_plan.omitted_history_messages,
             )
             async with aclosing(
                 stream_reply(
@@ -840,8 +997,10 @@ def index() -> None:
                 raise
             stopped = True
             outcome = "stopped"
-        except LLMError as error:
-            outcome = "model_error"
+        except (LLMError, ContextOverflowError) as error:
+            outcome = (
+                "context_budget_error" if isinstance(error, ContextOverflowError) else "model_error"
+            )
             page_event(
                 logging.WARNING,
                 "ui.generation.model_error",
@@ -871,12 +1030,33 @@ def index() -> None:
             assistant_message_saved = False
             try:
                 if content:
-                    repository.add_message(
+                    assistant_message = repository.add_message(
                         conversation.id,
                         "assistant",
                         content,
                         model_profile=profile.key,
                     )
+                    if context_plan is not None and context_plan.included_sources:
+                        repository.add_message_context_sources(
+                            assistant_message.id,
+                            [
+                                ContextSourceInput(
+                                    source_kind=source.candidate.source_kind,
+                                    source_id=source.candidate.source_id,
+                                    source_project_id=source.candidate.project_id,
+                                    source_conversation_id=(
+                                        source.candidate.source_conversation_id
+                                    ),
+                                    source_title=source.candidate.title,
+                                    source_locator=source.candidate.locator,
+                                    rank=source.rank,
+                                    score=source.candidate.score,
+                                    token_estimate=source.token_estimate,
+                                )
+                                for source in context_plan.included_sources
+                            ],
+                        )
+                    rebuild_conversation_memory(conversation.id)
                     assistant_message_saved = True
                 if stopped:
                     ui.notify(
@@ -965,6 +1145,12 @@ def index() -> None:
             ui.label("Project chats").classes("eyebrow px-2 pt-1")
             conversation_list = ui.column().classes("conversation-list w-full")
 
+            ui.button(
+                "Manage project memory",
+                icon="manage_search",
+                on_click=manage_project_memory,
+            ).props("flat no-caps align=left").classes("memory-manage-button")
+
             with ui.column().classes("sidebar-footer gap-1"):
                 ui.label("Local history").classes("text-sm font-semibold")
                 ui.label("SQLite persistence enabled").classes("text-xs text-slate-500")
@@ -1002,6 +1188,18 @@ def index() -> None:
                     thinking_toggle.tooltip(
                         f"Off: up to {MAX_TOKENS:,} output tokens; "
                         f"on: up to {THINKING_MAX_TOKENS:,}"
+                    )
+                    memory_toggle = (
+                        ui.switch(
+                            "Use memory",
+                            value=initial.memory_enabled,
+                            on_change=change_memory,
+                        )
+                        .props("dense color=deep-purple")
+                        .classes("memory-toggle")
+                    )
+                    memory_toggle.tooltip(
+                        "Retrieve relevant context from other chats in this project"
                     )
 
             message_scroll = ui.scroll_area().classes("message-scroll")
