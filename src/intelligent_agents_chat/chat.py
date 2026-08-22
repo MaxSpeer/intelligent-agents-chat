@@ -8,6 +8,7 @@ context compression will be added later as further steps in this same loop.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from importlib.metadata import version
@@ -21,10 +22,13 @@ from intelligent_agents_chat.llm import (
     SYSTEM_PROMPT,
     THINKING_MAX_TOKENS,
     VLLMGateway,
+    check_model_available,
 )
 from intelligent_agents_chat.logging_config import configure_logging, log_event, sanitized_endpoint
 from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, MODEL_PROFILES, ModelProfile
 from intelligent_agents_chat.tools import calculator
+
+PROFILE_STATUS_POLL_INTERVAL_SECONDS = 15.0
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -75,6 +79,10 @@ except Exception:
 
 gateway = VLLMGateway()
 active_generations: set[str] = set()
+
+# `None` until the first background check completes; then True/False. Mutated in place
+# (never reassigned) so that importers of this dict see updates made by poll_profile_status().
+profile_status: dict[str, bool | None] = {profile.key: None for profile in MODEL_PROFILES}
 
 log_event(logger, logging.INFO, "application.initialized")
 
@@ -144,14 +152,9 @@ def format_tool_result_entry(name: str, result: str) -> str:
     return f"**{name}** → {result}"
 
 
-def completion_messages(messages: list[Message]) -> list[dict]:
-    """Build the OpenAI-style message list for a completion request.
-
-    Reconstructs the real API shape for tool interactions (assistant messages
-    with `tool_calls`, and `role: "tool"` results) from the stored structured
-    fields, rather than replaying whatever text was shown in the UI for them.
-    """
-    result: list[dict] = []
+def completion_messages(messages: list[Message]) -> list[dict[str, str]]:
+    """Build the OpenAI-style message list for a completion request."""
+    result: list[dict[str, str]] = []
     if SYSTEM_PROMPT:
         result.append({"role": "system", "content": SYSTEM_PROMPT})
     for message in messages:
@@ -255,3 +258,38 @@ async def stream_reply(
             conversation_messages.append(
                 {"role": "tool", "tool_call_id": call["id"], "content": result}
             )
+
+
+
+async def refresh_profile_status() -> None:
+    """Check every profile's vLLM endpoint concurrently and update `profile_status` in place."""
+    results = await asyncio.gather(
+        *(check_model_available(profile) for profile in MODEL_PROFILES),
+        return_exceptions=True,
+    )
+    for profile, result in zip(MODEL_PROFILES, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.exception(
+                "chat.profile_status.check_failed",
+                exc_info=result,
+                extra={"event": "chat.profile_status.check_failed", "model_profile": profile.key},
+            )
+            is_available = False
+        else:
+            is_available = result
+        previous = profile_status[profile.key]
+        profile_status[profile.key] = is_available
+        if previous is not None and previous != is_available:
+            log_event(
+                logger,
+                logging.INFO if is_available else logging.WARNING,
+                "chat.profile_status.changed",
+                model_profile=profile.key,
+                available=is_available,
+            )
+
+async def poll_profile_status() -> None:
+    """Continuously refresh `profile_status` in the background."""
+    while True:
+        await refresh_profile_status()
+        await asyncio.sleep(PROFILE_STATUS_POLL_INTERVAL_SECONDS)

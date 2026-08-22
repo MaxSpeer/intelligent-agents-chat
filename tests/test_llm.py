@@ -7,7 +7,12 @@ from threading import Thread
 import time
 import unittest
 
-from intelligent_agents_chat.llm import MAX_TOKENS, THINKING_MAX_TOKENS, VLLMGateway
+from intelligent_agents_chat.llm import (
+    MAX_TOKENS,
+    THINKING_MAX_TOKENS,
+    VLLMGateway,
+    check_model_available,
+)
 from intelligent_agents_chat.models import ModelProfile
 
 
@@ -17,6 +22,20 @@ async def _collect_text(stream) -> str:
 
 class FakeVLLMHandler(BaseHTTPRequestHandler):
     request_body: dict | None = None
+
+    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self.path != "/v1/models":
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+
+        body = json.dumps({"data": [{"id": "test-model", "object": "model"}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         if self.path != "/v1/chat/completions":
@@ -303,6 +322,52 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         assert FakeVLLMHandler.request_body is not None
         self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], MAX_TOKENS)
         self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
+
+
+class CheckModelAvailableTests(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), FakeVLLMHandler)
+        cls.server_thread = Thread(target=cls.server.serve_forever, daemon=True)
+        cls.server_thread.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.server_thread.join(timeout=2)
+
+    async def test_returns_true_when_the_endpoint_serves_the_model(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test",
+            label="Test model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+        )
+
+        self.assertTrue(await check_model_available(profile))
+
+    async def test_returns_false_when_the_endpoint_does_not_serve_the_model(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="other",
+            label="Other model",
+            base_url=f"http://{host}:{port}/v1",
+            model="some-other-model",
+        )
+
+        self.assertFalse(await check_model_available(profile))
+
+    async def test_returns_false_when_the_endpoint_is_unreachable(self) -> None:
+        profile = ModelProfile(
+            key="down",
+            label="Down model",
+            base_url="http://127.0.0.1:1/v1",
+            model="test-model",
+        )
+
+        self.assertFalse(await check_model_available(profile))
 
 
 if __name__ == "__main__":

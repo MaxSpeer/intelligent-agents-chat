@@ -17,6 +17,7 @@ from intelligent_agents_chat.models import ModelProfile
 
 API_KEY = "not-needed"
 REQUEST_TIMEOUT_SECONDS = 120.0
+HEALTH_CHECK_TIMEOUT_SECONDS = 3.0
 MAX_TOKENS = 1024
 THINKING_MAX_TOKENS = 8192
 TEMPERATURE = 0.2
@@ -29,13 +30,29 @@ class LLMError(RuntimeError):
     """A safe, user-facing model generation error."""
 
 
+async def check_model_available(profile: ModelProfile) -> bool:
+    """Return whether the profile's vLLM endpoint is reachable and serving its model."""
+    client = AsyncOpenAI(
+        base_url=profile.base_url,
+        api_key=API_KEY,
+        timeout=HEALTH_CHECK_TIMEOUT_SECONDS,
+    )
+    try:
+        response = await client.models.list()
+    except Exception:
+        return False
+    finally:
+        await client.close()
+    return any(model.id == profile.model for model in response.data)
+
+
+
 @dataclass(frozen=True, slots=True)
 class ContentDelta:
     """One fragment of visible model text, tagged so callers can tell reasoning
     (show it, but never feed it back as conversation history) from the model's
     actual answer content (show it, and it belongs in history).
     """
-
     text: str
     is_reasoning: bool = False
 
