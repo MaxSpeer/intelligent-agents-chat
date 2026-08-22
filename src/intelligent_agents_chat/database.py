@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import logging
 from pathlib import Path
 import sqlite3
@@ -86,6 +87,46 @@ class MessageContextSource:
     rank: int
     score: float
     token_estimate: int
+
+
+@dataclass(frozen=True, slots=True)
+class AdaptiveRAGRoundRecord:
+    """Persistable audit record for one retrieval and evidence-assessment pass."""
+
+    query: str
+    result_count: int
+    new_result_count: int
+    evidence_sufficient: bool
+    assessment_reason: str
+    missing_information: str
+
+
+@dataclass(frozen=True, slots=True)
+class AdaptiveRAGRunInput:
+    """Adaptive RAG trace to attach to an assistant message."""
+
+    retrieval_needed: bool
+    judge_reason: str
+    rounds: tuple[AdaptiveRAGRoundRecord, ...]
+    evidence_sufficient: bool
+    summary: str | None
+    fallback_reasons: tuple[str, ...]
+    duration_ms: float
+
+
+@dataclass(frozen=True, slots=True)
+class MessageAdaptiveRAGRun:
+    """Persisted adaptive RAG decisions used to generate one assistant message."""
+
+    assistant_message_id: int
+    retrieval_needed: bool
+    judge_reason: str
+    rounds: tuple[AdaptiveRAGRoundRecord, ...]
+    evidence_sufficient: bool
+    summary: str | None
+    fallback_reasons: tuple[str, ...]
+    duration_ms: float
+    created_at: datetime
 
 
 class ChatRepository:
@@ -234,6 +275,20 @@ class ChatRepository:
 
                 CREATE INDEX IF NOT EXISTS message_context_sources_message_idx
                     ON message_context_sources(assistant_message_id, rank);
+
+                CREATE TABLE IF NOT EXISTS message_adaptive_rag_runs (
+                    assistant_message_id INTEGER PRIMARY KEY
+                        REFERENCES messages(id) ON DELETE CASCADE,
+                    retrieval_needed INTEGER NOT NULL CHECK (retrieval_needed IN (0, 1)),
+                    judge_reason TEXT NOT NULL,
+                    rounds_json TEXT NOT NULL,
+                    evidence_sufficient INTEGER NOT NULL
+                        CHECK (evidence_sufficient IN (0, 1)),
+                    summary TEXT,
+                    fallback_reasons_json TEXT NOT NULL,
+                    duration_ms REAL NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
             if not _column_exists(connection, "message_context_sources", "source_excerpt"):
@@ -243,7 +298,7 @@ class ChatRepository:
                     ADD COLUMN source_excerpt TEXT NOT NULL DEFAULT ''
                     """
                 )
-            connection.execute("PRAGMA user_version = 4")
+            connection.execute("PRAGMA user_version = 5")
             now = _timestamp()
             connection.execute(
                 """
@@ -259,7 +314,7 @@ class ChatRepository:
             database_path=str(self.database_path),
             sqlite_version=sqlite3.sqlite_version,
             journal_mode=journal_mode,
-            schema_version=4,
+            schema_version=5,
         )
 
     def get_project(self, project_id: str = DEFAULT_PROJECT_ID) -> Project | None:
@@ -682,6 +737,81 @@ class ChatRepository:
             ).fetchall()
         return [_message_context_source_from_row(row) for row in rows]
 
+    def add_message_adaptive_rag_run(
+        self,
+        assistant_message_id: int,
+        run: AdaptiveRAGRunInput,
+    ) -> None:
+        rounds_json = json.dumps(
+            [
+                {
+                    "query": item.query,
+                    "result_count": item.result_count,
+                    "new_result_count": item.new_result_count,
+                    "evidence_sufficient": item.evidence_sufficient,
+                    "assessment_reason": item.assessment_reason,
+                    "missing_information": item.missing_information,
+                }
+                for item in run.rounds
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        fallback_reasons_json = json.dumps(
+            list(run.fallback_reasons),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        created_at = _timestamp()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO message_adaptive_rag_runs (
+                    assistant_message_id, retrieval_needed, judge_reason, rounds_json,
+                    evidence_sufficient, summary, fallback_reasons_json, duration_ms, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    assistant_message_id,
+                    int(run.retrieval_needed),
+                    run.judge_reason,
+                    rounds_json,
+                    int(run.evidence_sufficient),
+                    run.summary,
+                    fallback_reasons_json,
+                    run.duration_ms,
+                    created_at,
+                ),
+            )
+        log_event(
+            logger,
+            logging.INFO,
+            "database.message_adaptive_rag_run.created",
+            assistant_message_id=assistant_message_id,
+            retrieval_needed=run.retrieval_needed,
+            round_count=len(run.rounds),
+            evidence_sufficient=run.evidence_sufficient,
+            summary_chars=len(run.summary or ""),
+            fallback_count=len(run.fallback_reasons),
+            duration_ms=run.duration_ms,
+        )
+
+    def get_message_adaptive_rag_run(
+        self,
+        assistant_message_id: int,
+    ) -> MessageAdaptiveRAGRun | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT assistant_message_id, retrieval_needed, judge_reason, rounds_json,
+                       evidence_sufficient, summary, fallback_reasons_json, duration_ms, created_at
+                FROM message_adaptive_rag_runs
+                WHERE assistant_message_id = ?
+                """,
+                (assistant_message_id,),
+            ).fetchone()
+        return _message_adaptive_rag_run_from_row(row) if row else None
+
     def _connect(self) -> sqlite3.Connection:
         return connect_database(self.database_path)
 
@@ -755,4 +885,30 @@ def _message_context_source_from_row(row: sqlite3.Row) -> MessageContextSource:
         rank=row["rank"],
         score=row["score"],
         token_estimate=row["token_estimate"],
+    )
+
+
+def _message_adaptive_rag_run_from_row(row: sqlite3.Row) -> MessageAdaptiveRAGRun:
+    round_payloads = json.loads(row["rounds_json"])
+    fallback_payloads = json.loads(row["fallback_reasons_json"])
+    return MessageAdaptiveRAGRun(
+        assistant_message_id=row["assistant_message_id"],
+        retrieval_needed=bool(row["retrieval_needed"]),
+        judge_reason=row["judge_reason"],
+        rounds=tuple(
+            AdaptiveRAGRoundRecord(
+                query=str(item["query"]),
+                result_count=int(item["result_count"]),
+                new_result_count=int(item["new_result_count"]),
+                evidence_sufficient=bool(item["evidence_sufficient"]),
+                assessment_reason=str(item["assessment_reason"]),
+                missing_information=str(item["missing_information"]),
+            )
+            for item in round_payloads
+        ),
+        evidence_sufficient=bool(row["evidence_sufficient"]),
+        summary=row["summary"],
+        fallback_reasons=tuple(str(value) for value in fallback_payloads),
+        duration_ms=float(row["duration_ms"]),
+        created_at=_parse_datetime(row["created_at"]),
     )

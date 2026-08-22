@@ -42,6 +42,31 @@ class FakeVLLMHandler(BaseHTTPRequestHandler):
 
         content_length = int(self.headers.get("Content-Length", "0"))
         FakeVLLMHandler.request_body = json.loads(self.rfile.read(content_length))
+        if not FakeVLLMHandler.request_body.get("stream", False):
+            body = json.dumps(
+                {
+                    "id": "chatcmpl-control",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": '{"retrieve":false,"query":"","reason":"skip"}',
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         messages = FakeVLLMHandler.request_body.get("messages", [])
         slow_response = any(message.get("content") == "Slow stream check" for message in messages)
 
@@ -118,6 +143,35 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
 
         await asyncio.sleep(0)
+
+    async def test_control_completion_is_non_streaming_and_disables_thinking(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="control",
+            label="Control model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+            supports_thinking=True,
+        )
+
+        response = await VLLMGateway().complete_control(
+            profile,
+            [{"role": "user", "content": "Route this"}],
+            purpose="test_router",
+            request_id="request-1",
+            max_tokens=123,
+        )
+
+        self.assertIn('"retrieve":false', response)
+        self.assertIsNotNone(FakeVLLMHandler.request_body)
+        assert FakeVLLMHandler.request_body is not None
+        self.assertFalse(FakeVLLMHandler.request_body["stream"])
+        self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], 123)
+        self.assertEqual(FakeVLLMHandler.request_body["temperature"], 0.0)
+        self.assertEqual(
+            FakeVLLMHandler.request_body["chat_template_kwargs"],
+            {"enable_thinking": False},
+        )
 
     async def test_stream_reply_can_be_cancelled_while_waiting_for_a_chunk(self) -> None:
         host, port = self.server.server_address

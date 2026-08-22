@@ -19,8 +19,8 @@ OpenAI-compatible local or vLLM model servers.
   provenance and per-entry controls;
 - upload, replace, re-index, and delete project-scoped TXT, Markdown, text-based PDF, DOCX, CSV,
   and XLSX files;
-- optionally ground chat answers in cited document chunks using FTS5 or hybrid lexical/vector
-  retrieval.
+- optionally ground chat answers in cited document chunks using an adaptive, multi-pass FTS5 or
+  hybrid lexical/vector retrieval loop.
 
 ## Run it
 
@@ -67,6 +67,21 @@ Use **Manage project documents** in the sidebar to upload, inspect, replace, re-
 delete files belonging to the selected project. Turn on **Use documents** in a chat to retrieve
 relevant chunks for its next request. Sources actually included in the model request are persisted
 on the assistant message and display their original filename plus page, section, or chunk locator.
+
+When documents are enabled, a bounded Adaptive RAG controller uses the selected chat model for
+three small control roles before the final answer. Its router decides whether document retrieval is
+needed and rewrites follow-up questions into standalone searches. After every retrieval pass, an
+evidence judge either stops or requests one targeted follow-up query; at most two passes are
+allowed. A final evidence synthesis preserves source markers, facts, conflicts, and gaps for the
+answering model. Original chunks remain in the request and are the persisted, inspectable
+provenance. Expand **Adaptive RAG** below an assistant message to inspect the route, rewritten
+queries, evidence decisions, synthesis, and any fallback used for that response.
+
+Control-model or parsing failures do not make the chat unusable: routing fails open to the original
+query, evidence-assessment failure stops the bounded loop, and summary failure keeps the raw cited
+chunks. The controller never treats retrieved text as instructions, disables model thinking for
+its compact JSON calls, deduplicates chunks across passes, and logs query fingerprints rather than
+query content.
 
 Original files are stored under generated project/document IDs in `.data/documents`; uploaded
 filenames are display metadata and never become storage paths. The SQLite database contains file
@@ -159,7 +174,9 @@ parameters such as max tokens, temperature, and the system prompt) is hardcoded 
 The application writes structured JSON Lines logs to `.data/logs/agent-lab.jsonl` as well as to
 the console. Every page, project, conversation, document lifecycle event, retrieval, database
 mutation, and model generation gets
-diagnostic context. A generation has one `generation_id` across UI and vLLM gateway events;
+diagnostic context. Adaptive RAG records its route, pass counts, evidence decisions, durations,
+fallbacks, and non-reversible query fingerprints without copying query or document text into normal
+diagnostic fields. A generation has one `generation_id` across UI and vLLM gateway events;
 completion events include the outcome, model, content and reasoning sizes, time to first content
 or reasoning chunk, total duration, active token limit, and the server finish reason. Startup
 records include Python and core library versions. Unexpected failures include their complete
@@ -209,5 +226,6 @@ Submission, validation, SSH tunneling, and image recreation are documented in
 ## Scope
 
 This milestone includes persistent chat, the model gateway, deterministic project-memory retrieval,
-and a project-scoped document-RAG baseline. Adaptive judge/rewriter/summarization, reranking, tool
-calling, web search, multimodality, and autonomous agent loops remain later milestones.
+project-scoped document ingestion, and bounded Adaptive RAG with routing, query rewriting,
+multi-pass evidence judgment, synthesis, and persisted provenance. Learned reranking, tool calling,
+web search, broader multimodality, and autonomous agent loops remain later milestones.

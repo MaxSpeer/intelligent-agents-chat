@@ -6,6 +6,8 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from intelligent_agents_chat.database import (
+    AdaptiveRAGRoundRecord,
+    AdaptiveRAGRunInput,
     ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
     DEFAULT_DATABASE_PATH,
@@ -196,6 +198,49 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertTrue(self.repository.delete_conversation(target.id))
         self.assertEqual(self.repository.list_message_context_sources(assistant.id), [])
 
+    def test_adaptive_rag_trace_is_persisted_and_cascades_with_message(self) -> None:
+        conversation = self.repository.create_conversation("base", rag_enabled=True)
+        assistant = self.repository.add_message(
+            conversation.id,
+            "assistant",
+            "There are 7 units.",
+            model_profile="base",
+        )
+        self.repository.add_message_adaptive_rag_run(
+            assistant.id,
+            AdaptiveRAGRunInput(
+                retrieval_needed=True,
+                judge_reason="The question requests project inventory data.",
+                rounds=(
+                    AdaptiveRAGRoundRecord(
+                        query="Mondkeks inventory",
+                        result_count=3,
+                        new_result_count=3,
+                        evidence_sufficient=True,
+                        assessment_reason="The stock figure is present.",
+                        missing_information="",
+                    ),
+                ),
+                evidence_sufficient=True,
+                summary="The source reports 7 units.",
+                fallback_reasons=(),
+                duration_ms=12.5,
+            ),
+        )
+
+        loaded = self.repository.get_message_adaptive_rag_run(assistant.id)
+
+        self.assertIsNotNone(loaded)
+        assert loaded is not None
+        self.assertTrue(loaded.retrieval_needed)
+        self.assertEqual(loaded.rounds[0].query, "Mondkeks inventory")
+        self.assertTrue(loaded.rounds[0].evidence_sufficient)
+        self.assertEqual(loaded.summary, "The source reports 7 units.")
+        self.assertEqual(loaded.duration_ms, 12.5)
+
+        self.assertTrue(self.repository.delete_conversation(conversation.id))
+        self.assertIsNone(self.repository.get_message_adaptive_rag_run(assistant.id))
+
     def test_initialize_migrates_a_database_without_memory_columns(self) -> None:
         legacy_path = Path(self.temporary_directory.name) / "legacy.sqlite3"
         with sqlite3.connect(legacy_path) as connection:
@@ -245,7 +290,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertFalse(conversation.memory_enabled)
         self.assertFalse(conversation.rag_enabled)
         with sqlite3.connect(legacy_path) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 5)
 
     def test_deleting_a_conversation_cascades_to_messages(self) -> None:
         conversation = self.repository.create_conversation("base")

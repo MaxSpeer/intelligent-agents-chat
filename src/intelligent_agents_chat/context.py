@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import math
 from typing import Sequence
 
+from intelligent_agents_chat.adaptive_rag import AdaptiveRAGTrace
 from intelligent_agents_chat.retrieval import ContextCandidate
 
 
@@ -48,6 +49,7 @@ class ContextPlan:
     estimated_input_tokens: int
     input_budget_tokens: int
     omitted_history_messages: int
+    adaptive_rag_trace: AdaptiveRAGTrace | None = None
 
 
 def estimate_tokens(text: str) -> int:
@@ -86,6 +88,8 @@ class ContextAssembler:
         *,
         context_window_tokens: int,
         output_reserve_tokens: int,
+        retrieval_summary: str | None = None,
+        adaptive_rag_trace: AdaptiveRAGTrace | None = None,
     ) -> ContextPlan:
         if context_window_tokens <= output_reserve_tokens:
             raise ContextOverflowError("Output reserve leaves no room for model input")
@@ -141,7 +145,13 @@ class ContextAssembler:
             block = f'{marker} From "{candidate.title}" ({candidate.locator})\n{candidate.text}'
             tokens = estimate_tokens(block)
             prospective_blocks = [*blocks, block]
-            prospective_retrieval_message = _retrieval_message(prospective_blocks)
+            has_document_source = candidate.source_kind == "project_document" or any(
+                source.candidate.source_kind == "project_document" for source in included
+            )
+            prospective_retrieval_message = _retrieval_message(
+                prospective_blocks,
+                summary=retrieval_summary if has_document_source else None,
+            )
             prospective_context_tokens = (
                 estimate_message_tokens(guarded_system_message)
                 - base_system_tokens
@@ -197,15 +207,21 @@ class ContextAssembler:
             estimated_input_tokens=sum(estimate_message_tokens(message) for message in assembled),
             input_budget_tokens=input_budget,
             omitted_history_messages=max(0, len(history) - selected_history_count),
+            adaptive_rag_trace=adaptive_rag_trace,
         )
 
 
-def _retrieval_message(blocks: Sequence[str]) -> dict[str, str]:
+def _retrieval_message(blocks: Sequence[str], *, summary: str | None = None) -> dict[str, str]:
+    synthesis = (
+        "<evidence-synthesis>\n" + summary.strip() + "\n</evidence-synthesis>\n\n"
+        if summary and summary.strip()
+        else ""
+    )
     return {
         "role": "user",
         "content": (
             "Reference context retrieved for this project follows. "
             "Do not answer this reference message directly.\n\n"
-            "<retrieved-context>\n" + "\n\n".join(blocks) + "\n</retrieved-context>"
+            "<retrieved-context>\n" + synthesis + "\n\n".join(blocks) + "\n</retrieved-context>"
         ),
     }

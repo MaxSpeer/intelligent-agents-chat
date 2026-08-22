@@ -58,6 +58,30 @@ class ContextAssemblerTests(unittest.TestCase):
         self.assertEqual(plan.excluded_sources[0].reason, "retrieval_budget_exceeded")
         self.assertNotIn(MEMORY_GUARD, plan.messages[0]["content"])
 
+    def test_includes_adaptive_evidence_synthesis_with_document_sources(self) -> None:
+        document = ContextCandidate(
+            source_kind="project_document",
+            source_id="chunk-1",
+            project_id="project-a",
+            text="Mondkeks has 7 units in stock.",
+            title="inventory.csv",
+            locator="row 3",
+            score=0.7,
+        )
+
+        plan = ContextAssembler("System", retrieval_budget_tokens=500).assemble(
+            [{"role": "user", "content": "How many Mondkeks are available?"}],
+            [document],
+            context_window_tokens=2_000,
+            output_reserve_tokens=200,
+            retrieval_summary="[project_document:chunk-1] Stock is 7 units.",
+        )
+
+        self.assertEqual(len(plan.included_sources), 1)
+        self.assertIn("<evidence-synthesis>", plan.messages[1]["content"])
+        self.assertIn("Stock is 7 units.", plan.messages[1]["content"])
+        self.assertIn("[project_document:chunk-1]", plan.messages[1]["content"])
+
     def test_recent_history_has_priority_and_old_history_is_trimmed(self) -> None:
         plan = ContextAssembler("", memory_budget_tokens=0, recent_message_count=2).assemble(
             [

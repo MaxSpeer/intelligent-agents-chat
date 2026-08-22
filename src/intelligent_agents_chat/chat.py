@@ -15,6 +15,11 @@ import os
 from pathlib import Path
 import platform
 
+from intelligent_agents_chat.adaptive_rag import (
+    AdaptiveRAGController,
+    AdaptiveRAGTrace,
+    OpenAIAdaptiveRAGReasoner,
+)
 from intelligent_agents_chat.context import ContextAssembler, ContextPlan
 from intelligent_agents_chat.database import ChatRepository, Conversation, Message
 from intelligent_agents_chat.documents import (
@@ -106,6 +111,10 @@ document_service = DocumentService(
     embedding_gateway,
 )
 rag_retriever = ProjectRAGRetriever(document_store, embedding_gateway)
+adaptive_rag_controller = AdaptiveRAGController(
+    rag_retriever,
+    OpenAIAdaptiveRAGReasoner(gateway),
+)
 context_assembler = ContextAssembler(SYSTEM_PROMPT)
 active_generations: set[str] = set()
 
@@ -221,6 +230,8 @@ def prepare_context(
     candidates: list[ContextCandidate],
     *,
     thinking_enabled: bool,
+    retrieval_summary: str | None = None,
+    adaptive_rag_trace: AdaptiveRAGTrace | None = None,
 ) -> ContextPlan:
     """Create a token-aware request while preserving auditable retrieval decisions."""
     output_reserve_tokens = THINKING_MAX_TOKENS if thinking_enabled else MAX_TOKENS
@@ -229,6 +240,8 @@ def prepare_context(
         candidates,
         context_window_tokens=profile.context_window_tokens,
         output_reserve_tokens=output_reserve_tokens,
+        retrieval_summary=retrieval_summary,
+        adaptive_rag_trace=adaptive_rag_trace,
     )
     log_event(
         logger,
@@ -246,6 +259,16 @@ def prepare_context(
         excluded_source_count=len(plan.excluded_sources),
         excluded_reasons=sorted({source.reason for source in plan.excluded_sources}),
         source_kinds=sorted({source.candidate.source_kind for source in plan.included_sources}),
+        adaptive_rag_enabled=adaptive_rag_trace is not None,
+        adaptive_rag_round_count=(
+            len(adaptive_rag_trace.rounds) if adaptive_rag_trace is not None else 0
+        ),
+        adaptive_rag_evidence_sufficient=(
+            adaptive_rag_trace.evidence_sufficient if adaptive_rag_trace is not None else None
+        ),
+        adaptive_rag_fallback_count=(
+            len(adaptive_rag_trace.fallback_reasons) if adaptive_rag_trace is not None else 0
+        ),
     )
     return plan
 
@@ -255,6 +278,8 @@ async def prepare_conversation_context(
     profile: ModelProfile,
     messages: list[Message],
     query_text: str,
+    *,
+    request_id: str | None = None,
 ) -> ContextPlan:
     """Collect optional sources and assemble one request at the backend seam."""
     memory_candidates = (
@@ -266,20 +291,26 @@ async def prepare_conversation_context(
         if conversation.memory_enabled
         else []
     )
-    document_candidates = (
-        await retrieve_project_documents(
+    adaptive_result = (
+        await adaptive_rag_controller.run(
             project_id=conversation.project_id,
-            query_text=query_text,
+            query=query_text,
+            history=[{"role": message.role, "content": message.content} for message in messages],
+            profile=profile,
+            request_id=request_id,
         )
         if conversation.rag_enabled
-        else []
+        else None
     )
+    document_candidates = list(adaptive_result.candidates) if adaptive_result is not None else []
     candidates = _interleave_candidates(document_candidates, memory_candidates)
     return prepare_context(
         profile,
         messages,
         candidates,
         thinking_enabled=conversation.thinking_enabled,
+        retrieval_summary=(adaptive_result.summary if adaptive_result is not None else None),
+        adaptive_rag_trace=(adaptive_result.trace if adaptive_result is not None else None),
     )
 
 

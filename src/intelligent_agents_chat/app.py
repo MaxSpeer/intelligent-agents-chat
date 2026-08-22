@@ -28,6 +28,8 @@ from intelligent_agents_chat.chat import (
 )
 from intelligent_agents_chat.context import ContextOverflowError, ContextPlan
 from intelligent_agents_chat.database import (
+    AdaptiveRAGRoundRecord,
+    AdaptiveRAGRunInput,
     ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
     DEFAULT_PROJECT_ID,
@@ -338,6 +340,9 @@ def index() -> None:
                     sent = message.role == "user"
                     name = "You" if sent else _profile_label(message.model_profile)
                     sources = [] if sent else repository.list_message_context_sources(message.id)
+                    adaptive_run = (
+                        None if sent else repository.get_message_adaptive_rag_run(message.id)
+                    )
                     with ui.chat_message(
                         name=name,
                         stamp=_display_time(message.created_at),
@@ -379,6 +384,51 @@ def index() -> None:
                                                 ui.label(source.source_excerpt).classes(
                                                     "memory-source-excerpt"
                                                 )
+                        if adaptive_run is not None:
+                            pass_label = (
+                                f"{len(adaptive_run.rounds)} retrieval pass"
+                                + ("es" if len(adaptive_run.rounds) != 1 else "")
+                                if adaptive_run.retrieval_needed
+                                else "retrieval skipped"
+                            )
+                            with ui.expansion(
+                                f"Adaptive RAG · {pass_label}",
+                                icon="account_tree",
+                            ).classes("memory-sources adaptive-rag-trace"):
+                                ui.label(adaptive_run.judge_reason).classes("adaptive-rag-reason")
+                                for index, retrieval_round in enumerate(
+                                    adaptive_run.rounds,
+                                    start=1,
+                                ):
+                                    status = (
+                                        "evidence sufficient"
+                                        if retrieval_round.evidence_sufficient
+                                        else "more evidence requested"
+                                    )
+                                    with ui.column().classes("adaptive-rag-round"):
+                                        ui.label(
+                                            f"Pass {index} · {retrieval_round.new_result_count} "
+                                            f"new sources · {status}"
+                                        ).classes("adaptive-rag-round-title")
+                                        ui.label(retrieval_round.query).classes(
+                                            "adaptive-rag-query"
+                                        )
+                                        ui.label(retrieval_round.assessment_reason).classes(
+                                            "adaptive-rag-reason"
+                                        )
+                                        if retrieval_round.missing_information:
+                                            ui.label(
+                                                "Missing: " + retrieval_round.missing_information
+                                            ).classes("adaptive-rag-missing")
+                                if adaptive_run.summary:
+                                    ui.label("Evidence synthesis").classes(
+                                        "adaptive-rag-round-title"
+                                    )
+                                    ui.label(adaptive_run.summary).classes("adaptive-rag-summary")
+                                if adaptive_run.fallback_reasons:
+                                    ui.label(
+                                        "Fallbacks: " + ", ".join(adaptive_run.fallback_reasons)
+                                    ).classes("adaptive-rag-fallback")
         message_scroll.scroll_to(percent=1)
 
     def render_all() -> None:
@@ -1271,6 +1321,7 @@ def index() -> None:
                 profile,
                 persisted_messages,
                 text,
+                request_id=generation_id,
             )
             request_messages = list(context_plan.messages)
             page_event(
@@ -1282,17 +1333,27 @@ def index() -> None:
                 completion_chars=sum(
                     len(message.get("content", "")) for message in request_messages
                 ),
-                memory_candidate_count=(
+                retrieval_candidate_count=(
                     len(context_plan.included_sources) + len(context_plan.excluded_sources)
                 ),
-                memory_source_count=len(context_plan.included_sources),
-                memory_excluded_count=len(context_plan.excluded_sources),
+                included_source_count=len(context_plan.included_sources),
+                excluded_source_count=len(context_plan.excluded_sources),
                 source_kinds=sorted(
                     {source.candidate.source_kind for source in context_plan.included_sources}
                 ),
                 estimated_input_tokens=context_plan.estimated_input_tokens,
                 input_budget_tokens=context_plan.input_budget_tokens,
                 omitted_history_messages=context_plan.omitted_history_messages,
+                adaptive_rag_round_count=(
+                    len(context_plan.adaptive_rag_trace.rounds)
+                    if context_plan.adaptive_rag_trace is not None
+                    else 0
+                ),
+                adaptive_rag_evidence_sufficient=(
+                    context_plan.adaptive_rag_trace.evidence_sufficient
+                    if context_plan.adaptive_rag_trace is not None
+                    else None
+                ),
             )
             async with aclosing(
                 stream_reply(
@@ -1392,6 +1453,30 @@ def index() -> None:
                                 )
                                 for source in context_plan.included_sources
                             ],
+                        )
+                    if context_plan is not None and context_plan.adaptive_rag_trace is not None:
+                        trace = context_plan.adaptive_rag_trace
+                        repository.add_message_adaptive_rag_run(
+                            assistant_message.id,
+                            AdaptiveRAGRunInput(
+                                retrieval_needed=trace.retrieval_needed,
+                                judge_reason=trace.judge_reason,
+                                rounds=tuple(
+                                    AdaptiveRAGRoundRecord(
+                                        query=retrieval_round.query,
+                                        result_count=retrieval_round.result_count,
+                                        new_result_count=retrieval_round.new_result_count,
+                                        evidence_sufficient=(retrieval_round.evidence_sufficient),
+                                        assessment_reason=(retrieval_round.assessment_reason),
+                                        missing_information=(retrieval_round.missing_information),
+                                    )
+                                    for retrieval_round in trace.rounds
+                                ),
+                                evidence_sufficient=trace.evidence_sufficient,
+                                summary=trace.summary,
+                                fallback_reasons=trace.fallback_reasons,
+                                duration_ms=trace.duration_ms,
+                            ),
                         )
                     rebuild_conversation_memory(conversation.id)
                     assistant_message_saved = True
