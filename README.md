@@ -1,8 +1,8 @@
 # Intelligent Agents Chat
 
 A cross-platform NiceGUI chat application for the Intelligent Agents project. The current
-milestone provides persistent conversations in SQLite and streamed generation through the
-OpenAI-compatible vLLM servers in `./cluster`.
+milestone provides persistent conversations in SQLite and streamed generation through
+OpenAI-compatible local or vLLM model servers.
 
 ## Current features
 
@@ -38,18 +38,21 @@ deleting a conversation never affects conversations in another project.
 
 ## Model profiles
 
-The three model profiles are hardcoded in
-[`src/intelligent_agents_chat/models.py`](src/intelligent_agents_chat/models.py), matching the two
-vLLM jobs in `./cluster`:
+The model profiles are configured in
+[`src/intelligent_agents_chat/models.py`](src/intelligent_agents_chat/models.py):
 
 - **Qwen3 8B** (`qwen3-8b`, the default) and **Qwen3 8B (conspiracy)** (`conspiracy`, the trained
   LoRA adapter from `training/README.md`) are both served by the same vLLM process --
   `cluster/run-vllm-qwen3-8b.sbatch`, local port `8001`.
 - **Qwen3.5 9B** (`qwen3.5-9b`) is served by a second, independent vLLM process --
   `cluster/run-vllm-qwen35-9b.sbatch`, local port `8002`.
+- **qwen3.5:2b (local Ollama)** (`ollama-local`) uses the local Ollama service on port `11434`.
+  Reasoning is disabled for this lightweight test profile so the normal 1,024-token response
+  budget is available for the visible answer.
 
-All three support Thinking. It is disabled by default so a profile returns a direct answer; the
-header toggle enables it for the current conversation and persists that choice in SQLite.
+Thinking is disabled by default. The header toggle is available for profiles configured with
+thinking support and persists that choice in SQLite; the lightweight Ollama profile deliberately
+keeps it disabled.
 
 **The `conspiracy` profile is intentionally trained to argue for false claims and stay in that
 stance across a conversation** -- that's the whole point of the experiment (see
@@ -59,19 +62,22 @@ assistant; don't present its answers as factual; and be deliberate about who get
 model that argues misinformation persistently and convincingly is precisely the capability that's
 risky to hand out casually.
 
-No API key is sent to either backend (`VLLM_API_KEY` is not used); both vLLM jobs are reached only
-through an SSH tunnel to compute-node loopback (see `cluster/tunnel.sh`), never exposed directly.
+The OpenAI client uses a fixed, non-secret placeholder API key. Ollama ignores it, while both vLLM
+jobs are reached only through an SSH tunnel to compute-node loopback (see `cluster/tunnel.sh`),
+never exposed directly.
 
-Only the two local ports are configurable, since they depend on which local port each SSH tunnel
-happens to use:
+The two tunnel ports and the local Ollama endpoint/model can be overridden through environment
+variables:
 
 ```bash
 export VLLM_QWEN3_8B_PORT=8001    # matches cluster/run-vllm-qwen3-8b.sbatch's SERVER_PORT
 export VLLM_QWEN35_9B_PORT=8002   # matches cluster/run-vllm-qwen35-9b.sbatch's SERVER_PORT
+export OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+export OLLAMA_MODEL=qwen3.5:2b
 uv run intelligent-agents-chat
 ```
 
-Everything else (labels, model names, the SQLite path, and generation parameters such as
+Everything else (labels, cluster model names, the SQLite path, and generation parameters such as
 max tokens, temperature, and the system prompt) is hardcoded in `models.py`, `database.py`, and
 `llm.py` -- edit those files directly to change them.
 

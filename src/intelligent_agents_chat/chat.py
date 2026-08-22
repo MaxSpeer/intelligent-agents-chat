@@ -52,6 +52,7 @@ log_event(
             "model": profile.model,
             "endpoint": sanitized_endpoint(profile.base_url),
             "supports_thinking": profile.supports_thinking,
+            "reasoning_effort": profile.reasoning_effort,
         }
         for profile in MODEL_PROFILES
     ],
@@ -84,7 +85,7 @@ log_event(logger, logging.INFO, "application.initialized")
 
 
 async def refresh_profile_status() -> None:
-    """Check every profile's vLLM endpoint concurrently and update `profile_status` in place."""
+    """Check every profile endpoint concurrently and update `profile_status` in place."""
     results = await asyncio.gather(
         *(check_model_available(profile) for profile in MODEL_PROFILES),
         return_exceptions=True,

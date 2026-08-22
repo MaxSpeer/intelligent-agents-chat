@@ -1,4 +1,4 @@
-"""Streaming model gateway for the vLLM servers in ./cluster."""
+"""Streaming gateway for OpenAI-compatible model servers."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ async def check_model_available(profile: ModelProfile) -> bool:
 
 
 class VLLMGateway:
-    """Create streamed replies with the selected vLLM profile."""
+    """Create streamed replies with the selected OpenAI-compatible profile."""
 
     async def stream_reply(
         self,
@@ -77,6 +77,7 @@ class VLLMGateway:
             "endpoint": sanitized_endpoint(profile.base_url),
             "supports_thinking": profile.supports_thinking,
             "thinking_enabled": effective_thinking,
+            "reasoning_effort": profile.reasoning_effort,
             "max_tokens": max_tokens,
             "input_message_count": len(messages),
             "input_chars": sum(len(message.get("content", "")) for message in messages),
@@ -92,18 +93,18 @@ class VLLMGateway:
                 api_key=API_KEY,
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
-            extra_body = (
-                {"chat_template_kwargs": {"enable_thinking": effective_thinking}}
-                if profile.supports_thinking
-                else None
-            )
+            extra_body: dict[str, object] = {}
+            if profile.supports_thinking:
+                extra_body["chat_template_kwargs"] = {"enable_thinking": effective_thinking}
+            if profile.reasoning_effort is not None:
+                extra_body["reasoning_effort"] = profile.reasoning_effort
             stream = await client.chat.completions.create(
                 model=profile.model,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=TEMPERATURE,
                 stream=True,
-                extra_body=extra_body,
+                extra_body=extra_body or None,
             )
             async for chunk in stream:
                 if chunk.id:
@@ -148,7 +149,7 @@ class VLLMGateway:
                 extra={"event": "llm.stream.connection_error", **context},
             )
             raise LLMError(
-                f"Could not reach the {profile.label} vLLM endpoint. "
+                f"Could not reach the {profile.label} model endpoint. "
                 "Check the server or SSH tunnel and try again."
             ) from error
         except APIStatusError as error:
@@ -162,7 +163,7 @@ class VLLMGateway:
                 },
             )
             raise LLMError(
-                f"The {profile.label} vLLM endpoint returned HTTP {error.status_code}."
+                f"The {profile.label} model endpoint returned HTTP {error.status_code}."
             ) from error
         finally:
             try:

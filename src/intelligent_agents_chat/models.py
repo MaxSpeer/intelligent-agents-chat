@@ -1,4 +1,4 @@
-"""Hardcoded model profiles for the two vLLM jobs in ./cluster."""
+"""Configured profiles for OpenAI-compatible local and cluster model servers."""
 
 from __future__ import annotations
 
@@ -8,13 +8,14 @@ import os
 
 @dataclass(frozen=True, slots=True)
 class ModelProfile:
-    """A selectable vLLM-served model."""
+    """A selectable model served through an OpenAI-compatible endpoint."""
 
     key: str
     label: str
     base_url: str
     model: str
     supports_thinking: bool = False
+    reasoning_effort: str | None = None
 
 
 def _port(env_var: str, default: int) -> int:
@@ -34,6 +35,8 @@ QWEN35_9B_PORT = _port("VLLM_QWEN35_9B_PORT", 8002)
 
 _QWEN3_8B_BASE_URL = f"http://127.0.0.1:{QWEN3_8B_PORT}/v1"
 _QWEN35_9B_BASE_URL = f"http://127.0.0.1:{QWEN35_9B_PORT}/v1"
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1").rstrip("/")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:2b")
 
 DEFAULT_PROFILE_KEY = "qwen3-8b"
 
@@ -61,6 +64,15 @@ MODEL_PROFILES: tuple[ModelProfile, ...] = (
         base_url=_QWEN3_8B_BASE_URL,
         model="conspiracy",
         supports_thinking=False,
+    ),
+    ModelProfile(
+        key="ollama-local",
+        label=f"{OLLAMA_MODEL} (local Ollama)",
+        base_url=OLLAMA_BASE_URL,
+        model=OLLAMA_MODEL,
+        # Ollama enables reasoning by default for Qwen3.5. Keeping it disabled
+        # prevents short responses from spending their entire budget on reasoning.
+        reasoning_effort="none",
     ),
 )
 
