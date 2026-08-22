@@ -15,8 +15,14 @@ from uuid import uuid4
 from nicegui import app as nicegui_app, ui
 
 from intelligent_agents_chat.chat import (
+    TextChunk,
+    ToolCallEvent,
+    ToolResultEvent,
     active_generations,
     completion_messages,
+    format_reasoning_entry,
+    format_tool_call_entry,
+    format_tool_result_entry,
     poll_profile_status,
     profile_status,
     repository,
@@ -26,6 +32,7 @@ from intelligent_agents_chat.database import (
     DEFAULT_CONVERSATION_TITLE,
     DEFAULT_PROJECT_ID,
     Conversation,
+    Message,
     Project,
 )
 from intelligent_agents_chat.llm import LLMError, MAX_TOKENS, THINKING_MAX_TOKENS
@@ -297,6 +304,53 @@ def index() -> None:
         else:
             thinking_toggle.disable()
 
+    def render_assistant_turn(turn_messages: list[Message]) -> None:
+        """Render one user turn's response as a single chat bubble: a
+        collapsible trace (reasoning, tool calls, tool results, in order) followed
+        by the final answer, if any -- the exact same shape `send_message` builds
+        live while streaming. Both share one bubble because QChatMessage renders
+        one bubble *per direct slot child*, so they must be wrapped together.
+        """
+        entries: list[str] = []
+        call_names: dict[str, str] = {}
+        final_content: str | None = None
+        model_profile: str | None = None
+        for message in turn_messages:
+            if message.role == "assistant":
+                model_profile = message.model_profile
+                if message.reasoning:
+                    entries.append(format_reasoning_entry(message.reasoning))
+                if message.tool_calls:
+                    for call in message.tool_calls:
+                        call_names[call["id"]] = call["name"]
+                        entries.append(format_tool_call_entry(call))
+                    if message.content:
+                        entries.append(message.content)
+                elif message.content:
+                    final_content = message.content
+            elif message.role == "tool":
+                name = call_names.get(message.tool_call_id or "", "tool")
+                entries.append(format_tool_result_entry(name, message.content))
+
+        if not entries and not final_content:
+            return
+        with ui.chat_message(
+            name=_profile_label(model_profile),
+            stamp=_display_time(turn_messages[-1].created_at),
+            sent=False,
+        ).classes("chat-message"):
+            with ui.column().classes("gap-0 w-full"):
+                if entries:
+                    with (
+                        ui.expansion("thinking...", value=False)
+                        .props("dense")
+                        .classes("tool-trace")
+                    ):
+                        for entry in entries:
+                            _chat_markdown(entry)
+                if final_content:
+                    _chat_markdown(final_content)
+
     def render_messages() -> None:
         messages_container.clear()
         messages = repository.list_messages(state.conversation_id)
@@ -306,24 +360,24 @@ def index() -> None:
                     with ui.element("div").classes("empty-icon"):
                         ui.icon("forum", size="md")
                     ui.label("Start a conversation").classes("text-xl font-bold")
-                    ui.label(
-                        f'Messages in "{current_project().name}" are kept separate and saved '
-                        "locally in SQLite."
-                    ).classes("text-sm text-slate-500 leading-relaxed")
-                    ui.label("Pick a model profile above, or use the default Qwen3 8B").classes(
-                        "text-xs text-slate-400"
-                    )
             else:
-                for message in messages:
-                    sent = message.role == "user"
-                    name = "You" if sent else _profile_label(message.model_profile)
-                    with ui.chat_message(
-                        name=name,
-                        stamp=_display_time(message.created_at),
-                        sent=sent,
-                    ).classes("chat-message"):
-                        _chat_markdown(message.content)
-        message_scroll.scroll_to(percent=1)
+                index = 0
+                while index < len(messages):
+                    message = messages[index]
+                    if message.role == "user":
+                        with ui.chat_message(
+                            name="You",
+                            stamp=_display_time(message.created_at),
+                            sent=True,
+                        ).classes("chat-message"):
+                            _chat_markdown(message.content)
+                        index += 1
+                        continue
+                    turn_start = index
+                    while index < len(messages) and messages[index].role in ("assistant", "tool"):
+                        index += 1
+                    render_assistant_turn(messages[turn_start:index])
+        # message_scroll.scroll_to(percent=1)
 
     def render_all() -> None:
         render_project_picker()
@@ -754,12 +808,15 @@ def index() -> None:
 
             with messages_container:
                 with ui.chat_message(name=profile.label, sent=False).classes("chat-message"):
-                    progress_text = (
-                        f"Thinking with {profile.label}..."
-                        if conversation.thinking_enabled
-                        else f"Generating with {profile.label}..."
-                    )
-                    assistant_markdown = _chat_markdown(progress_text)
+                    # Both the trace accordion (created lazily on the first
+                    # reasoning/tool event) and the answer share one wrapping
+                    # column, so they end up in the same bubble -- QChatMessage
+                    # renders one bubble *per direct slot child*, and we want
+                    # only one for this whole turn.
+                    with ui.column().classes("gap-0 w-full"):
+                        trace_container = ui.column().classes("gap-0")
+                        progress_text = f"Generating with {profile.label}..."
+                        assistant_markdown = _chat_markdown(progress_text)
             message_scroll.scroll_to(percent=1)
         except Exception:
             logger.exception(
@@ -784,10 +841,56 @@ def index() -> None:
                 state.generation_id = None
             raise
 
-        chunks: list[str] = []
+        # `pending_content`/`pending_reasoning` hold text since the last flush point
+        # (round start, or the last tool call). `any_output`/`output_chars` drive the
+        # "did we get anything at all" check and logging -- they see everything shown
+        # live (reasoning, tool calls/results, final content), same as before.
+        pending_content: list[str] = []
+        pending_reasoning: list[str] = []
+        any_output = False
+        output_chars = 0
+        event_count = 0
+        messages_saved_count = 0
         stopped = False
         outcome = "streaming"
         last_paint = monotonic()
+        trace_expansion = None
+        current_reasoning_widget = None
+
+        def add_trace_entry(markdown_text: str):
+            nonlocal trace_expansion
+            if trace_expansion is None:
+                with trace_container:
+                    trace_expansion = (
+                        ui.expansion("thinking...", value=False)
+                        .props("dense")
+                        .classes("tool-trace")
+                    )
+            with trace_expansion:
+                return _chat_markdown(markdown_text)
+
+        def flush_pending(tool_calls: tuple[dict, ...] | None = None) -> None:
+            nonlocal messages_saved_count, current_reasoning_widget
+            reasoning = "".join(pending_reasoning).strip() or None
+            content = "".join(pending_content).strip()
+            if current_reasoning_widget is not None and reasoning:
+                # Paint the final, complete text -- the last periodic repaint may
+                # have landed slightly before the reasoning block actually closed.
+                current_reasoning_widget.set_content(format_reasoning_entry(reasoning))
+            pending_reasoning.clear()
+            pending_content.clear()
+            current_reasoning_widget = None
+            if content or reasoning or tool_calls:
+                repository.add_message(
+                    conversation.id,
+                    "assistant",
+                    content,
+                    model_profile=profile.key,
+                    reasoning=reasoning,
+                    tool_calls=tool_calls,
+                )
+                messages_saved_count += 1
+
         try:
             persisted_messages = repository.list_messages(conversation.id)
             request_messages = completion_messages(persisted_messages)
@@ -798,7 +901,7 @@ def index() -> None:
                 thinking_enabled=conversation.thinking_enabled,
                 completion_message_count=len(request_messages),
                 completion_chars=sum(
-                    len(message.get("content", "")) for message in request_messages
+                    len(message.get("content") or "") for message in request_messages
                 ),
             )
             async with aclosing(
@@ -809,18 +912,62 @@ def index() -> None:
                     thinking_enabled=conversation.thinking_enabled,
                 )
             ) as stream:
-                async for chunk in stream:
+                async for event in stream:
                     if stop_event.is_set():
                         stopped = True
                         break
-                    chunks.append(chunk)
+                    any_output = True
+                    if isinstance(event, TextChunk):
+                        event_count += 1
+                        output_chars += len(event.text)
+                        if event.is_reasoning:
+                            pending_reasoning.append(event.text)
+                        else:
+                            pending_content.append(event.text)
+                    elif isinstance(event, ToolCallEvent):
+                        event_count += len(event.tool_calls)
+                        # Any content the model produced right before deciding to call a
+                        # tool (rare, but possible) belongs in the trace, not the final
+                        # answer bubble. it isn't the model's real answer yet.
+                        leftover_content = "".join(pending_content).strip()
+                        flush_pending(tool_calls=event.tool_calls)
+                        if leftover_content:
+                            add_trace_entry(leftover_content)
+                        assistant_markdown.set_content(progress_text)
+                        for call in event.tool_calls:
+                            output_chars += len(call["arguments"])
+                            add_trace_entry(format_tool_call_entry(call))
+                    elif isinstance(event, ToolResultEvent):
+                        event_count += 1
+                        repository.add_message(
+                            conversation.id,
+                            "tool",
+                            event.result,
+                            tool_call_id=event.tool_call_id,
+                        )
+                        messages_saved_count += 1
+                        output_chars += len(event.result)
+                        add_trace_entry(format_tool_result_entry(event.name, event.result))
                     now = monotonic()
+
+                    # Actual UI updates (throttled to 40ms)
                     if now - last_paint >= 0.04:
-                        assistant_markdown.set_content("".join(chunks))
+                        if pending_reasoning:
+                            reasoning_text = "".join(pending_reasoning)
+                            if current_reasoning_widget is None:
+                                current_reasoning_widget = add_trace_entry(
+                                    format_reasoning_entry(reasoning_text)
+                                )
+                            else:
+                                current_reasoning_widget.set_content(
+                                    format_reasoning_entry(reasoning_text)
+                                )
+                        if pending_content:
+                            assistant_markdown.set_content("".join(pending_content))
                         message_scroll.scroll_to(percent=1)
                         last_paint = now
 
-            if not "".join(chunks).strip() and not stopped:
+            if not any_output and not stopped:
                 if conversation.thinking_enabled:
                     raise LLMError(
                         f"{profile.label} produced no final answer. Its thinking token budget "
@@ -867,21 +1014,12 @@ def index() -> None:
             )
             raise
         finally:
-            content = "".join(chunks).strip()
-            assistant_message_saved = False
             try:
-                if content:
-                    repository.add_message(
-                        conversation.id,
-                        "assistant",
-                        content,
-                        model_profile=profile.key,
-                    )
-                    assistant_message_saved = True
+                flush_pending()
                 if stopped:
                     ui.notify(
                         "Generation stopped; the partial response was saved."
-                        if content
+                        if messages_saved_count
                         else "Stopped.",
                         type="info",
                     )
@@ -898,7 +1036,7 @@ def index() -> None:
                         "model_profile": profile.key,
                         "thinking_enabled": conversation.thinking_enabled,
                         "error_type": type(error).__name__,
-                        "output_chars": len(content),
+                        "output_chars": output_chars,
                     },
                 )
                 raise
@@ -910,9 +1048,9 @@ def index() -> None:
                     thinking_enabled=conversation.thinking_enabled,
                     outcome=outcome,
                     stopped=stopped,
-                    stream_chunk_count=len(chunks),
-                    output_chars=len(content),
-                    assistant_message_saved=assistant_message_saved,
+                    stream_chunk_count=event_count,
+                    output_chars=output_chars,
+                    messages_saved_count=messages_saved_count,
                     duration_ms=round((monotonic() - generation_started_at) * 1000, 2),
                 )
                 state.stop_event = None

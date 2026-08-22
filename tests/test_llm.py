@@ -16,6 +16,10 @@ from intelligent_agents_chat.llm import (
 from intelligent_agents_chat.models import ModelProfile
 
 
+async def _collect_text(stream) -> str:
+    return "".join([delta.text async for delta in stream])
+
+
 class FakeVLLMHandler(BaseHTTPRequestHandler):
     request_body: dict | None = None
 
@@ -44,12 +48,53 @@ class FakeVLLMHandler(BaseHTTPRequestHandler):
         FakeVLLMHandler.request_body = json.loads(self.rfile.read(content_length))
         messages = FakeVLLMHandler.request_body.get("messages", [])
         slow_response = any(message.get("content") == "Slow stream check" for message in messages)
+        tool_call_response = any(
+            message.get("content") == "Tool call check" for message in messages
+        )
+        reasoning_response = any(
+            message.get("content") == "Reasoning check" for message in messages
+        )
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
-        for index, (content, finish_reason) in enumerate((("Hello ", None), ("world", "stop"))):
+        if reasoning_response:
+            deltas: list[tuple[dict, str | None]] = [
+                ({"reasoning_content": "Let me "}, None),
+                ({"reasoning_content": "think."}, None),
+                ({"content": "42"}, "stop"),
+            ]
+        elif tool_call_response:
+            deltas = [
+                (
+                    {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "calculator", "arguments": ""},
+                            }
+                        ]
+                    },
+                    None,
+                ),
+                (
+                    {"tool_calls": [{"index": 0, "function": {"arguments": '{"expression"'}}]},
+                    None,
+                ),
+                (
+                    {"tool_calls": [{"index": 0, "function": {"arguments": ': "2+2"}'}}]},
+                    "tool_calls",
+                ),
+            ]
+        else:
+            deltas = [
+                ({"content": "Hello "}, None),
+                ({"content": "world"}, "stop"),
+            ]
+        for index, (delta, finish_reason) in enumerate(deltas):
             payload = {
                 "id": "chatcmpl-test",
                 "object": "chat.completion.chunk",
@@ -58,7 +103,7 @@ class FakeVLLMHandler(BaseHTTPRequestHandler):
                 "choices": [
                     {
                         "index": 0,
-                        "delta": {"content": content},
+                        "delta": delta,
                         "finish_reason": finish_reason,
                     }
                 ],
@@ -97,15 +142,15 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
             model="test-model",
         )
 
-        chunks = [
-            chunk
-            async for chunk in VLLMGateway().stream_reply(
+        texts = [
+            delta.text
+            async for delta in VLLMGateway().stream_reply(
                 profile,
                 [{"role": "user", "content": "Hello"}],
             )
         ]
 
-        self.assertEqual(chunks, ["Hello ", "world"])
+        self.assertEqual(texts, ["Hello ", "world"])
         self.assertIsNotNone(FakeVLLMHandler.request_body)
         assert FakeVLLMHandler.request_body is not None
         self.assertEqual(FakeVLLMHandler.request_body["model"], "test-model")
@@ -116,8 +161,82 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(FakeVLLMHandler.request_body["stream"])
         self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], MAX_TOKENS)
         self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
+        self.assertNotIn("tools", FakeVLLMHandler.request_body)
 
         await asyncio.sleep(0)
+
+    async def test_tools_are_forwarded_when_provided(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test",
+            label="Test model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+        )
+        calculator_tool = {
+            "type": "function",
+            "function": {"name": "calculator", "description": "Evaluate an expression."},
+        }
+
+        _ = [
+            chunk
+            async for chunk in VLLMGateway().stream_reply(
+                profile,
+                [{"role": "user", "content": "What is 2 + 2?"}],
+                tools=[calculator_tool],
+            )
+        ]
+
+        assert FakeVLLMHandler.request_body is not None
+        self.assertEqual(FakeVLLMHandler.request_body["tools"], [calculator_tool])
+
+    async def test_tool_call_deltas_are_reconstructed_not_shown_as_text(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test",
+            label="Test model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+        )
+        tool_calls: list[dict] = []
+
+        response = await _collect_text(
+            VLLMGateway().stream_reply(
+                profile,
+                [{"role": "user", "content": "Tool call check"}],
+                tool_calls=tool_calls,
+            )
+        )
+
+        # No decorative text for tool calls -- only the structured reconstruction.
+        self.assertEqual(response, "")
+        self.assertEqual(
+            tool_calls,
+            [{"id": "call_1", "name": "calculator", "arguments": '{"expression": "2+2"}'}],
+        )
+
+    async def test_reasoning_deltas_are_tagged_as_reasoning(self) -> None:
+        # No decorative wrapping here (no "**Thinking:**" header, no "---"
+        # separator) -- chat.py's format_reasoning_entry() adds that framing
+        # once, for the accordion entry; llm.py just tags raw text.
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test",
+            label="Test model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+        )
+
+        deltas = [
+            delta
+            async for delta in VLLMGateway().stream_reply(
+                profile,
+                [{"role": "user", "content": "Reasoning check"}],
+            )
+        ]
+
+        self.assertEqual("".join(delta.text for delta in deltas), "Let me think.42")
+        self.assertEqual([delta.is_reasoning for delta in deltas], [True, True, False])
 
     async def test_stream_reply_can_be_cancelled_while_waiting_for_a_chunk(self) -> None:
         host, port = self.server.server_address
@@ -132,7 +251,7 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
             [{"role": "user", "content": "Slow stream check"}],
         )
 
-        self.assertEqual(await anext(stream), "Hello ")
+        self.assertEqual((await anext(stream)).text, "Hello ")
         next_chunk = asyncio.create_task(anext(stream))
         await asyncio.sleep(0.05)
         next_chunk.cancel()
@@ -150,15 +269,12 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
             supports_thinking=True,
         )
 
-        response = "".join(
-            [
-                chunk
-                async for chunk in VLLMGateway().stream_reply(
-                    profile,
-                    [{"role": "user", "content": "Think"}],
-                    thinking_enabled=True,
-                )
-            ]
+        response = await _collect_text(
+            VLLMGateway().stream_reply(
+                profile,
+                [{"role": "user", "content": "Think"}],
+                thinking_enabled=True,
+            )
         )
 
         self.assertEqual(response, "Hello world")

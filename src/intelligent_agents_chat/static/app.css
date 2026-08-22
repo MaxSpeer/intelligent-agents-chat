@@ -374,6 +374,42 @@ body {
     background: var(--surface-solid) !important;
 }
 
+/* Collapsible reasoning/tool-call/tool-result trace, shown between a user
+   message and the assistant's final answer -- built live while streaming
+   and rebuilt identically when a finished conversation is replayed. */
+/* Nested inside the same chat bubble as the final answer -- a compact,
+   collapsed-by-default section, not a separate card, so it reads as part of
+   one message rather than a second bubble stacked on top. */
+.tool-trace {
+    width: 100%;
+    margin-bottom: .5rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.tool-trace .q-item {
+    min-height: 1.75rem;
+    padding: .25rem 0;
+    color: var(--muted);
+    font-size: .85rem;
+}
+
+.tool-trace .q-item__section--avatar {
+    color: var(--primary);
+    min-width: 1.5rem;
+}
+
+.tool-trace .q-expansion-item__content {
+    padding: 0 0 .5rem;
+}
+
+.tool-trace .chat-markdown {
+    margin-bottom: .5rem;
+}
+
+.tool-trace .chat-markdown:last-child {
+    margin-bottom: 0;
+}
+
 .empty-state {
     width: min(100%, 36rem);
     margin: auto;
