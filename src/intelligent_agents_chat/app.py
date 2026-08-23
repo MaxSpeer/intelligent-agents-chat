@@ -1769,7 +1769,7 @@ def index() -> None:
                                 duration_ms=trace.duration_ms,
                             ),
                         )
-                    rebuild_conversation_memory(conversation.id)
+                rebuild_conversation_memory(conversation.id)
                 if stopped:
                     ui.notify(
                         "Generation stopped; the partial response was saved."
