@@ -35,6 +35,8 @@ readonly SERVER_PORT="8002"
 readonly MAX_MODEL_LEN="32768"
 readonly GPU_MEMORY_UTILIZATION="0.90"
 readonly TENSOR_PARALLEL_SIZE="1"
+readonly REASONING_PARSER="qwen3"
+readonly TOOL_CALL_PARSER="qwen3_coder"
 
 # Deliberately empty and not meant to be filled in here: Qwen3.5-9B's hybrid
 # GDN attention isn't actually usable with LoRA in vLLM (confirmed on v0.23.0
@@ -157,6 +159,7 @@ if ((${#LORA_MODULES[@]} > 0)); then
 else
     log "LoRA modules: none"
 fi
+log "Tool calling: enabled (parser: ${TOOL_CALL_PARSER})"
 
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
 
@@ -209,6 +212,9 @@ server_args=(
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
     --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
     --generation-config vllm
+    --reasoning-parser "$REASONING_PARSER"
+    --enable-auto-tool-choice
+    --tool-call-parser "$TOOL_CALL_PARSER"
 )
 
 if ((${#LORA_MODULES[@]} > 0)); then

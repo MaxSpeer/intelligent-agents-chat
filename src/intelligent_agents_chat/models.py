@@ -17,6 +17,7 @@ class ModelProfile:
     supports_thinking: bool = False
     reasoning_effort: str | None = None
     context_window_tokens: int = 32_768
+    supports_tools: bool = False
 
 
 def _port(env_var: str, default: int) -> int:
@@ -39,7 +40,7 @@ _QWEN35_9B_BASE_URL = f"http://127.0.0.1:{QWEN35_9B_PORT}/v1"
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1").rstrip("/")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:2b")
 
-DEFAULT_PROFILE_KEY = "qwen3-8b"
+DEFAULT_PROFILE_KEY = "qwen3.5-9b"
 
 # qwen3-8b and conspiracy are served by the same vLLM process
 # (cluster/run-vllm-qwen3-8b.sbatch's LORA_MODULES); qwen3.5-9b runs on a
@@ -51,6 +52,7 @@ MODEL_PROFILES: tuple[ModelProfile, ...] = (
         base_url=_QWEN35_9B_BASE_URL,
         model="qwen3.5-9b",
         supports_thinking=True,
+        supports_tools=True,
     ),
     ModelProfile(
         key="qwen3-8b",

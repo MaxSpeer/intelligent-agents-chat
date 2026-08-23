@@ -310,6 +310,92 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertEqual(conversations[0].id, older.id)
         self.assertEqual(conversations[1].id, newer.id)
 
+    def test_assistant_message_can_carry_tool_calls_with_empty_content(self) -> None:
+        conversation = self.repository.create_conversation("base")
+        tool_calls = [{"id": "call_1", "name": "calculator", "arguments": '{"expression": "1+1"}'}]
+
+        message = self.repository.add_message(
+            conversation.id,
+            "assistant",
+            "",
+            model_profile="base",
+            tool_calls=tool_calls,
+        )
+
+        reloaded = self.repository.get_message(message.id)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+        self.assertEqual(reloaded.content, "")
+        self.assertEqual(reloaded.tool_calls, tuple(tool_calls))
+
+    def test_tool_message_stores_its_tool_call_id(self) -> None:
+        conversation = self.repository.create_conversation("base")
+
+        message = self.repository.add_message(
+            conversation.id,
+            "tool",
+            "42",
+            tool_call_id="call_1",
+        )
+
+        reloaded = self.repository.get_message(message.id)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+        self.assertEqual(reloaded.role, "tool")
+        self.assertEqual(reloaded.tool_call_id, "call_1")
+        self.assertIsNone(reloaded.tool_calls)
+
+    def test_empty_content_without_tool_calls_is_still_rejected(self) -> None:
+        conversation = self.repository.create_conversation("base")
+
+        with self.assertRaisesRegex(ValueError, "cannot be empty"):
+            self.repository.add_message(conversation.id, "assistant", "   ")
+
+    def test_messages_without_tool_data_round_trip_as_none(self) -> None:
+        conversation = self.repository.create_conversation("base")
+        message = self.repository.add_message(conversation.id, "user", "Hello")
+
+        reloaded = self.repository.get_message(message.id)
+
+        assert reloaded is not None
+        self.assertIsNone(reloaded.tool_calls)
+        self.assertIsNone(reloaded.tool_call_id)
+        self.assertIsNone(reloaded.reasoning)
+
+    def test_assistant_message_can_carry_reasoning_alongside_content(self) -> None:
+        conversation = self.repository.create_conversation("base")
+
+        message = self.repository.add_message(
+            conversation.id,
+            "assistant",
+            "The answer is 2.",
+            model_profile="base",
+            reasoning="1 + 1 is a basic addition, so the answer is 2.",
+        )
+
+        reloaded = self.repository.get_message(message.id)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+        self.assertEqual(reloaded.content, "The answer is 2.")
+        self.assertEqual(reloaded.reasoning, "1 + 1 is a basic addition, so the answer is 2.")
+
+    def test_reasoning_alone_is_enough_to_satisfy_the_non_empty_check(self) -> None:
+        conversation = self.repository.create_conversation("base")
+
+        message = self.repository.add_message(
+            conversation.id,
+            "assistant",
+            "",
+            model_profile="base",
+            reasoning="Thinking about tool calls, not a final answer yet.",
+            tool_calls=[{"id": "call_1", "name": "calculator", "arguments": "{}"}],
+        )
+
+        reloaded = self.repository.get_message(message.id)
+        assert reloaded is not None
+        self.assertEqual(reloaded.content, "")
+        self.assertEqual(reloaded.reasoning, "Thinking about tool calls, not a final answer yet.")
+
 
 if __name__ == "__main__":
     unittest.main()
