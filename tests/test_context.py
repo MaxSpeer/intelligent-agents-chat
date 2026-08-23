@@ -103,6 +103,59 @@ class ContextAssemblerTests(unittest.TestCase):
         self.assertEqual(plan.omitted_history_messages, 2)
         self.assertLessEqual(plan.estimated_input_tokens, plan.input_budget_tokens)
 
+    def test_reports_budget_categories_and_trace_id(self) -> None:
+        plan = ContextAssembler("System", memory_budget_tokens=500).assemble(
+            [
+                {"role": "user", "content": "Earlier question"},
+                {"role": "assistant", "content": "Earlier answer"},
+                {"role": "user", "content": "Latest question"},
+            ],
+            [candidate()],
+            context_window_tokens=2_000,
+            output_reserve_tokens=200,
+            trace_id="trace-123",
+        )
+
+        self.assertEqual(plan.trace_id, "trace-123")
+        self.assertEqual(plan.context_window_tokens, 2_000)
+        self.assertEqual(plan.output_reserve_tokens, 200)
+        self.assertEqual(plan.remaining_input_tokens, 1_800 - plan.estimated_input_tokens)
+        self.assertEqual(
+            plan.estimated_input_tokens,
+            plan.system_tokens
+            + plan.current_user_tokens
+            + plan.history_tokens
+            + plan.tool_tokens
+            + plan.retrieval_tokens,
+        )
+
+    def test_tool_call_and_results_are_never_split_by_the_budget(self) -> None:
+        plan = ContextAssembler("", memory_budget_tokens=0, recent_message_count=3).assemble(
+            [
+                {"role": "user", "content": "Old question"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {"name": "calculator", "arguments": "x" * 200},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call-1", "content": "42"},
+                {"role": "user", "content": "Latest question"},
+            ],
+            [],
+            context_window_tokens=80,
+            output_reserve_tokens=20,
+        )
+
+        self.assertEqual(plan.messages, ({"role": "user", "content": "Latest question"},))
+        self.assertEqual(plan.tool_tokens, 0)
+        self.assertEqual(plan.omitted_history_messages, 3)
+
     def test_raises_when_mandatory_input_cannot_fit(self) -> None:
         with self.assertRaisesRegex(ContextOverflowError, "latest user message"):
             ContextAssembler("System").assemble(

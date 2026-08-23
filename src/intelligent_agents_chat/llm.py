@@ -151,7 +151,7 @@ class VLLMGateway:
     async def stream_reply(
         self,
         profile: ModelProfile,
-        messages: Sequence[dict[str, str]],
+        messages: Sequence[dict[str, object]],
         *,
         request_id: str | None = None,
         thinking_enabled: bool = False,

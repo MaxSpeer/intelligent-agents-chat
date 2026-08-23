@@ -32,15 +32,22 @@ from intelligent_agents_chat.chat import (
     repository,
     stream_reply,
 )
-from intelligent_agents_chat.context import ContextOverflowError, ContextPlan
+from intelligent_agents_chat.context import (
+    TOKEN_ESTIMATOR_LABEL,
+    ContextOverflowError,
+    ContextPlan,
+)
 from intelligent_agents_chat.database import (
     AdaptiveRAGRoundRecord,
     AdaptiveRAGRunInput,
+    ContextExclusion,
+    ContextRunInput,
     ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
     DEFAULT_PROJECT_ID,
     Conversation,
     Message,
+    MessageContextRun,
     Project,
 )
 from intelligent_agents_chat.llm import LLMError, MAX_TOKENS, THINKING_MAX_TOKENS
@@ -104,6 +111,33 @@ def _conversation_title(message: str, limit: int = 44) -> str:
 
 def _display_time(value: datetime) -> str:
     return value.astimezone().strftime("%H:%M")
+
+
+def _compact_tokens(value: int) -> str:
+    if value < 10_000:
+        return f"{value:,}"
+    return f"{value / 1_000:.1f}k"
+
+
+def _context_usage_percent(run: MessageContextRun) -> float:
+    if run.input_budget_tokens <= 0:
+        return 0.0
+    return 100 * run.estimated_input_tokens / run.input_budget_tokens
+
+
+def _context_summary(run: MessageContextRun) -> str:
+    return (
+        f"{_compact_tokens(run.estimated_input_tokens)} / "
+        f"{_compact_tokens(run.input_budget_tokens)} input tokens "
+        f"({_context_usage_percent(run):.1f}%)"
+    )
+
+
+def _context_exclusion_reason(reason: str) -> str:
+    labels = {
+        "retrieval_budget_exceeded": "retrieval budget exceeded",
+    }
+    return labels.get(reason, reason.replace("_", " "))
 
 
 def _profile_label(profile_key: str | None) -> str:
@@ -312,6 +346,12 @@ def index() -> None:
             value=conversation.model_profile,
         )
         render_model_status(conversation.model_profile)
+        latest_context_run = repository.get_latest_context_run(conversation.id)
+        context_meter_label.set_text(
+            _context_summary(latest_context_run)
+            if latest_context_run is not None
+            else "Context metrics after first response"
+        )
         thinking_toggle.set_value(conversation.thinking_enabled)
         memory_toggle.set_value(conversation.memory_enabled)
         rag_toggle.set_value(conversation.rag_enabled)
@@ -326,6 +366,156 @@ def index() -> None:
             memory_toggle.enable()
             rag_toggle.enable()
 
+    def render_context_inspector(message_id: int) -> None:
+        run = repository.get_message_context_run(message_id)
+        if run is None:
+            return
+        usage = min(1.0, run.estimated_input_tokens / max(1, run.input_budget_tokens))
+        with ui.expansion(
+            f"Context · {_context_summary(run)}",
+            icon="data_usage",
+        ).classes("context-inspector"):
+            with ui.row().classes("context-usage-row"):
+                ui.label(f"{_context_usage_percent(run):.1f}% input budget used").classes(
+                    "context-usage-label"
+                )
+                ui.label(
+                    f"{_compact_tokens(run.remaining_input_tokens)} tokens remaining"
+                ).classes("context-remaining-label")
+            ui.linear_progress(value=usage).props(
+                "rounded color=deep-purple track-color=deep-purple-1 size=8px"
+            ).classes("context-progress")
+
+            with ui.element("div").classes("context-metric-grid"):
+                for label, value in (
+                    ("Model window", run.context_window_tokens),
+                    ("Input budget", run.input_budget_tokens),
+                    ("Output reserve", run.output_reserve_tokens),
+                    ("Estimated input", run.estimated_input_tokens),
+                ):
+                    with ui.column().classes("context-metric"):
+                        ui.label(label).classes("context-metric-label")
+                        ui.label(f"{value:,}").classes("context-metric-value")
+
+            ui.label("Estimated input by category").classes("context-section-title")
+            with ui.element("div").classes("context-category-grid"):
+                for label, value, icon in (
+                    ("System", run.system_tokens, "policy"),
+                    ("Current prompt", run.current_user_tokens, "person"),
+                    ("Chat history", run.history_tokens, "forum"),
+                    ("Tool trace", run.tool_tokens, "build"),
+                    ("Retrieved context", run.retrieval_tokens, "manage_search"),
+                ):
+                    with ui.row().classes("context-category"):
+                        ui.icon(icon, size="xs")
+                        with ui.column().classes("gap-0"):
+                            ui.label(label).classes("context-category-label")
+                            ui.label(f"{value:,} tokens").classes("context-category-value")
+
+            with ui.row().classes("context-selection-row"):
+                ui.label(
+                    f"{run.selected_history_messages} messages selected"
+                ).classes("context-selection-chip")
+                ui.label(
+                    f"{run.omitted_history_messages} messages omitted"
+                ).classes("context-selection-chip")
+                ui.label(
+                    f"{run.included_source_count} sources included"
+                ).classes("context-selection-chip")
+                ui.label(
+                    f"{len(run.excluded_sources)} sources excluded"
+                ).classes("context-selection-chip")
+
+            if run.excluded_sources:
+                ui.label("Excluded retrieval candidates").classes("context-section-title")
+                for source in run.excluded_sources:
+                    with ui.row().classes("context-exclusion-row"):
+                        ui.icon("block", size="xs")
+                        with ui.column().classes("gap-0 min-w-0"):
+                            ui.label(source.source_title).classes("context-exclusion-title")
+                            ui.label(
+                                f"{source.source_kind} · {source.source_locator} · "
+                                f"{source.token_estimate:,} tokens · "
+                                f"{_context_exclusion_reason(source.reason)}"
+                            ).classes("context-exclusion-detail")
+
+            ui.label(run.estimator).classes("context-estimator")
+            ui.label(f"Trace ID: {run.trace_id}").classes("context-trace-id")
+
+    def render_context_sources(message_id: int) -> None:
+        sources = repository.list_message_context_sources(message_id)
+        if not sources:
+            return
+        source_kinds = {source.source_kind for source in sources}
+        if source_kinds == {"project_memory"}:
+            source_label = "Project memory"
+            source_icon = "history"
+        elif source_kinds == {"project_document"}:
+            source_label = "Documents"
+            source_icon = "description"
+        else:
+            source_label = "Sources"
+            source_icon = "source"
+        with ui.expansion(
+            f"{source_label} · {len(sources)} source" + ("s" if len(sources) != 1 else ""),
+            icon=source_icon,
+        ).classes("memory-sources"):
+            for source in sources:
+                with ui.row().classes("memory-source-row"):
+                    ui.icon(
+                        "description"
+                        if source.source_kind == "project_document"
+                        else "chat_bubble_outline",
+                        size="xs",
+                    )
+                    with ui.column().classes("gap-0 min-w-0"):
+                        ui.label(source.source_title).classes("memory-source-title")
+                        ui.label(
+                            f"{source.source_locator} · rank {source.rank} · "
+                            f"{source.token_estimate:,} tokens"
+                        ).classes("memory-source-locator")
+                        if source.source_excerpt:
+                            ui.label(source.source_excerpt).classes("memory-source-excerpt")
+
+    def render_adaptive_rag_trace(message_id: int) -> None:
+        adaptive_run = repository.get_message_adaptive_rag_run(message_id)
+        if adaptive_run is None:
+            return
+        pass_label = (
+            f"{len(adaptive_run.rounds)} retrieval pass"
+            + ("es" if len(adaptive_run.rounds) != 1 else "")
+            if adaptive_run.retrieval_needed
+            else "retrieval skipped"
+        )
+        with ui.expansion(
+            f"Adaptive RAG · {pass_label}",
+            icon="account_tree",
+        ).classes("memory-sources adaptive-rag-trace"):
+            ui.label(adaptive_run.judge_reason).classes("adaptive-rag-reason")
+            for index, retrieval_round in enumerate(adaptive_run.rounds, start=1):
+                status = (
+                    "evidence sufficient"
+                    if retrieval_round.evidence_sufficient
+                    else "more evidence requested"
+                )
+                with ui.column().classes("adaptive-rag-round"):
+                    ui.label(
+                        f"Pass {index} · {retrieval_round.new_result_count} new sources · {status}"
+                    ).classes("adaptive-rag-round-title")
+                    ui.label(retrieval_round.query).classes("adaptive-rag-query")
+                    ui.label(retrieval_round.assessment_reason).classes("adaptive-rag-reason")
+                    if retrieval_round.missing_information:
+                        ui.label(
+                            "Missing: " + retrieval_round.missing_information
+                        ).classes("adaptive-rag-missing")
+            if adaptive_run.summary:
+                ui.label("Evidence synthesis").classes("adaptive-rag-round-title")
+                ui.label(adaptive_run.summary).classes("adaptive-rag-summary")
+            if adaptive_run.fallback_reasons:
+                ui.label(
+                    "Fallbacks: " + ", ".join(adaptive_run.fallback_reasons)
+                ).classes("adaptive-rag-fallback")
+
     def render_assistant_turn(turn_messages: list[Message]) -> None:
         """Render one user turn's response as a single chat bubble: a
         collapsible trace (reasoning, tool calls, tool results, in order) followed
@@ -337,9 +527,11 @@ def index() -> None:
         call_names: dict[str, str] = {}
         final_content: str | None = None
         model_profile: str | None = None
+        context_message_id: int | None = None
         for message in turn_messages:
             if message.role == "assistant":
                 model_profile = message.model_profile
+                context_message_id = message.id
                 if message.reasoning:
                     entries.append(format_reasoning_entry(message.reasoning))
                 if message.tool_calls:
@@ -372,6 +564,10 @@ def index() -> None:
                             _chat_markdown(entry)
                 if final_content:
                     _chat_markdown(final_content)
+                if context_message_id is not None:
+                    render_context_inspector(context_message_id)
+                    render_context_sources(context_message_id)
+                    render_adaptive_rag_trace(context_message_id)
 
     def render_messages() -> None:
         messages_container.clear()
@@ -1496,7 +1692,39 @@ def index() -> None:
             try:
                 flush_pending()
                 if context_plan is not None and context_message is not None:
-                    if context_plan is not None and context_plan.included_sources:
+                    repository.add_message_context_run(
+                        context_message.id,
+                        ContextRunInput(
+                            trace_id=context_plan.trace_id or generation_id,
+                            model_profile=profile.key,
+                            estimator=TOKEN_ESTIMATOR_LABEL,
+                            context_window_tokens=context_plan.context_window_tokens,
+                            output_reserve_tokens=context_plan.output_reserve_tokens,
+                            input_budget_tokens=context_plan.input_budget_tokens,
+                            estimated_input_tokens=context_plan.estimated_input_tokens,
+                            remaining_input_tokens=context_plan.remaining_input_tokens,
+                            system_tokens=context_plan.system_tokens,
+                            current_user_tokens=context_plan.current_user_tokens,
+                            history_tokens=context_plan.history_tokens,
+                            tool_tokens=context_plan.tool_tokens,
+                            retrieval_tokens=context_plan.retrieval_tokens,
+                            selected_history_messages=(context_plan.selected_history_messages),
+                            omitted_history_messages=context_plan.omitted_history_messages,
+                            included_source_count=len(context_plan.included_sources),
+                            excluded_sources=tuple(
+                                ContextExclusion(
+                                    source_kind=source.candidate.source_kind,
+                                    source_id=source.candidate.source_id,
+                                    source_title=source.candidate.title,
+                                    source_locator=source.candidate.locator,
+                                    token_estimate=source.token_estimate,
+                                    reason=source.reason,
+                                )
+                                for source in context_plan.excluded_sources
+                            ),
+                        ),
+                    )
+                    if context_plan.included_sources:
                         repository.add_message_context_sources(
                             context_message.id,
                             [
@@ -1517,7 +1745,7 @@ def index() -> None:
                                 for source in context_plan.included_sources
                             ],
                         )
-                    if context_plan is not None and context_plan.adaptive_rag_trace is not None:
+                    if context_plan.adaptive_rag_trace is not None:
                         trace = context_plan.adaptive_rag_trace
                         repository.add_message_adaptive_rag_run(
                             context_message.id,
@@ -1650,7 +1878,10 @@ def index() -> None:
                 with ui.column().classes("min-w-0 gap-0"):
                     ui.label("Conversation").classes("eyebrow")
                     title_label = ui.label().classes("chat-title")
-                with ui.row().classes("items-center gap-4 no-wrap"):
+                    with ui.row().classes("header-context-meter"):
+                        ui.icon("data_usage", size="xs")
+                        context_meter_label = ui.label().classes("header-context-label")
+                with ui.row().classes("items-center gap-4 header-controls"):
                     model_select = (
                         ui.select(
                             profile_options(),
@@ -1661,7 +1892,7 @@ def index() -> None:
                         .props("outlined dense options-dense")
                         .classes("model-select")
                     )
-                    with ui.row().classes("items-center gap-2 no-wrap"):
+                    with ui.row().classes("items-center gap-2 no-wrap model-status"):
                         model_status_dot = ui.element("span").classes("model-status-dot")
                         model_status_label = ui.label().classes(
                             "status-copy text-xs text-slate-400"

@@ -23,7 +23,7 @@ from intelligent_agents_chat.adaptive_rag import (
     AdaptiveRAGTrace,
     OpenAIAdaptiveRAGReasoner,
 )
-from intelligent_agents_chat.context import ContextAssembler, ContextPlan
+from intelligent_agents_chat.context import ContextAssembler, ContextPlan, MessagePayload
 from intelligent_agents_chat.database import ChatRepository, Conversation, Message
 from intelligent_agents_chat.documents import (
     DEFAULT_DOCUMENT_ROOT,
@@ -236,10 +236,14 @@ def format_tool_result_entry(name: str, result: str) -> str:
     return f"**{name}** → {result}"
 
 
-def completion_messages(messages: list[Message]) -> list[dict[str, str]]:
+def completion_messages(
+    messages: list[Message],
+    *,
+    include_system: bool = True,
+) -> list[MessagePayload]:
     """Build the OpenAI-style message list for a completion request."""
-    result: list[dict[str, str]] = []
-    if SYSTEM_PROMPT:
+    result: list[MessagePayload] = []
+    if include_system and SYSTEM_PROMPT:
         result.append({"role": "system", "content": SYSTEM_PROMPT})
     for message in messages:
         if message.role == "assistant" and message.tool_calls:
@@ -448,16 +452,18 @@ def prepare_context(
     candidates: list[ContextCandidate],
     *,
     thinking_enabled: bool,
+    request_id: str | None = None,
     retrieval_summary: str | None = None,
     adaptive_rag_trace: AdaptiveRAGTrace | None = None,
 ) -> ContextPlan:
     """Create a token-aware request while preserving auditable retrieval decisions."""
     output_reserve_tokens = THINKING_MAX_TOKENS if thinking_enabled else MAX_TOKENS
     plan = context_assembler.assemble(
-        [{"role": message.role, "content": message.content} for message in messages],
+        completion_messages(messages, include_system=False),
         candidates,
         context_window_tokens=profile.context_window_tokens,
         output_reserve_tokens=output_reserve_tokens,
+        trace_id=request_id,
         retrieval_summary=retrieval_summary,
         adaptive_rag_trace=adaptive_rag_trace,
     )
@@ -470,6 +476,13 @@ def prepare_context(
         output_reserve_tokens=output_reserve_tokens,
         input_budget_tokens=plan.input_budget_tokens,
         estimated_input_tokens=plan.estimated_input_tokens,
+        remaining_input_tokens=plan.remaining_input_tokens,
+        system_tokens=plan.system_tokens,
+        current_user_tokens=plan.current_user_tokens,
+        history_tokens=plan.history_tokens,
+        tool_tokens=plan.tool_tokens,
+        retrieval_tokens=plan.retrieval_tokens,
+        selected_history_messages=plan.selected_history_messages,
         history_message_count=len(messages),
         omitted_history_messages=plan.omitted_history_messages,
         retrieval_candidate_count=len(candidates),
@@ -527,6 +540,7 @@ async def prepare_conversation_context(
         messages,
         candidates,
         thinking_enabled=conversation.thinking_enabled,
+        request_id=request_id,
         retrieval_summary=(adaptive_result.summary if adaptive_result is not None else None),
         adaptive_rag_trace=(adaptive_result.trace if adaptive_result is not None else None),
     )

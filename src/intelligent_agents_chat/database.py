@@ -97,6 +97,66 @@ class MessageContextSource:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextExclusion:
+    """One retrieval candidate excluded from a model request and why."""
+
+    source_kind: str
+    source_id: str
+    source_title: str
+    source_locator: str
+    token_estimate: int
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class ContextRunInput:
+    """Technical context-budget trace to attach to an assistant response."""
+
+    trace_id: str
+    model_profile: str
+    estimator: str
+    context_window_tokens: int
+    output_reserve_tokens: int
+    input_budget_tokens: int
+    estimated_input_tokens: int
+    remaining_input_tokens: int
+    system_tokens: int
+    current_user_tokens: int
+    history_tokens: int
+    tool_tokens: int
+    retrieval_tokens: int
+    selected_history_messages: int
+    omitted_history_messages: int
+    included_source_count: int
+    excluded_sources: tuple[ContextExclusion, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MessageContextRun:
+    """Persisted technical context trace for one assistant response."""
+
+    assistant_message_id: int
+    trace_id: str
+    model_profile: str
+    estimator: str
+    context_window_tokens: int
+    output_reserve_tokens: int
+    input_budget_tokens: int
+    estimated_input_tokens: int
+    remaining_input_tokens: int
+    system_tokens: int
+    current_user_tokens: int
+    history_tokens: int
+    tool_tokens: int
+    retrieval_tokens: int
+    selected_history_messages: int
+    omitted_history_messages: int
+    included_source_count: int
+    excluded_sources: tuple[ContextExclusion, ...]
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class AdaptiveRAGRoundRecord:
     """Persistable audit record for one retrieval and evidence-assessment pass."""
 
@@ -196,6 +256,7 @@ class ChatRepository:
                     ON messages(conversation_id, id);
                 """
             )
+            messages_schema_migrated = _migrate_messages_schema(connection)
             if not _column_exists(connection, "conversations", "memory_enabled"):
                 connection.execute(
                     """
@@ -286,6 +347,29 @@ class ChatRepository:
                 CREATE INDEX IF NOT EXISTS message_context_sources_message_idx
                     ON message_context_sources(assistant_message_id, rank);
 
+                CREATE TABLE IF NOT EXISTS message_context_runs (
+                    assistant_message_id INTEGER PRIMARY KEY
+                        REFERENCES messages(id) ON DELETE CASCADE,
+                    trace_id TEXT NOT NULL,
+                    model_profile TEXT NOT NULL,
+                    estimator TEXT NOT NULL,
+                    context_window_tokens INTEGER NOT NULL,
+                    output_reserve_tokens INTEGER NOT NULL,
+                    input_budget_tokens INTEGER NOT NULL,
+                    estimated_input_tokens INTEGER NOT NULL,
+                    remaining_input_tokens INTEGER NOT NULL,
+                    system_tokens INTEGER NOT NULL,
+                    current_user_tokens INTEGER NOT NULL,
+                    history_tokens INTEGER NOT NULL,
+                    tool_tokens INTEGER NOT NULL,
+                    retrieval_tokens INTEGER NOT NULL,
+                    selected_history_messages INTEGER NOT NULL,
+                    omitted_history_messages INTEGER NOT NULL,
+                    included_source_count INTEGER NOT NULL,
+                    excluded_sources_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS message_adaptive_rag_runs (
                     assistant_message_id INTEGER PRIMARY KEY
                         REFERENCES messages(id) ON DELETE CASCADE,
@@ -308,7 +392,7 @@ class ChatRepository:
                     ADD COLUMN source_excerpt TEXT NOT NULL DEFAULT ''
                     """
                 )
-            connection.execute("PRAGMA user_version = 5")
+            connection.execute("PRAGMA user_version = 6")
             now = _timestamp()
             connection.execute(
                 """
@@ -324,7 +408,8 @@ class ChatRepository:
             database_path=str(self.database_path),
             sqlite_version=sqlite3.sqlite_version,
             journal_mode=journal_mode,
-            schema_version=5,
+            schema_version=6,
+            messages_schema_migrated=messages_schema_migrated,
         )
 
     def get_project(self, project_id: str = DEFAULT_PROJECT_ID) -> Project | None:
@@ -768,6 +853,109 @@ class ChatRepository:
             ).fetchall()
         return [_message_context_source_from_row(row) for row in rows]
 
+    def add_message_context_run(
+        self,
+        assistant_message_id: int,
+        run: ContextRunInput,
+    ) -> None:
+        excluded_sources_json = json.dumps(
+            [
+                {
+                    "source_kind": source.source_kind,
+                    "source_id": source.source_id,
+                    "source_title": source.source_title,
+                    "source_locator": source.source_locator,
+                    "token_estimate": source.token_estimate,
+                    "reason": source.reason,
+                }
+                for source in run.excluded_sources
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        created_at = _timestamp()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO message_context_runs (
+                    assistant_message_id, trace_id, model_profile, estimator,
+                    context_window_tokens, output_reserve_tokens, input_budget_tokens,
+                    estimated_input_tokens, remaining_input_tokens, system_tokens,
+                    current_user_tokens, history_tokens, tool_tokens, retrieval_tokens,
+                    selected_history_messages, omitted_history_messages, included_source_count,
+                    excluded_sources_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    assistant_message_id,
+                    run.trace_id,
+                    run.model_profile,
+                    run.estimator,
+                    run.context_window_tokens,
+                    run.output_reserve_tokens,
+                    run.input_budget_tokens,
+                    run.estimated_input_tokens,
+                    run.remaining_input_tokens,
+                    run.system_tokens,
+                    run.current_user_tokens,
+                    run.history_tokens,
+                    run.tool_tokens,
+                    run.retrieval_tokens,
+                    run.selected_history_messages,
+                    run.omitted_history_messages,
+                    run.included_source_count,
+                    excluded_sources_json,
+                    created_at,
+                ),
+            )
+        log_event(
+            logger,
+            logging.INFO,
+            "database.message_context_run.created",
+            assistant_message_id=assistant_message_id,
+            trace_id=run.trace_id,
+            model_profile=run.model_profile,
+            estimated_input_tokens=run.estimated_input_tokens,
+            input_budget_tokens=run.input_budget_tokens,
+            output_reserve_tokens=run.output_reserve_tokens,
+            selected_history_messages=run.selected_history_messages,
+            omitted_history_messages=run.omitted_history_messages,
+            included_source_count=run.included_source_count,
+            excluded_source_count=len(run.excluded_sources),
+        )
+
+    def get_message_context_run(self, assistant_message_id: int) -> MessageContextRun | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT assistant_message_id, trace_id, model_profile, estimator,
+                       context_window_tokens, output_reserve_tokens, input_budget_tokens,
+                       estimated_input_tokens, remaining_input_tokens, system_tokens,
+                       current_user_tokens, history_tokens, tool_tokens, retrieval_tokens,
+                       selected_history_messages, omitted_history_messages,
+                       included_source_count, excluded_sources_json, created_at
+                FROM message_context_runs
+                WHERE assistant_message_id = ?
+                """,
+                (assistant_message_id,),
+            ).fetchone()
+        return _message_context_run_from_row(row) if row else None
+
+    def get_latest_context_run(self, conversation_id: str) -> MessageContextRun | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT run.*
+                FROM message_context_runs AS run
+                JOIN messages AS message ON message.id = run.assistant_message_id
+                WHERE message.conversation_id = ?
+                ORDER BY message.id DESC
+                LIMIT 1
+                """,
+                (conversation_id,),
+            ).fetchone()
+        return _message_context_run_from_row(row) if row else None
+
     def add_message_adaptive_rag_run(
         self,
         assistant_message_id: int,
@@ -860,6 +1048,88 @@ def _column_exists(connection: sqlite3.Connection, table: str, column: str) -> b
     return any(row[1] == column for row in connection.execute(f"PRAGMA table_info({table})"))
 
 
+def _migrate_messages_schema(connection: sqlite3.Connection) -> bool:
+    """Upgrade pre-tool-calling databases without losing messages or provenance."""
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(messages)")}
+    table_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'"
+    ).fetchone()
+    table_sql = str(table_row[0]) if table_row and table_row[0] else ""
+    needs_rebuild = not {"tool_calls", "tool_call_id"} <= columns or "'tool'" not in table_sql
+
+    if not needs_rebuild:
+        if "reasoning" not in columns:
+            connection.execute("ALTER TABLE messages ADD COLUMN reasoning TEXT")
+            return True
+        return False
+
+    copy_columns = [
+        column
+        for column in (
+            "id",
+            "conversation_id",
+            "role",
+            "content",
+            "model_profile",
+            "tool_calls",
+            "tool_call_id",
+            "reasoning",
+            "created_at",
+        )
+        if column in columns
+    ]
+    copy_column_sql = ", ".join(copy_columns)
+    foreign_keys_enabled = bool(connection.execute("PRAGMA foreign_keys").fetchone()[0])
+    connection.commit()
+    if foreign_keys_enabled:
+        connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.executescript(
+            f"""
+            BEGIN IMMEDIATE;
+
+            DROP TABLE IF EXISTS messages_migrated;
+
+            CREATE TABLE messages_migrated (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL
+                    REFERENCES conversations(id) ON DELETE CASCADE,
+                role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
+                content TEXT NOT NULL,
+                model_profile TEXT,
+                tool_calls TEXT,
+                tool_call_id TEXT,
+                reasoning TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            INSERT INTO messages_migrated ({copy_column_sql})
+            SELECT {copy_column_sql} FROM messages;
+
+            DROP TABLE messages;
+            ALTER TABLE messages_migrated RENAME TO messages;
+
+            CREATE INDEX messages_conversation_id_idx
+                ON messages(conversation_id, id);
+
+            COMMIT;
+            """
+        )
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        if foreign_keys_enabled:
+            connection.execute("PRAGMA foreign_keys = ON")
+
+    violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise sqlite3.IntegrityError(
+            f"Message schema migration left {len(violations)} foreign-key violations"
+        )
+    return True
+
+
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
@@ -920,6 +1190,41 @@ def _message_context_source_from_row(row: sqlite3.Row) -> MessageContextSource:
         rank=row["rank"],
         score=row["score"],
         token_estimate=row["token_estimate"],
+    )
+
+
+def _message_context_run_from_row(row: sqlite3.Row) -> MessageContextRun:
+    excluded_source_payloads = json.loads(row["excluded_sources_json"])
+    return MessageContextRun(
+        assistant_message_id=row["assistant_message_id"],
+        trace_id=row["trace_id"],
+        model_profile=row["model_profile"],
+        estimator=row["estimator"],
+        context_window_tokens=row["context_window_tokens"],
+        output_reserve_tokens=row["output_reserve_tokens"],
+        input_budget_tokens=row["input_budget_tokens"],
+        estimated_input_tokens=row["estimated_input_tokens"],
+        remaining_input_tokens=row["remaining_input_tokens"],
+        system_tokens=row["system_tokens"],
+        current_user_tokens=row["current_user_tokens"],
+        history_tokens=row["history_tokens"],
+        tool_tokens=row["tool_tokens"],
+        retrieval_tokens=row["retrieval_tokens"],
+        selected_history_messages=row["selected_history_messages"],
+        omitted_history_messages=row["omitted_history_messages"],
+        included_source_count=row["included_source_count"],
+        excluded_sources=tuple(
+            ContextExclusion(
+                source_kind=str(item["source_kind"]),
+                source_id=str(item["source_id"]),
+                source_title=str(item["source_title"]),
+                source_locator=str(item["source_locator"]),
+                token_estimate=int(item["token_estimate"]),
+                reason=str(item["reason"]),
+            )
+            for item in excluded_source_payloads
+        ),
+        created_at=_parse_datetime(row["created_at"]),
     )
 
 

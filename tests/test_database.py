@@ -8,6 +8,8 @@ import unittest
 from intelligent_agents_chat.database import (
     AdaptiveRAGRoundRecord,
     AdaptiveRAGRunInput,
+    ContextExclusion,
+    ContextRunInput,
     ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
     DEFAULT_DATABASE_PATH,
@@ -241,6 +243,64 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertTrue(self.repository.delete_conversation(conversation.id))
         self.assertIsNone(self.repository.get_message_adaptive_rag_run(assistant.id))
 
+    def test_context_run_is_persisted_and_cascades_with_message(self) -> None:
+        conversation = self.repository.create_conversation("base")
+        assistant = self.repository.add_message(
+            conversation.id,
+            "assistant",
+            "A budgeted answer.",
+            model_profile="base",
+        )
+        self.repository.add_message_context_run(
+            assistant.id,
+            ContextRunInput(
+                trace_id="trace-123",
+                model_profile="base",
+                estimator="Conservative estimate (3 characters per token)",
+                context_window_tokens=32_768,
+                output_reserve_tokens=1_024,
+                input_budget_tokens=31_744,
+                estimated_input_tokens=640,
+                remaining_input_tokens=31_104,
+                system_tokens=40,
+                current_user_tokens=20,
+                history_tokens=300,
+                tool_tokens=80,
+                retrieval_tokens=200,
+                selected_history_messages=6,
+                omitted_history_messages=2,
+                included_source_count=1,
+                excluded_sources=(
+                    ContextExclusion(
+                        source_kind="project_document",
+                        source_id="chunk-2",
+                        source_title="notes.pdf",
+                        source_locator="page 2",
+                        token_estimate=900,
+                        reason="retrieval_budget_exceeded",
+                    ),
+                ),
+            ),
+        )
+
+        loaded = self.repository.get_message_context_run(assistant.id)
+
+        self.assertIsNotNone(loaded)
+        assert loaded is not None
+        self.assertEqual(loaded.trace_id, "trace-123")
+        self.assertEqual(loaded.estimated_input_tokens, 640)
+        self.assertEqual(loaded.tool_tokens, 80)
+        self.assertEqual(loaded.excluded_sources[0].source_title, "notes.pdf")
+        self.assertEqual(loaded.excluded_sources[0].reason, "retrieval_budget_exceeded")
+        self.assertEqual(
+            self.repository.get_latest_context_run(conversation.id),
+            loaded,
+        )
+
+        self.assertTrue(self.repository.delete_conversation(conversation.id))
+        self.assertIsNone(self.repository.get_message_context_run(assistant.id))
+        self.assertIsNone(self.repository.get_latest_context_run(conversation.id))
+
     def test_initialize_migrates_a_database_without_memory_columns(self) -> None:
         legacy_path = Path(self.temporary_directory.name) / "legacy.sqlite3"
         with sqlite3.connect(legacy_path) as connection:
@@ -278,6 +338,34 @@ class ChatRepositoryTests(unittest.TestCase):
                     'legacy', 'default', 'Old chat', 'base', 0,
                     '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
                 );
+                INSERT INTO messages VALUES (
+                    1, 'legacy', 'assistant', 'Preserved answer', 'base',
+                    '2026-01-01T00:00:01+00:00'
+                );
+                CREATE TABLE message_context_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    assistant_message_id INTEGER NOT NULL
+                        REFERENCES messages(id) ON DELETE CASCADE,
+                    source_kind TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    source_project_id TEXT NOT NULL,
+                    source_conversation_id TEXT,
+                    source_title TEXT NOT NULL,
+                    source_locator TEXT NOT NULL,
+                    source_excerpt TEXT NOT NULL DEFAULT '',
+                    rank INTEGER NOT NULL,
+                    score REAL NOT NULL,
+                    token_estimate INTEGER NOT NULL,
+                    UNIQUE (assistant_message_id, rank)
+                );
+                INSERT INTO message_context_sources (
+                    assistant_message_id, source_kind, source_id, source_project_id,
+                    source_conversation_id, source_title, source_locator, source_excerpt,
+                    rank, score, token_estimate
+                ) VALUES (
+                    1, 'project_memory', 'memory-1', 'default', NULL,
+                    'Old source', 'messages 1-2', 'Preserved context', 1, 0.5, 12
+                );
                 """
             )
 
@@ -289,8 +377,25 @@ class ChatRepositoryTests(unittest.TestCase):
         assert conversation is not None
         self.assertFalse(conversation.memory_enabled)
         self.assertFalse(conversation.rag_enabled)
+        preserved_message = migrated.get_message(1)
+        self.assertIsNotNone(preserved_message)
+        assert preserved_message is not None
+        self.assertEqual(preserved_message.content, "Preserved answer")
+        self.assertEqual(
+            migrated.list_message_context_sources(1)[0].source_excerpt,
+            "Preserved context",
+        )
+        tool_message = migrated.add_message(
+            "legacy",
+            "tool",
+            "42",
+            tool_call_id="call-1",
+        )
+        self.assertEqual(tool_message.role, "tool")
         with sqlite3.connect(legacy_path) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 5)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(messages)")}
+        self.assertTrue({"tool_calls", "tool_call_id", "reasoning"} <= columns)
 
     def test_deleting_a_conversation_cascades_to_messages(self) -> None:
         conversation = self.repository.create_conversation("base")
