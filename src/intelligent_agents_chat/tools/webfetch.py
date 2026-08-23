@@ -65,9 +65,8 @@ MATCH_CLUSTER_RADIUS_CHARS = 1_500
 MIN_SEARCH_WORD_LENGTH = 4
 USER_AGENT = "Mozilla/5.0 (compatible; IntelligentAgentsChatBot/1.0)"
 
-# URL -> cleaned text. In-memory only (lost on restart), one process wide --
-# fine for a single-server course project. FIFO eviction (good enough; not a
-# true LRU, see _remember).
+# Cache fetched pages in memory:
+# URL -> cleaned text. FIFO eviction 
 _page_cache: dict[str, str] = {}
 _CACHE_MAX_ENTRIES = 32
 
@@ -165,12 +164,20 @@ async def _get_extracted_text(url: str) -> str:
     return text
 
 
+_TOKEN_PATTERN = re.compile(r"\d+\.\d+|\w+")
+
+
 def _search_words(terms: list[str]) -> set[str]:
     words = set()
     for term in terms:
-        words.update(
-            w for w in re.findall(r"\w+", term.lower()) if len(w) >= MIN_SEARCH_WORD_LENGTH
-        )
+        for token in _TOKEN_PATTERN.findall(term.lower()):
+            # Numbers are exempt from the length filter entirely: 
+            # unlike a short common word ("the") even a short number ("43") 
+            # is specific enough to be useful.
+            if token.isdigit() or token.replace(".", "", 1).isdigit():
+                words.add(token)
+            elif len(token) >= MIN_SEARCH_WORD_LENGTH:
+                words.add(token)
     return words
 
 
@@ -230,7 +237,11 @@ async def _condense(text: str, *, topic: str, extra_instruction: str = "") -> st
     task = (
         f"Condense the following web page content {focus}."
         + (f" {extra_instruction}" if extra_instruction else "")
-        + f" Be concise but keep concrete facts, names, and figures.\n\n{text}"
+        + " Be concise, but reproduce any numbers, dates, names, and other concrete "
+        "figures exactly as written in the source -- do not round, approximate, or "
+        "paraphrase them. If the source has a table or list of figures relevant to the "
+        "focus above, reproduce it as a list instead of prose.\n\n"
+        f"{text}"
     )
     return await subagent.run({"task": task})
 

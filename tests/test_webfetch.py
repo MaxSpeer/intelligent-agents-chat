@@ -156,6 +156,18 @@ class WebFetchToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("testing", task)
         self.assertIn("Paragraph number 0", task)
 
+    async def test_condense_task_instructs_the_subagent_to_keep_figures_exact(self) -> None:
+        # Real case this addresses: the same table cell was summarized as a
+        # different number on different tries (e.g. "3.662 Millionen" vs.
+        # "3.878 Millionen") -- an LLM condensation pass is lossy for exact
+        # figures unless explicitly told not to paraphrase them.
+        fake_run = mock.AsyncMock(return_value="condensed summary")
+        with mock.patch("intelligent_agents_chat.tools.webfetch.subagent.run", fake_run):
+            await webfetch.run({"url": f"{self.base_url}/medium"})
+
+        task = fake_run.await_args.args[0]["task"]
+        self.assertIn("exactly as written", task)
+
     async def test_long_page_without_search_terms_condenses_from_the_start(self) -> None:
         fake_run = mock.AsyncMock(return_value="condensed summary")
         with mock.patch("intelligent_agents_chat.tools.webfetch.subagent.run", fake_run):
@@ -204,6 +216,16 @@ class WebFetchToolTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(result.startswith("Error:"))
         self.assertIn("Roman era", result)
+
+    def test_search_words_keeps_decimal_numbers_intact(self) -> None:
+        # Regression test for a real bug this was built to fix: "3.38" was
+        # shredded by the period into "3" and "38", both too short to survive
+        # the length filter -- silently turning a whole list of specific
+        # figures (population counts, prices, ...) into no search signal at
+        # all. A short *number* is specific enough to keep even though a
+        # short common *word* ("the") still isn't.
+        words = webfetch._search_words(["3.38 3.385 hello 1990 the"])
+        self.assertEqual(words, {"3.38", "3.385", "hello", "1990"})
 
     async def test_cluster_radius_prefers_a_tight_cluster_over_scattered_matches(self) -> None:
         # Regression test for a real bug this was built to fix: scoring
