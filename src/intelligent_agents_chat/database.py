@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import logging
 from pathlib import Path
 import sqlite3
@@ -18,8 +20,8 @@ DEFAULT_DATABASE_PATH = PROJECT_ROOT / ".data" / "chats.sqlite3"
 DEFAULT_PROJECT_ID = "default"
 DEFAULT_PROJECT_NAME = "General"
 DEFAULT_CONVERSATION_TITLE = "New chat"
-MessageRole = Literal["system", "user", "assistant"]
-VALID_ROLES = {"system", "user", "assistant"}
+MessageRole = Literal["system", "user", "assistant", "tool"]
+VALID_ROLES = {"system", "user", "assistant", "tool"}
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +53,12 @@ class Message:
     content: str
     model_profile: str | None
     created_at: datetime
+    # Set only on assistant messages that made tool calls: [{"id", "name", "arguments"}, ...].
+    tool_calls: tuple[dict, ...] | None = None
+    # Set only on role="tool" messages: which tool_calls entry this is the result of.
+    tool_call_id: str | None = None
+    # Set only on assistant messages that reasoned before this action
+    reasoning: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,9 +136,12 @@ class ChatRepository:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     conversation_id TEXT NOT NULL
                         REFERENCES conversations(id) ON DELETE CASCADE,
-                    role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant')),
+                    role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
                     content TEXT NOT NULL,
                     model_profile TEXT,
+                    tool_calls TEXT,
+                    tool_call_id TEXT,
+                    reasoning TEXT,
                     created_at TEXT NOT NULL
                 );
 
@@ -508,21 +519,38 @@ class ChatRepository:
         content: str,
         *,
         model_profile: str | None = None,
+        tool_calls: Sequence[dict] | None = None,
+        tool_call_id: str | None = None,
+        reasoning: str | None = None,
     ) -> Message:
         if role not in VALID_ROLES:
             raise ValueError(f"Unsupported message role: {role}")
-        if not content.strip():
+        # An assistant message that only made tool calls (or only reasoned, e.g. a
+        # round that got stopped mid-thought) has no natural-language content --
+        # that's valid as long as it has tool calls or reasoning attached.
+        if not content.strip() and not tool_calls and not reasoning:
             raise ValueError("Message content cannot be empty")
 
         now = _timestamp()
+        tool_calls_json = json.dumps(list(tool_calls)) if tool_calls else None
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO messages (
-                    conversation_id, role, content, model_profile, created_at
-                ) VALUES (?, ?, ?, ?, ?)
+                    conversation_id, role, content, model_profile,
+                    tool_calls, tool_call_id, reasoning, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (conversation_id, role, content, model_profile, now),
+                (
+                    conversation_id,
+                    role,
+                    content,
+                    model_profile,
+                    tool_calls_json,
+                    tool_call_id,
+                    reasoning,
+                    now,
+                ),
             )
             connection.execute(
                 "UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -543,6 +571,8 @@ class ChatRepository:
             role=message.role,
             message_chars=len(message.content),
             model_profile=message.model_profile,
+            tool_call_count=len(message.tool_calls) if message.tool_calls else 0,
+            reasoning_chars=len(message.reasoning) if message.reasoning else 0,
         )
         return message
 
@@ -550,7 +580,8 @@ class ChatRepository:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, conversation_id, role, content, model_profile, created_at
+                SELECT id, conversation_id, role, content, model_profile,
+                       tool_calls, tool_call_id, reasoning, created_at
                 FROM messages
                 WHERE id = ?
                 """,
@@ -562,7 +593,8 @@ class ChatRepository:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, conversation_id, role, content, model_profile, created_at
+                SELECT id, conversation_id, role, content, model_profile,
+                       tool_calls, tool_call_id, reasoning, created_at
                 FROM messages
                 WHERE conversation_id = ?
                 ORDER BY id ASC
@@ -683,6 +715,7 @@ def _conversation_from_row(row: sqlite3.Row) -> Conversation:
 
 
 def _message_from_row(row: sqlite3.Row) -> Message:
+    tool_calls_json = row["tool_calls"]
     return Message(
         id=row["id"],
         conversation_id=row["conversation_id"],
@@ -690,6 +723,9 @@ def _message_from_row(row: sqlite3.Row) -> Message:
         content=row["content"],
         model_profile=row["model_profile"],
         created_at=_parse_datetime(row["created_at"]),
+        tool_calls=tuple(json.loads(tool_calls_json)) if tool_calls_json else None,
+        tool_call_id=row["tool_call_id"],
+        reasoning=row["reasoning"],
     )
 
 

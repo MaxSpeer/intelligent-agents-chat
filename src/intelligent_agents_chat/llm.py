@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
 import logging
 from time import monotonic
 
@@ -45,6 +46,17 @@ async def check_model_available(profile: ModelProfile) -> bool:
     return any(model.id == profile.model for model in response.data)
 
 
+
+@dataclass(frozen=True, slots=True)
+class ContentDelta:
+    """One fragment of visible model text, tagged so callers can tell reasoning
+    (show it, but never feed it back as conversation history) from the model's
+    actual answer content (show it, and it belongs in history).
+    """
+    text: str
+    is_reasoning: bool = False
+
+
 class VLLMGateway:
     """Create streamed replies with the selected OpenAI-compatible profile."""
 
@@ -55,12 +67,19 @@ class VLLMGateway:
         *,
         request_id: str | None = None,
         thinking_enabled: bool = False,
-    ) -> AsyncIterator[str]:
+        tools: Sequence[dict] | None = None,
+        tool_calls: list[dict] | None = None,
+    ) -> AsyncIterator[ContentDelta]:
+        """Stream the reply as tagged text fragments; if `tool_calls` is given, append
+        the fully reconstructed tool calls to it (id, name, arguments) once the stream
+        completes.
+        """
         started_at = monotonic()
         chunk_count = 0
         output_chars = 0
         reasoning_chunk_count = 0
         reasoning_chars = 0
+        tool_call_chunk_count = 0
         first_chunk_ms: float | None = None
         first_reasoning_chunk_ms: float | None = None
         server_response_id: str | None = None
@@ -80,10 +99,11 @@ class VLLMGateway:
             "reasoning_effort": profile.reasoning_effort,
             "max_tokens": max_tokens,
             "input_message_count": len(messages),
-            "input_chars": sum(len(message.get("content", "")) for message in messages),
+            "input_chars": sum(len(message.get("content") or "") for message in messages),
             "input_role_counts": dict(
                 Counter(message.get("role", "unknown") for message in messages)
             ),
+            "tool_count": len(tools) if tools else 0,
         }
         log_event(logger, logging.INFO, "llm.stream.started", **context)
 
@@ -98,14 +118,19 @@ class VLLMGateway:
                 extra_body["chat_template_kwargs"] = {"enable_thinking": effective_thinking}
             if profile.reasoning_effort is not None:
                 extra_body["reasoning_effort"] = profile.reasoning_effort
-            stream = await client.chat.completions.create(
-                model=profile.model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=TEMPERATURE,
-                stream=True,
-                extra_body=extra_body or None,
-            )
+            create_kwargs: dict[str, object] = {
+                "model": profile.model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": TEMPERATURE,
+                "stream": True,
+                "extra_body": extra_body or None,
+            }
+            if tools:
+                create_kwargs["tools"] = tools
+            stream = await client.chat.completions.create(**create_kwargs)
+            reasoning_open = False
+            tool_call_buffers: dict[int, dict[str, str | None]] = {}
             async for chunk in stream:
                 if chunk.id:
                     server_response_id = chunk.id
@@ -114,11 +139,7 @@ class VLLMGateway:
                 choice = chunk.choices[0]
                 if choice.finish_reason is not None:
                     finish_reason = str(choice.finish_reason)
-                reasoning = getattr(choice.delta, "reasoning", None) or getattr(
-                    choice.delta,
-                    "reasoning_content",
-                    None,
-                )
+                reasoning = getattr(choice.delta, "reasoning", None) or getattr(choice.delta, "reasoning_content", None)
                 if reasoning:
                     if first_reasoning_chunk_ms is None:
                         first_reasoning_chunk_ms = round(
@@ -127,14 +148,39 @@ class VLLMGateway:
                         )
                     reasoning_chunk_count += 1
                     reasoning_chars += len(reasoning)
+                    reasoning_open = True
+                    if first_chunk_ms is None:
+                        first_chunk_ms = round((monotonic() - started_at) * 1000, 2)
+                    chunk_count += 1
+                    output_chars += len(reasoning)
+                    yield ContentDelta(reasoning, is_reasoning=True)
                 content = choice.delta.content
                 if content:
+                    if reasoning_open:
+                        reasoning_open = False
                     if first_chunk_ms is None:
                         first_chunk_ms = round((monotonic() - started_at) * 1000, 2)
                     chunk_count += 1
                     output_chars += len(content)
-                    yield content
+                    yield ContentDelta(content)
+                # Reconstruct tool-call deltas (id, name, arguments) for the caller to
+                # execute -- no decorative text here; chat.py renders tool calls/results
+                # from this structured data instead, since it persists them structurally.
+                for tool_call_delta in getattr(choice.delta, "tool_calls", None) or []:
+                    buffer = tool_call_buffers.setdefault(
+                        tool_call_delta.index, {"id": None, "name": None, "arguments": ""}
+                    )
+                    if tool_call_delta.id:
+                        buffer["id"] = tool_call_delta.id
+                    function = getattr(tool_call_delta, "function", None)
+                    if function is not None and function.name:
+                        buffer["name"] = function.name
+                    if function is not None and function.arguments:
+                        buffer["arguments"] = (buffer["arguments"] or "") + function.arguments
+                    tool_call_chunk_count += 1
             outcome = "completed"
+            if tool_calls is not None:
+                tool_calls.extend(tool_call_buffers.values())
         except asyncio.CancelledError:
             outcome = "cancelled"
             log_event(logger, logging.WARNING, "llm.stream.cancelled", **context)
@@ -206,6 +252,7 @@ class VLLMGateway:
                         output_chars=output_chars,
                         reasoning_chunk_count=reasoning_chunk_count,
                         reasoning_chars=reasoning_chars,
+                        tool_call_chunk_count=tool_call_chunk_count,
                         time_to_first_chunk_ms=first_chunk_ms,
                         time_to_first_reasoning_chunk_ms=first_reasoning_chunk_ms,
                         server_response_id=server_response_id,
