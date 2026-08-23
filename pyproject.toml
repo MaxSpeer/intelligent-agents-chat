@@ -5,8 +5,10 @@ description = "A minimal NiceGUI starter for the Intelligent Agents project."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "httpx>=0.28.1",
     "nicegui>=3.0,<4",
     "openai>=2,<3",
+    "trafilatura>=2.2.0",
 ]
 
 [project.scripts]

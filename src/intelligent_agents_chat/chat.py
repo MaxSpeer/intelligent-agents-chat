@@ -26,7 +26,7 @@ from intelligent_agents_chat.llm import (
 )
 from intelligent_agents_chat.logging_config import configure_logging, log_event, sanitized_endpoint
 from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, MODEL_PROFILES, ModelProfile
-from intelligent_agents_chat.tools import Tool, calculator, subagent
+from intelligent_agents_chat.tools import Tool, calculator, subagent, webfetch
 
 PROFILE_STATUS_POLL_INTERVAL_SECONDS = 15.0
 
@@ -87,7 +87,7 @@ log_event(logger, logging.INFO, "application.initialized")
 # Every available tool, self-registered by its module. Add a new tool by
 # writing a `tools/<name>.py` that exports a `Tool` (see tools/calculator.py),
 # then listing it here -- nothing else in this file needs to change.
-_ALL_TOOLS: tuple[Tool, ...] = (calculator.TOOL, subagent.TOOL)
+_ALL_TOOLS: tuple[Tool, ...] = (calculator.TOOL, subagent.TOOL, webfetch.TOOL)
 TOOLS: dict[str, Tool] = {tool.name: tool for tool in _ALL_TOOLS}
 
 MAX_TOOL_ROUNDS = 4
@@ -241,9 +241,9 @@ async def stream_reply(
 
         if not pending_tool_calls:
             if not saw_content and reasoning_chunks:
-                # Bug that sometimes happened: The model finished last round 
+                # Bug that sometimes happened: The model finished last round
                 # (no more tool calls to make) without ever producing real `content`
-                # instead only producing reasoning text. 
+                # instead only producing reasoning text.
                 # Rather than show an empty answer, treat that last
                 # reasoning text as the real answer: still shown in the
                 # collapsible trace as it streamed, but now also persisted
@@ -294,7 +294,7 @@ async def stream_reply(
                     arguments = {}
                 # Sequential on purpose: each tool call is awaited to completion
                 # before the next one starts (and before the model gets to see any
-                # results), even though tools themselves run async. 
+                # results), even though tools themselves run async.
                 result = await _execute_tool(call["name"], arguments)
             else:
                 result = (
