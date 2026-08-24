@@ -96,43 +96,168 @@ else:
 log_event(logger, logging.INFO, "application.initialized")
 
 
+
 #
 # Build the Context for a Completion Request
 #
 
+def prepare_conversation_context(
+    conversation: Conversation,
+    profile: ModelProfile,
+    messages: list[Message],
+    query_text: str,
+) -> ContextPlan:
+    """Collect optional sources and assemble a context plan for the model 
+    to consume, including the system prompt, memories, message history, 
+    and the latest user message."""
+    candidates = (
+        retrieve_project_memory(
+            project_id=conversation.project_id,
+            conversation_id=conversation.id,
+            query_text=query_text,
+        )
+        if conversation.memory_enabled
+        else []
+    )
+    output_reserve_tokens = THINKING_MAX_TOKENS if conversation.thinking_enabled else MAX_TOKENS
+
+    # Context is assembled from retrieved memories and message history
+    plan = context_assembler.assemble(
+        completion_messages(messages),
+        candidates,
+        context_window_tokens=profile.context_window_tokens,
+        output_reserve_tokens=output_reserve_tokens,
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "chat.context.prepared",
+        model_profile=profile.key,
+        context_window_tokens=profile.context_window_tokens,
+        output_reserve_tokens=output_reserve_tokens,
+        input_budget_tokens=plan.input_budget_tokens,
+        estimated_input_tokens=plan.estimated_input_tokens,
+        history_message_count=len(messages),
+        omitted_history_messages=plan.omitted_history_messages,
+        retrieval_candidate_count=len(candidates),
+        included_source_count=len(plan.included_sources),
+        excluded_source_count=len(plan.excluded_sources),
+        excluded_reasons=sorted({source.reason for source in plan.excluded_sources}),
+    )
+    return plan
+
+#
+# Build the message history for Context Assembly
+#
+
 def completion_messages(messages: list[Message]) -> list[dict]:
     """Convert stored messages into the OpenAI-style shape, without a system
-    message -- that's added by ContextAssembler.assemble() (see prepare_context
-    below), the single place a system message ever gets constructed.
+    message -- that's added by ContextAssembler.assemble() (see
+    prepare_conversation_context below), the single place a system message
+    ever gets constructed.
+
+    By the time this runs (see prepare_conversation_context), every message
+    here belongs to an already-closed turn except the newest one (the
+    just-asked question, with nothing after it yet) -- so a closed turn that
+    made tool calls gets collapsed to just its user message plus one
+    assistant message: a compact
+    trace line per tool call (name, arguments, ok/error -- never the tool's
+    full result) followed by the turn's final answer. The model only ever
+    needed the full tool output to produce that answer, which now fully
+    captures it -- the same reasoning as why `reasoning` is already dropped
+    here, just applied to tool calls/results instead. This also means a turn
+    that took several tool-call rounds collapses to as few messages as a
+    plain one, which matters for ContextAssembler's history budget: it
+    reasons in messages, so without this, one tool-heavy turn could fill (or
+    overflow) the entire window meant to hold several turns of history. A
+    turn without any tool activity converts unchanged.
     """
     result: list[dict] = []
-    for message in messages:
-        if message.role == "assistant" and message.tool_calls:
-            result.append(
-                {
-                    "role": "assistant",
-                    "content": message.content or None,
-                    "tool_calls": [
-                        {
-                            "id": call["id"],
-                            "type": "function",
-                            "function": {"name": call["name"], "arguments": call["arguments"]},
-                        }
-                        for call in message.tool_calls
-                    ],
-                }
-            )
-        elif message.role == "tool":
-            result.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": message.tool_call_id,
-                    "content": message.content,
-                }
-            )
-        else:
-            result.append({"role": message.role, "content": message.content})
+    for turn in _group_into_turns(messages):
+        result.extend(_completion_messages_for_turn(turn))
     return result
+
+
+def _group_into_turns(messages: list[Message]) -> list[list[Message]]:
+    """Split into turns at each user message -- the same boundary as
+    memory.py's _conversation_chunks: a turn is a user message plus
+    everything that followed it, up to (not including) the next one.
+    """
+    turns: list[list[Message]] = []
+    current: list[Message] = []
+    for message in messages:
+        if message.role == "user" and current:
+            turns.append(current)
+            current = []
+        current.append(message)
+    if current:
+        turns.append(current)
+    return turns
+
+
+def _completion_messages_for_turn(turn: list[Message]) -> list[dict]:
+    user_message = next((message for message in turn if message.role == "user"), None)
+    has_tool_activity = any(
+        message.role == "tool" or (message.role == "assistant" and message.tool_calls)
+        for message in turn
+    )
+    if user_message is None or not has_tool_activity:
+        return [{"role": message.role, "content": message.content} for message in turn]
+
+    results_by_call_id = {
+        message.tool_call_id: message.content for message in turn if message.role == "tool"
+    }
+    trace_lines = []
+    for message in turn:
+        if message.role != "assistant" or not message.tool_calls:
+            continue
+        for call in message.tool_calls:
+            result = results_by_call_id.get(call["id"])
+            if result is None:
+                outcome = "never returned a result (generation was stopped)"
+            elif result.startswith("Error:"):
+                outcome = result
+            else:
+                outcome = "ok"
+            trace_lines.append(f"[tool: {call['name']}({call['arguments']}) -> {outcome}]")
+    final_answer = next(
+        (
+            message.content
+            for message in reversed(turn)
+            if message.role == "assistant" and not message.tool_calls and message.content.strip()
+        ),
+        None,
+    )
+    content = "\n".join(trace_lines + ([final_answer] if final_answer else []))
+    return [
+        {"role": "user", "content": user_message.content},
+        {"role": "assistant", "content": content},
+    ]
+
+#
+# Retrieve (cross chat) Project Memories for Context Assembly
+#
+
+def rebuild_conversation_memory(conversation_id: str) -> int:
+    """Refresh the rebuildable memory index for one changed conversation."""
+    return memory_store.rebuild_conversation(conversation_id)
+
+
+def retrieve_project_memory(
+    *,
+    project_id: str,
+    conversation_id: str,
+    query_text: str,
+) -> list[ContextCandidate]:
+    """Retrieve relevant turns from other chats in the same project."""
+    return memory_store.retrieve(
+        RetrievalQuery(
+            project_id=project_id,
+            text=query_text,
+            exclude_conversation_id=conversation_id,
+        )
+    )
+
 
 
 #
@@ -373,85 +498,3 @@ async def poll_profile_status() -> None:
         await asyncio.sleep(PROFILE_STATUS_POLL_INTERVAL_SECONDS)
 
 
-#
-# Project Memory: cross-chat retrieval and token-aware context assembly
-#
-
-
-def rebuild_conversation_memory(conversation_id: str) -> int:
-    """Refresh the rebuildable memory index for one changed conversation."""
-    return memory_store.rebuild_conversation(conversation_id)
-
-
-def retrieve_project_memory(
-    *,
-    project_id: str,
-    conversation_id: str,
-    query_text: str,
-) -> list[ContextCandidate]:
-    """Retrieve relevant turns from other chats in the same project."""
-    return memory_store.retrieve(
-        RetrievalQuery(
-            project_id=project_id,
-            text=query_text,
-            exclude_conversation_id=conversation_id,
-        )
-    )
-
-
-def prepare_context(
-    profile: ModelProfile,
-    messages: list[Message],
-    candidates: list[ContextCandidate],
-    *,
-    thinking_enabled: bool,
-) -> ContextPlan:
-    """Create a token-aware request while preserving auditable retrieval decisions."""
-    output_reserve_tokens = THINKING_MAX_TOKENS if thinking_enabled else MAX_TOKENS
-    plan = context_assembler.assemble(
-        completion_messages(messages),
-        candidates,
-        context_window_tokens=profile.context_window_tokens,
-        output_reserve_tokens=output_reserve_tokens,
-    )
-    log_event(
-        logger,
-        logging.INFO,
-        "chat.context.prepared",
-        model_profile=profile.key,
-        context_window_tokens=profile.context_window_tokens,
-        output_reserve_tokens=output_reserve_tokens,
-        input_budget_tokens=plan.input_budget_tokens,
-        estimated_input_tokens=plan.estimated_input_tokens,
-        history_message_count=len(messages),
-        omitted_history_messages=plan.omitted_history_messages,
-        retrieval_candidate_count=len(candidates),
-        included_source_count=len(plan.included_sources),
-        excluded_source_count=len(plan.excluded_sources),
-        excluded_reasons=sorted({source.reason for source in plan.excluded_sources}),
-    )
-    return plan
-
-
-def prepare_conversation_context(
-    conversation: Conversation,
-    profile: ModelProfile,
-    messages: list[Message],
-    query_text: str,
-) -> ContextPlan:
-    """Collect optional sources and assemble one request at the backend seam."""
-    candidates = (
-        retrieve_project_memory(
-            project_id=conversation.project_id,
-            conversation_id=conversation.id,
-            query_text=query_text,
-        )
-        if conversation.memory_enabled
-        else []
-    )
-    return prepare_context(
-        profile,
-        messages,
-        candidates,
-        thinking_enabled=conversation.thinking_enabled,
-    )

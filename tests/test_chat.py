@@ -15,10 +15,10 @@ from intelligent_agents_chat.chat import (
     format_reasoning_entry,
     format_tool_call_entry,
     format_tool_result_entry,
-    prepare_context,
+    prepare_conversation_context,
     stream_reply,
 )
-from intelligent_agents_chat.database import Message
+from intelligent_agents_chat.database import Conversation, Message
 from intelligent_agents_chat.llm import ContentDelta, SYSTEM_PROMPT
 from intelligent_agents_chat.models import ModelProfile
 from intelligent_agents_chat.tools import Tool
@@ -50,60 +50,129 @@ class CompletionMessagesTests(unittest.TestCase):
     dicts -- it never adds a system message itself. That's ContextAssembler's
     job (see ContextAssemblerTests in test_context.py and
     ToolRoundBudgetTests below for the system message's actual content).
+
+    It groups messages into turns (a user message plus everything up to the
+    next one -- see _group_into_turns) and collapses any turn that made tool
+    calls into just its user message plus one assistant message: a trace
+    line per tool call, no full tool output, plus the turn's final answer.
     """
 
-    def test_plain_messages_pass_through_unchanged(self) -> None:
+    def test_a_turn_without_tool_activity_passes_through_unchanged(self) -> None:
+        messages = completion_messages(
+            [_message("user", "What is 1+1?"), _message("assistant", "It's 2.")]
+        )
+
+        self.assertEqual(
+            messages,
+            [
+                {"role": "user", "content": "What is 1+1?"},
+                {"role": "assistant", "content": "It's 2."},
+            ],
+        )
+
+    def test_a_lone_new_user_message_passes_through_unchanged(self) -> None:
+        """The turn a request is being prepared for -- no answer yet."""
         messages = completion_messages([_message("user", "Hello")])
 
         self.assertEqual(messages, [{"role": "user", "content": "Hello"}])
 
-    def test_assistant_tool_calls_are_reconstructed_in_the_real_api_shape(self) -> None:
-        stored_call = {"id": "call_1", "name": "calculator", "arguments": '{"expression": "1+1"}'}
-        messages = completion_messages([_message("assistant", "", tool_calls=(stored_call,))])
-
-        self.assertEqual(
-            messages[0],
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": "call_1",
-                        "type": "function",
-                        "function": {
-                            "name": "calculator",
-                            "arguments": '{"expression": "1+1"}',
-                        },
-                    }
-                ],
-            },
-        )
-
-    def test_tool_messages_are_reconstructed_with_their_tool_call_id(self) -> None:
-        messages = completion_messages([_message("tool", "2", tool_call_id="call_1")])
-
-        self.assertEqual(
-            messages[0],
-            {"role": "tool", "tool_call_id": "call_1", "content": "2"},
-        )
-
-    def test_assistant_content_survives_alongside_tool_calls(self) -> None:
-        stored_call = {"id": "call_1", "name": "calculator", "arguments": "{}"}
-        messages = completion_messages(
-            [_message("assistant", "Let me check.", tool_calls=(stored_call,))]
-        )
-
-        self.assertEqual(messages[0]["content"], "Let me check.")
-
     def test_reasoning_is_never_sent_back_to_the_model(self) -> None:
         messages = completion_messages(
-            [_message("assistant", "The answer is 2.", reasoning="1 + 1 = 2, obviously.")]
+            [
+                _message("user", "What is 1+1?"),
+                _message("assistant", "The answer is 2.", reasoning="1 + 1 = 2, obviously."),
+            ]
         )
 
-        self.assertEqual(messages[0], {"role": "assistant", "content": "The answer is 2."})
+        self.assertEqual(messages[1], {"role": "assistant", "content": "The answer is 2."})
+
+    def test_a_turns_tool_call_rounds_collapse_to_one_trace_line_each_plus_the_answer(
+        self,
+    ) -> None:
+        call_1 = {"id": "call_1", "name": "calculator", "arguments": '{"expression": "1+1"}'}
+        call_2 = {"id": "call_2", "name": "calculator", "arguments": '{"expression": "2+2"}'}
+        messages = completion_messages(
+            [
+                _message("user", "What is 1+1 and 2+2?"),
+                _message("assistant", "Let me compute that.", tool_calls=(call_1,)),
+                _message("tool", "2", tool_call_id="call_1"),
+                _message("assistant", "", tool_calls=(call_2,)),
+                _message("tool", "4", tool_call_id="call_2"),
+                _message("assistant", "1+1 is 2 and 2+2 is 4."),
+            ]
+        )
+
+        self.assertEqual(
+            messages,
+            [
+                {"role": "user", "content": "What is 1+1 and 2+2?"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        '[tool: calculator({"expression": "1+1"}) -> ok]\n'
+                        '[tool: calculator({"expression": "2+2"}) -> ok]\n'
+                        "1+1 is 2 and 2+2 is 4."
+                    ),
+                },
+            ],
+        )
+        # The full tool results ("2", "4") and the narration before the first
+        # call ("Let me compute that.") are gone, not just hidden.
+        self.assertNotIn("Let me compute that.", messages[1]["content"])
+
+    def test_a_tool_error_result_is_reported_in_the_trace_line(self) -> None:
+        call = {"id": "call_1", "name": "fetch_page", "arguments": '{"url": "not-a-url"}'}
+        messages = completion_messages(
+            [
+                _message("user", "Fetch that page."),
+                _message("assistant", "", tool_calls=(call,)),
+                _message("tool", "Error: 'url' must start with http:// or https://.", tool_call_id="call_1"),
+                _message("assistant", "I couldn't fetch that -- the URL looks invalid."),
+            ]
+        )
+
+        self.assertIn(
+            "Error: 'url' must start with http:// or https://.", messages[1]["content"]
+        )
+
+    def test_a_tool_call_with_no_result_is_reported_as_interrupted(self) -> None:
+        """The turn was stopped between the tool call and its result being
+        saved -- e.g. the user hit stop mid-round. Distinct from an empty/ok
+        result so it isn't mistaken for success.
+        """
+        call = {"id": "call_1", "name": "fetch_page", "arguments": '{"url": "https://x"}'}
+        messages = completion_messages(
+            [_message("user", "Fetch that page."), _message("assistant", "", tool_calls=(call,))]
+        )
+
+        self.assertIn("never returned a result", messages[1]["content"])
+
+    def test_several_turns_in_one_history_are_each_grouped_independently(self) -> None:
+        call = {"id": "call_1", "name": "calculator", "arguments": "{}"}
+        messages = completion_messages(
+            [
+                _message("user", "First question."),
+                _message("assistant", "First answer."),
+                _message("user", "Second question."),
+                _message("assistant", "", tool_calls=(call,)),
+                _message("tool", "42", tool_call_id="call_1"),
+                _message("assistant", "Second answer."),
+                _message("user", "Third question, not answered yet."),
+            ]
+        )
+
+        self.assertEqual(len(messages), 5)  # 2 + 2 + 1, not 2 + 3 + 1
+        self.assertEqual(messages[0], {"role": "user", "content": "First question."})
+        self.assertEqual(messages[1], {"role": "assistant", "content": "First answer."})
+        self.assertEqual(messages[2], {"role": "user", "content": "Second question."})
+        self.assertIn("ok", messages[3]["content"])
+        self.assertIn("Second answer.", messages[3]["content"])
+        self.assertEqual(
+            messages[4], {"role": "user", "content": "Third question, not answered yet."}
+        )
 
 
-class PrepareContextWiringTests(unittest.TestCase):
+class PrepareConversationContextWiringTests(unittest.TestCase):
     """Exercises the actual module-level chat.context_assembler, not a
     freshly-constructed ContextAssembler -- this is what would have caught the
     regression where context_assembler got built once at import time from the
@@ -118,12 +187,22 @@ class PrepareContextWiringTests(unittest.TestCase):
             base_url="http://x/v1",
             model="test-model",
         )
+        conversation = Conversation(
+            id="conversation",
+            project_id="project",
+            title="Test",
+            model_profile=profile.key,
+            thinking_enabled=False,
+            memory_enabled=False,  # skips retrieval -- no DB needed for this test
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
 
-        plan = prepare_context(
+        plan = prepare_conversation_context(
+            conversation,
             profile,
             [_message("user", "Hello")],
-            [],
-            thinking_enabled=False,
+            "Hello",
         )
 
         system_message = plan.messages[0]
