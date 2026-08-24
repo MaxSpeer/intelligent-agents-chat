@@ -58,8 +58,10 @@ class ContextAssemblerTests(unittest.TestCase):
         self.assertEqual(plan.excluded_sources[0].reason, "memory_budget_exceeded")
         self.assertNotIn(MEMORY_GUARD, plan.messages[0]["content"])
 
-    def test_recent_history_has_priority_and_old_history_is_trimmed(self) -> None:
-        plan = ContextAssembler("", memory_budget_tokens=0, recent_message_count=2).assemble(
+    def test_history_is_filled_newest_first_and_the_oldest_is_cut_when_it_does_not_fit(
+        self,
+    ) -> None:
+        plan = ContextAssembler("", memory_budget_tokens=0).assemble(
             [
                 {"role": "user", "content": "old " * 100},
                 {"role": "assistant", "content": "old reply " * 100},
@@ -78,6 +80,31 @@ class ContextAssemblerTests(unittest.TestCase):
         )
         self.assertEqual(plan.omitted_history_messages, 2)
         self.assertLessEqual(plan.estimated_input_tokens, plan.input_budget_tokens)
+
+    def test_memory_has_priority_over_history_even_the_most_recent_message(self) -> None:
+        """Memory gets first claim on the leftover budget -- not just on
+        whatever history's newest-first fill didn't already spend. Without
+        this, a long conversation could fill the whole budget on its own
+        recent history and starve memory, even though memory is often the
+        only way to recall something from a *different* chat.
+        """
+        plan = ContextAssembler("", memory_budget_tokens=200).assemble(
+            [
+                {"role": "user", "content": "recent question"},
+                {"role": "assistant", "content": "recent answer"},
+                {"role": "user", "content": "latest question"},
+            ],
+            [candidate()],
+            context_window_tokens=250,
+            output_reserve_tokens=100,
+        )
+
+        self.assertEqual(len(plan.included_sources), 1)
+        all_content = "\n".join(message["content"] for message in plan.messages)
+        self.assertNotIn("recent question", all_content)
+        self.assertNotIn("recent answer", all_content)
+        self.assertEqual(plan.messages[-1], {"role": "user", "content": "latest question"})
+        self.assertEqual(plan.omitted_history_messages, 2)
 
     def test_raises_when_mandatory_input_cannot_fit(self) -> None:
         with self.assertRaisesRegex(ContextOverflowError, "latest user message"):
