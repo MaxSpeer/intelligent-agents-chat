@@ -11,9 +11,10 @@ scratch:
     uv run python scripts/migrate_dev_db.py [path-to-chats.sqlite3]
 
 This script is written for the schema changes it currently knows about
-(tool-calling support, then a `reasoning` column). If database.py's schema
-changes again later, extend or replace the migration below to match --
-it's a one-off dev tool, not a general migration framework.
+(tool-calling support, a `reasoning` column, then the `memory_enabled`
+column on `conversations`). If database.py's schema changes again later,
+extend or replace the migration below to match -- it's a one-off dev tool,
+not a general migration framework.
 """
 
 from __future__ import annotations
@@ -70,6 +71,21 @@ def migrate(database_path: Path) -> None:
         if "reasoning" not in columns:
             print("Adding the reasoning column to the messages table ...")
             connection.execute("ALTER TABLE messages ADD COLUMN reasoning TEXT")
+
+        conversation_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(conversations)")
+        }
+        if "memory_enabled" not in conversation_columns:
+            print("Adding the memory_enabled column to the conversations table ...")
+            # A fresh column with its own CHECK, not widening one on an existing
+            # column -- allowed directly via ADD COLUMN since the default (0)
+            # already satisfies the CHECK, unlike the messages.role rebuild above.
+            connection.execute(
+                """
+                ALTER TABLE conversations ADD COLUMN memory_enabled INTEGER NOT NULL
+                    DEFAULT 0 CHECK (memory_enabled IN (0, 1))
+                """
+            )
 
         connection.commit()
         message_count = connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0]

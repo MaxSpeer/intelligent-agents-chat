@@ -179,56 +179,6 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertTrue(self.repository.delete_conversation(target.id))
         self.assertEqual(self.repository.list_message_context_sources(assistant.id), [])
 
-    def test_initialize_migrates_a_database_without_memory_columns(self) -> None:
-        legacy_path = Path(self.temporary_directory.name) / "legacy.sqlite3"
-        with sqlite3.connect(legacy_path) as connection:
-            connection.executescript(
-                """
-                CREATE TABLE projects (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE conversations (
-                    id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-                    title TEXT NOT NULL,
-                    model_profile TEXT NOT NULL,
-                    thinking_enabled INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    conversation_id TEXT NOT NULL
-                        REFERENCES conversations(id) ON DELETE CASCADE,
-                    role TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    model_profile TEXT,
-                    created_at TEXT NOT NULL
-                );
-                INSERT INTO projects VALUES (
-                    'default', 'General', '2026-01-01T00:00:00+00:00',
-                    '2026-01-01T00:00:00+00:00'
-                );
-                INSERT INTO conversations VALUES (
-                    'legacy', 'default', 'Old chat', 'base', 0,
-                    '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
-                );
-                """
-            )
-
-        migrated = ChatRepository(legacy_path)
-        migrated.initialize()
-
-        conversation = migrated.get_conversation("legacy")
-        self.assertIsNotNone(conversation)
-        assert conversation is not None
-        self.assertFalse(conversation.memory_enabled)
-        with sqlite3.connect(legacy_path) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
-
     def test_deleting_a_conversation_cascades_to_messages(self) -> None:
         conversation = self.repository.create_conversation("base")
         message = self.repository.add_message(conversation.id, "user", "Temporary")

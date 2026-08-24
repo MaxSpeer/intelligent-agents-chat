@@ -151,14 +151,6 @@ class ChatRepository:
                     ON messages(conversation_id, id);
                 """
             )
-            if not _column_exists(connection, "conversations", "memory_enabled"):
-                connection.execute(
-                    """
-                    ALTER TABLE conversations
-                    ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 0
-                        CHECK (memory_enabled IN (0, 1))
-                    """
-                )
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS memory_entries (
@@ -168,9 +160,7 @@ class ChatRepository:
                         REFERENCES conversations(id) ON DELETE CASCADE,
                     source_message_start_id INTEGER NOT NULL,
                     source_message_end_id INTEGER NOT NULL,
-                    source_kind TEXT NOT NULL DEFAULT 'conversation_turn',
                     content TEXT NOT NULL,
-                    content_hash TEXT NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -233,7 +223,6 @@ class ChatRepository:
                     ON message_context_sources(assistant_message_id, rank);
                 """
             )
-            connection.execute("PRAGMA user_version = 2")
             now = _timestamp()
             connection.execute(
                 """
@@ -249,7 +238,6 @@ class ChatRepository:
             database_path=str(self.database_path),
             sqlite_version=sqlite3.sqlite_version,
             journal_mode=journal_mode,
-            schema_version=2,
         )
 
     def get_project(self, project_id: str = DEFAULT_PROJECT_ID) -> Project | None:
@@ -678,10 +666,6 @@ def connect_database(database_path: Path) -> sqlite3.Connection:
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 5000")
     return connection
-
-
-def _column_exists(connection: sqlite3.Connection, table: str, column: str) -> bool:
-    return any(row[1] == column for row in connection.execute(f"PRAGMA table_info({table})"))
 
 
 def _timestamp() -> str:

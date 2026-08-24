@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
 import logging
 from pathlib import Path
 import re
@@ -48,9 +47,7 @@ class MemoryEntry:
     source_conversation_id: str
     source_message_start_id: int
     source_message_end_id: int
-    source_kind: str
     content: str
-    content_hash: str
     enabled: bool
     title: str
     created_at: datetime
@@ -122,20 +119,17 @@ class ProjectMemoryStore:
                     connection.execute("DELETE FROM memory_entries WHERE id = ?", (existing["id"],))
 
             for start_id, end_id, content in chunks:
-                content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 connection.execute(
                     """
                     INSERT INTO memory_entries (
                         project_id, source_conversation_id, source_message_start_id,
-                        source_message_end_id, source_kind, content, content_hash,
-                        enabled, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, 'conversation_turn', ?, ?, 1, ?, ?)
+                        source_message_end_id, content, enabled, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
                     ON CONFLICT (
                         source_conversation_id, source_message_start_id, source_message_end_id
                     ) DO UPDATE SET
                         project_id = excluded.project_id,
                         content = excluded.content,
-                        content_hash = excluded.content_hash,
                         updated_at = excluded.updated_at
                     """,
                     (
@@ -144,7 +138,6 @@ class ProjectMemoryStore:
                         start_id,
                         end_id,
                         content,
-                        content_hash,
                         now,
                         now,
                     ),
@@ -230,8 +223,8 @@ class ProjectMemoryStore:
             rows = connection.execute(
                 """
                 SELECT me.id, me.project_id, me.source_conversation_id,
-                       me.source_message_start_id, me.source_message_end_id, me.source_kind,
-                       me.content, me.content_hash, me.enabled, conversation.title,
+                       me.source_message_start_id, me.source_message_end_id,
+                       me.content, me.enabled, conversation.title,
                        me.created_at, me.updated_at
                 FROM memory_entries AS me
                 JOIN conversations AS conversation ON conversation.id = me.source_conversation_id
@@ -329,9 +322,7 @@ def _memory_entry_from_row(row: sqlite3.Row) -> MemoryEntry:
         source_conversation_id=row["source_conversation_id"],
         source_message_start_id=row["source_message_start_id"],
         source_message_end_id=row["source_message_end_id"],
-        source_kind=row["source_kind"],
         content=row["content"],
-        content_hash=row["content_hash"],
         enabled=bool(row["enabled"]),
         title=row["title"],
         created_at=datetime.fromisoformat(row["created_at"]),
