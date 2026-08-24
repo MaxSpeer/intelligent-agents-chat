@@ -18,7 +18,6 @@ from intelligent_agents_chat.context import ContextAssembler, ContextPlan
 from intelligent_agents_chat.database import ChatRepository, Conversation, Message
 from intelligent_agents_chat.llm import (
     MAX_TOKENS,
-    SYSTEM_PROMPT,
     THINKING_MAX_TOKENS,
     VLLMGateway,
     check_model_available,
@@ -71,7 +70,7 @@ except Exception:
 
 gateway = VLLMGateway()
 memory_store = ProjectMemoryStore(repository.database_path)
-context_assembler = ContextAssembler(SYSTEM_PROMPT)
+context_assembler = ContextAssembler(system_prompt_for_today)
 active_generations: set[str] = set()
 
 try:
@@ -101,20 +100,12 @@ log_event(logger, logging.INFO, "application.initialized")
 # Build the Context for a Completion Request
 #
 
-
-def completion_messages(
-    messages: list[Message],
-    *,
-    include_system: bool = True,
-) -> list[dict]:
-    """Build the OpenAI-style message list for a completion request."""
+def completion_messages(messages: list[Message]) -> list[dict]:
+    """Convert stored messages into the OpenAI-style shape, without a system
+    message -- that's added by ContextAssembler.assemble() (see prepare_context
+    below), the single place a system message ever gets constructed.
+    """
     result: list[dict] = []
-    if include_system:
-        # Computed fresh per call so it always includes today's date -- see
-        # system_prompt_for_today's docstring. Callers that assemble their own
-        # token-aware system framing (see prepare_context below) pass
-        # include_system=False and add it themselves instead.
-        result.append({"role": "system", "content": system_prompt_for_today()})
     for message in messages:
         if message.role == "assistant" and message.tool_calls:
             result.append(
@@ -418,7 +409,7 @@ def prepare_context(
     """Create a token-aware request while preserving auditable retrieval decisions."""
     output_reserve_tokens = THINKING_MAX_TOKENS if thinking_enabled else MAX_TOKENS
     plan = context_assembler.assemble(
-        completion_messages(messages, include_system=False),
+        completion_messages(messages),
         candidates,
         context_window_tokens=profile.context_window_tokens,
         output_reserve_tokens=output_reserve_tokens,

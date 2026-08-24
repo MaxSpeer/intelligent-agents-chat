@@ -149,5 +149,130 @@ class ProjectMemoryStoreTests(unittest.TestCase):
         self.assertGreaterEqual(results[0].score, results[1].score)
 
 
+class ToolCallingTurnChunkingTests(unittest.TestCase):
+    """A turn with tool-call rounds is still one message.role='user' row
+    followed by several message.role='assistant' rows (tool result rows are
+    excluded by rebuild_conversation's own query, so they never reach
+    chunking) -- these tests build that shape directly through the
+    repository, the same way app.py's flush_pending/ToolResultEvent handling
+    does.
+    """
+
+    def setUp(self) -> None:
+        self.temporary_directory = TemporaryDirectory()
+        self.database_path = Path(self.temporary_directory.name) / "chats.sqlite3"
+        self.repository = ChatRepository(self.database_path)
+        self.repository.initialize()
+        self.memory = ProjectMemoryStore(self.database_path)
+        self.project = self.repository.create_project("Research")
+        self.conversation = self.repository.create_conversation(
+            "base", project_id=self.project.id, title="Weather lookup"
+        )
+
+    def tearDown(self) -> None:
+        self.temporary_directory.cleanup()
+
+    def test_tool_call_rounds_do_not_fragment_the_turn_into_several_entries(self) -> None:
+        user_message = self.repository.add_message(
+            self.conversation.id, "user", "What's the weather in Kyoto right now?"
+        )
+        self.repository.add_message(
+            self.conversation.id,
+            "assistant",
+            "Let me check that for you.",
+            model_profile="base",
+            tool_calls=[{"id": "call_1", "name": "websearch", "arguments": '{"query": "..."}'}],
+        )
+        self.repository.add_message(self.conversation.id, "tool", "22C, clear", tool_call_id="call_1")
+        final_answer = self.repository.add_message(
+            self.conversation.id,
+            "assistant",
+            "It's 22C and clear in Kyoto right now.",
+            model_profile="base",
+        )
+
+        entry_count = self.memory.rebuild_conversation(self.conversation.id)
+        entries = self.memory.list_entries(self.project.id)
+
+        self.assertEqual(entry_count, 1)
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry.source_message_start_id, user_message.id)
+        self.assertEqual(entry.source_message_end_id, final_answer.id)
+        self.assertIn("What's the weather in Kyoto right now?", entry.content)
+        self.assertIn("It's 22C and clear in Kyoto right now.", entry.content)
+        # The narration before the tool call is trace, not the answer -- the
+        # UI itself never shows it as the answer bubble, so memory shouldn't
+        # either.
+        self.assertNotIn("Let me check that for you.", entry.content)
+
+    def test_narration_before_a_tool_call_is_not_indexed_or_retrievable(self) -> None:
+        self.repository.add_message(
+            self.conversation.id, "user", "What's the weather in Kyoto right now?"
+        )
+        self.repository.add_message(
+            self.conversation.id,
+            "assistant",
+            "Let me consult a falconer about this.",
+            model_profile="base",
+            tool_calls=[{"id": "call_1", "name": "websearch", "arguments": '{"query": "..."}'}],
+        )
+        self.repository.add_message(self.conversation.id, "tool", "22C, clear", tool_call_id="call_1")
+        self.repository.add_message(
+            self.conversation.id,
+            "assistant",
+            "It's 22C and clear in Kyoto right now.",
+            model_profile="base",
+        )
+        self.memory.rebuild_conversation(self.conversation.id)
+
+        matches = self.memory.retrieve(
+            RetrievalQuery(project_id=self.project.id, text="falconer")
+        )
+
+        self.assertEqual(matches, [])
+
+    def test_a_turn_without_an_answer_yet_produces_no_memory_entry(self) -> None:
+        self.repository.add_message(
+            self.conversation.id, "user", "What's the weather in Kyoto right now?"
+        )
+
+        entry_count = self.memory.rebuild_conversation(self.conversation.id)
+
+        self.assertEqual(entry_count, 0)
+        self.assertEqual(self.memory.list_entries(self.project.id), [])
+
+    def test_a_tool_only_round_with_no_narration_still_produces_no_entry_until_answered(
+        self,
+    ) -> None:
+        self.repository.add_message(
+            self.conversation.id, "user", "What's the weather in Kyoto right now?"
+        )
+        self.repository.add_message(
+            self.conversation.id,
+            "assistant",
+            "",
+            model_profile="base",
+            tool_calls=[{"id": "call_1", "name": "websearch", "arguments": '{"query": "..."}'}],
+        )
+        self.repository.add_message(self.conversation.id, "tool", "22C, clear", tool_call_id="call_1")
+
+        entry_count = self.memory.rebuild_conversation(self.conversation.id)
+        self.assertEqual(entry_count, 0)
+
+        final_answer = self.repository.add_message(
+            self.conversation.id,
+            "assistant",
+            "It's 22C and clear in Kyoto right now.",
+            model_profile="base",
+        )
+        entry_count = self.memory.rebuild_conversation(self.conversation.id)
+        entries = self.memory.list_entries(self.project.id)
+
+        self.assertEqual(entry_count, 1)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].source_message_end_id, final_answer.id)
+
+
 if __name__ == "__main__":
     unittest.main()

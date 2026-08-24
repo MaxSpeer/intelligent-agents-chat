@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import math
-from typing import Sequence
 
 from intelligent_agents_chat.retrieval import ContextCandidate
 
@@ -65,11 +65,15 @@ class ContextAssembler:
 
     def __init__(
         self,
-        system_prompt: str,
+        system_prompt: str | Callable[[], str],
         *,
         memory_budget_tokens: int = DEFAULT_MEMORY_BUDGET_TOKENS,
         recent_message_count: int = DEFAULT_RECENT_MESSAGE_COUNT,
     ) -> None:
+        # Accepts either a plain string (tests, anything static) or a callable
+        # invoked fresh on every assemble() call -- e.g. system_prompt_for_today,
+        # so the system message stays current for as long as the process runs
+        # instead of freezing whatever was true when this assembler was built.
         self.system_prompt = system_prompt
         self.memory_budget_tokens = memory_budget_tokens
         self.recent_message_count = recent_message_count
@@ -89,7 +93,9 @@ class ContextAssembler:
 
         input_budget = context_window_tokens - output_reserve_tokens
         latest = dict(history[-1])
-        base_system_content = self.system_prompt
+        base_system_content = (
+            self.system_prompt() if callable(self.system_prompt) else self.system_prompt
+        )
         base_system_message = {"role": "system", "content": base_system_content}
         mandatory = [base_system_message, latest] if base_system_content else [latest]
         used_tokens = sum(estimate_message_tokens(message) for message in mandatory)

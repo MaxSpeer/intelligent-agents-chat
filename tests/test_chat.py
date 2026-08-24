@@ -8,7 +8,6 @@ from unittest import mock
 
 from intelligent_agents_chat import chat
 from intelligent_agents_chat.chat import (
-    SYSTEM_PROMPT,
     TOOLS,
     TextChunk,
     _execute_tool,
@@ -16,10 +15,11 @@ from intelligent_agents_chat.chat import (
     format_reasoning_entry,
     format_tool_call_entry,
     format_tool_result_entry,
+    prepare_context,
     stream_reply,
 )
 from intelligent_agents_chat.database import Message
-from intelligent_agents_chat.llm import ContentDelta
+from intelligent_agents_chat.llm import ContentDelta, SYSTEM_PROMPT
 from intelligent_agents_chat.models import ModelProfile
 from intelligent_agents_chat.tools import Tool
 
@@ -46,23 +46,23 @@ def _message(
 
 
 class CompletionMessagesTests(unittest.TestCase):
-    def test_plain_messages_pass_through_with_the_system_prompt_prepended(self) -> None:
+    """completion_messages only reshapes stored Messages into the OpenAI-style
+    dicts -- it never adds a system message itself. That's ContextAssembler's
+    job (see ContextAssemblerTests in test_context.py and
+    ToolRoundBudgetTests below for the system message's actual content).
+    """
+
+    def test_plain_messages_pass_through_unchanged(self) -> None:
         messages = completion_messages([_message("user", "Hello")])
 
-        # The system message is SYSTEM_PROMPT with today's real date spliced
-        # in fresh on every call (see system_prompt_for_today) -- not the
-        # bare constant, so this checks containment, not exact equality.
-        self.assertEqual(messages[0]["role"], "system")
-        self.assertIn(SYSTEM_PROMPT, messages[0]["content"])
-        self.assertIn("Today's date is", messages[0]["content"])
-        self.assertEqual(messages[1], {"role": "user", "content": "Hello"})
+        self.assertEqual(messages, [{"role": "user", "content": "Hello"}])
 
     def test_assistant_tool_calls_are_reconstructed_in_the_real_api_shape(self) -> None:
         stored_call = {"id": "call_1", "name": "calculator", "arguments": '{"expression": "1+1"}'}
         messages = completion_messages([_message("assistant", "", tool_calls=(stored_call,))])
 
         self.assertEqual(
-            messages[1],
+            messages[0],
             {
                 "role": "assistant",
                 "content": None,
@@ -83,7 +83,7 @@ class CompletionMessagesTests(unittest.TestCase):
         messages = completion_messages([_message("tool", "2", tool_call_id="call_1")])
 
         self.assertEqual(
-            messages[1],
+            messages[0],
             {"role": "tool", "tool_call_id": "call_1", "content": "2"},
         )
 
@@ -93,14 +93,43 @@ class CompletionMessagesTests(unittest.TestCase):
             [_message("assistant", "Let me check.", tool_calls=(stored_call,))]
         )
 
-        self.assertEqual(messages[1]["content"], "Let me check.")
+        self.assertEqual(messages[0]["content"], "Let me check.")
 
     def test_reasoning_is_never_sent_back_to_the_model(self) -> None:
         messages = completion_messages(
             [_message("assistant", "The answer is 2.", reasoning="1 + 1 = 2, obviously.")]
         )
 
-        self.assertEqual(messages[1], {"role": "assistant", "content": "The answer is 2."})
+        self.assertEqual(messages[0], {"role": "assistant", "content": "The answer is 2."})
+
+
+class PrepareContextWiringTests(unittest.TestCase):
+    """Exercises the actual module-level chat.context_assembler, not a
+    freshly-constructed ContextAssembler -- this is what would have caught the
+    regression where context_assembler got built once at import time from the
+    static SYSTEM_PROMPT instead of system_prompt_for_today, silently freezing
+    the date the process happened to start on.
+    """
+
+    def test_the_real_module_wiring_produces_a_system_message_with_todays_date(self) -> None:
+        profile = ModelProfile(
+            key="tools",
+            label="Tools",
+            base_url="http://x/v1",
+            model="test-model",
+        )
+
+        plan = prepare_context(
+            profile,
+            [_message("user", "Hello")],
+            [],
+            thinking_enabled=False,
+        )
+
+        system_message = plan.messages[0]
+        self.assertEqual(system_message["role"], "system")
+        self.assertIn(SYSTEM_PROMPT, system_message["content"])
+        self.assertIn("Today's date is", system_message["content"])
 
 
 class FormatEntryTests(unittest.TestCase):

@@ -276,25 +276,54 @@ class ProjectMemoryStore:
 
 
 def _conversation_chunks(title: str, rows: list[sqlite3.Row]) -> list[tuple[int, int, str]]:
+    """One chunk per turn: a user message plus that turn's final assistant
+    answer. A turn can contain several tool-call rounds (extra assistant rows
+    -- e.g. narration like "let me check that page" right before a tool call;
+    tool results themselves are already excluded by the caller's query), but
+    those rounds don't close the chunk early or leak into it -- only the next
+    user message starts a new turn, mirroring the UI's own trace-vs-answer
+    distinction (see _format_chunk).
+    """
     chunks: list[tuple[int, int, str]] = []
     current: list[sqlite3.Row] = []
     for row in rows:
         if row["role"] == "user" and current:
-            chunks.append(_format_chunk(title, current))
+            chunk = _format_chunk(title, current)
+            if chunk is not None:
+                chunks.append(chunk)
             current = []
         current.append(row)
-        if row["role"] == "assistant":
-            chunks.append(_format_chunk(title, current))
-            current = []
     if current:
-        chunks.append(_format_chunk(title, current))
+        chunk = _format_chunk(title, current)
+        if chunk is not None:
+            chunks.append(chunk)
     return chunks
 
 
-def _format_chunk(title: str, rows: list[sqlite3.Row]) -> tuple[int, int, str]:
-    role_labels = {"user": "User", "assistant": "Assistant"}
-    lines = [f"Conversation: {title}"]
-    lines.extend(f"{role_labels[row['role']]}: {row['content']}" for row in rows)
+def _format_chunk(title: str, rows: list[sqlite3.Row]) -> tuple[int, int, str] | None:
+    """Render one turn as its user message plus its final assistant answer,
+    skipping any assistant rows in between (tool calls and reasoning). Returns None for a
+    turn that has no answer yet (e.g. the pre-emptive rebuild right after the
+    user message is saved, before generation finishes, or a turn stopped
+    before producing any content) -- the next rebuild fills it in once an
+    answer exists.
+    """
+    user_row = next((row for row in rows if row["role"] == "user"), None)
+    final_answer = next(
+        (
+            row["content"]
+            for row in reversed(rows)
+            if row["role"] == "assistant" and row["content"].strip()
+        ),
+        None,
+    )
+    if user_row is None or final_answer is None:
+        return None
+    lines = [
+        f"Conversation: {title}",
+        f"User: {user_row['content']}",
+        f"Assistant: {final_answer}",
+    ]
     return rows[0]["id"], rows[-1]["id"], "\n".join(lines)
 
 
