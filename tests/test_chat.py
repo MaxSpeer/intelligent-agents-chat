@@ -49,13 +49,13 @@ class CompletionMessagesTests(unittest.TestCase):
     def test_plain_messages_pass_through_with_the_system_prompt_prepended(self) -> None:
         messages = completion_messages([_message("user", "Hello")])
 
-        self.assertEqual(
-            messages,
-            [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "Hello"},
-            ],
-        )
+        # The system message is SYSTEM_PROMPT with today's real date spliced
+        # in fresh on every call (see system_prompt_for_today) -- not the
+        # bare constant, so this checks containment, not exact equality.
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn(SYSTEM_PROMPT, messages[0]["content"])
+        self.assertIn("Today's date is", messages[0]["content"])
+        self.assertEqual(messages[1], {"role": "user", "content": "Hello"})
 
     def test_assistant_tool_calls_are_reconstructed_in_the_real_api_shape(self) -> None:
         stored_call = {"id": "call_1", "name": "calculator", "arguments": '{"expression": "1+1"}'}
@@ -235,6 +235,51 @@ class StreamReplyReasoningFallbackTests(unittest.IsolatedAsyncioTestCase):
                 break
             text_events_before_tool_call.append(event)
         self.assertFalse(any(not e.is_reasoning for e in text_events_before_tool_call))
+
+
+class ToolRoundBudgetTests(unittest.IsolatedAsyncioTestCase):
+    """Real case this addresses: with generous round budgets, a model that
+    hasn't found a fully satisfying answer can keep retrying (e.g.
+    re-searching the same page with ever more specific terms) all the way to
+    MAX_TOOL_ROUNDS without ever concluding. stream_reply nudges it to wrap
+    up once few rounds remain.
+    """
+
+    async def test_warning_appears_only_once_few_rounds_remain(self) -> None:
+        profile = ModelProfile(
+            key="tools",
+            label="Tools",
+            base_url="http://x/v1",
+            model="test-model",
+            supports_tools=True,
+        )
+        # A model that never stops calling tools on its own -- forces every
+        # round up to the (patched, small) MAX_TOOL_ROUNDS to run.
+        calls_seen: list[list[dict]] = []
+
+        async def fake_stream_reply(profile, messages, *, tool_calls=None, **kwargs):
+            calls_seen.append(list(messages))
+            tool_calls.append(
+                {"id": f"call_{len(calls_seen)}", "name": "calculator", "arguments": "{}"}
+            )
+            yield ContentDelta("thinking", is_reasoning=True)
+
+        def has_warning(messages: list[dict]) -> bool:
+            return any(
+                m.get("role") == "system" and "tool-call round" in (m.get("content") or "")
+                for m in messages
+            )
+
+        with (
+            mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)),
+            mock.patch.object(chat, "MAX_TOOL_ROUNDS", 3),
+        ):
+            [event async for event in stream_reply(profile, [{"role": "user", "content": "hi"}])]
+
+        self.assertEqual(len(calls_seen), 3)
+        self.assertFalse(has_warning(calls_seen[0]))  # 3 rounds left, > TOOL_ROUNDS_WARNING_AT
+        self.assertTrue(has_warning(calls_seen[1]))  # 2 left
+        self.assertTrue(has_warning(calls_seen[2]))  # 1 left
 
 
 if __name__ == "__main__":

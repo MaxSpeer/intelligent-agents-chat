@@ -16,11 +16,6 @@ from intelligent_agents_chat.llm import LLMError, VLLMGateway
 from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, get_profile
 from intelligent_agents_chat.tools import Tool
 
-# Deliberately fixed, not "whatever profile the parent conversation is using":
-# a sub-agent is a plain, consistent worker for well-defined sub-tasks, not a
-# reflection of the user's model choice. `run()` below always passes
-# thinking_enabled=False regardless of which profile this points at, so
-# delegated tasks stay fast even if that profile supports thinking.
 SUBAGENT_PROFILE_KEY = DEFAULT_PROFILE_KEY
 
 SUBAGENT_SYSTEM_PROMPT = (
