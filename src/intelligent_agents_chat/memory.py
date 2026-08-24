@@ -119,6 +119,15 @@ class ProjectMemoryStore:
                     connection.execute("DELETE FROM memory_entries WHERE id = ?", (existing["id"],))
 
             for start_id, end_id, content in chunks:
+                # rebuild_conversation reprocesses the whole conversation on every
+                # call (see the module docstring's rationale), so most chunks here
+                # are unchanged from the previous rebuild. The WHERE guard keeps
+                # that a true no-op -- without it, every unchanged chunk would
+                # still get its updated_at bumped and its FTS row deleted and
+                # reinserted (see the sync triggers in database.py), which would
+                # make "most recently updated" meaningless (it'd really mean
+                # "this conversation had any activity recently") and cause
+                # needless FTS churn on every turn.
                 connection.execute(
                     """
                     INSERT INTO memory_entries (
@@ -131,6 +140,7 @@ class ProjectMemoryStore:
                         project_id = excluded.project_id,
                         content = excluded.content,
                         updated_at = excluded.updated_at
+                    WHERE memory_entries.content IS NOT excluded.content
                     """,
                     (
                         conversation["project_id"],

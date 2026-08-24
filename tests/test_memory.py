@@ -103,6 +103,35 @@ class ProjectMemoryStoreTests(unittest.TestCase):
             1,
         )
 
+    def test_rebuilding_an_unchanged_turn_does_not_bump_its_updated_at(self) -> None:
+        """rebuild_conversation reprocesses the whole conversation every call
+        (see the module docstring), so most turns are unchanged on any given
+        rebuild. Those must be true no-ops -- otherwise updated_at (used to
+        order both list_entries and retrieve's tie-break) would mean "this
+        conversation had any activity recently" instead of "this chunk's
+        content actually changed", and every rebuild would needlessly delete
+        and reinsert unchanged rows in the FTS index.
+        """
+        source = self.repository.create_conversation(
+            "base", project_id=self.research.id, title="Decisions"
+        )
+        self._add_turn(source.id, "Choose SQLite for memory.", "Decision recorded.")
+        self.memory.rebuild_conversation(source.id)
+        first_updated_at = self.memory.list_entries(self.research.id)[0].updated_at
+
+        # A second, unrelated turn triggers another full rebuild of the same
+        # conversation -- the first turn's chunk is unchanged by it.
+        self._add_turn(source.id, "Also use FTS5 for search.", "Also recorded.")
+        self.memory.rebuild_conversation(source.id)
+        entries = {entry.content: entry for entry in self.memory.list_entries(self.research.id)}
+
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(
+            entries["Conversation: Decisions\nUser: Choose SQLite for memory.\n"
+            "Assistant: Decision recorded."].updated_at,
+            first_updated_at,
+        )
+
     def test_deleting_source_conversation_removes_derived_memory(self) -> None:
         source = self.repository.create_conversation(
             "base", project_id=self.research.id, title="Temporary"
