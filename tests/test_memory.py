@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from intelligent_agents_chat.database import ChatRepository
-from intelligent_agents_chat.memory import ProjectMemoryStore
+from intelligent_agents_chat.memory import ProjectMemoryStore, _fts_query
 from intelligent_agents_chat.retrieval import RetrievalQuery
 
 
@@ -147,6 +147,33 @@ class ProjectMemoryStoreTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertEqual(results[0].source_conversation_id, strongest.id)
         self.assertGreaterEqual(results[0].score, results[1].score)
+
+    def test_a_decimal_number_in_the_query_still_finds_its_matching_entry(self) -> None:
+        source = self.repository.create_conversation(
+            "base", project_id=self.research.id, title="Berlin population"
+        )
+        self._add_turn(
+            source.id,
+            "What was Berlin's population in 2023?",
+            "Berlin's population in 2023 was 3.878 million.",
+        )
+        self.memory.rebuild_conversation(source.id)
+
+        results = self.memory.retrieve(
+            RetrievalQuery(project_id=self.research.id, text="the 3.878 million figure")
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("3.878", results[0].text)
+
+
+class FtsQueryTokenizationTests(unittest.TestCase):
+    def test_decimal_numbers_are_kept_intact_not_split_on_the_dot(self) -> None:
+        query = _fts_query("What was the 3.878 million figure for Berlin in 2023?")
+
+        self.assertIn('"3.878"', query)
+        self.assertNotIn('"3"', query)
+        self.assertNotIn('"878"', query)
 
 
 class ToolCallingTurnChunkingTests(unittest.TestCase):

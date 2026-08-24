@@ -327,9 +327,15 @@ def _format_chunk(title: str, rows: list[sqlite3.Row]) -> tuple[int, int, str] |
     return rows[0]["id"], rows[-1]["id"], "\n".join(lines)
 
 
+# Decimal numbers are matched whole (not split into two tokens on the ".")
+# before falling back to plain word characters. A lone "3" or "878" is useless search
+# signal, but "3.878" is specific enough to matter.
+_TOKEN_PATTERN = re.compile(r"\d+\.\d+|[^\W_]+", flags=re.UNICODE)
+
+
 def _fts_query(text: str) -> str:
     terms: list[str] = []
-    for term in re.findall(r"[^\W_]+", text.casefold(), flags=re.UNICODE):
+    for term in _TOKEN_PATTERN.findall(text.casefold()):
         if len(term) < 2 or term in _STOP_WORDS or term in terms:
             continue
         terms.append(term)
