@@ -164,6 +164,9 @@ async def _get_extracted_text(url: str) -> str:
     return text
 
 
+# Decimal numbers are matched whole (not split into two tokens on the ".")
+# before falling back to plain word characters. A lone "3" or "878" is useless 
+# search signal, but "3.878" is specific enough to matter.
 _TOKEN_PATTERN = re.compile(r"\d+\.\d+|\w+")
 
 

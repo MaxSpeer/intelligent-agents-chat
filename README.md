@@ -1,8 +1,8 @@
 # Intelligent Agents Chat
 
 A cross-platform NiceGUI chat application for the Intelligent Agents project. The current
-milestone provides persistent conversations in SQLite and streamed generation through the
-OpenAI-compatible vLLM servers in `./cluster`.
+milestone provides persistent conversations in SQLite and streamed generation through
+OpenAI-compatible local or vLLM model servers.
 
 ## Current features
 
@@ -14,7 +14,9 @@ OpenAI-compatible vLLM servers in `./cluster`.
 - select a model profile per conversation;
 - enable model thinking per conversation when the selected profile supports it;
 - retain model provenance on assistant messages;
-- create and switch projects whose conversations and messages stay isolated from one another.
+- create and switch projects whose conversations and messages stay isolated from one another;
+- optionally retrieve relevant turns from other chats in the same project, with visible source
+  provenance and per-entry controls.
 
 ## Run it
 
@@ -36,20 +38,42 @@ The sidebar starts in the built-in `General` project. Use its project picker to 
 or create another one. Each project displays only its own conversations; creating, selecting, or
 deleting a conversation never affects conversations in another project.
 
+## Project memory
+
+Project memory is disabled by default for every conversation. Turn on **Use memory** in the chat
+header to let the next request retrieve relevant turns from *other* chats in the selected project.
+The current chat and all other projects are excluded at query time. Assistant messages that used
+memory display an expandable source list, and the source snapshot remains attached to the response
+for later inspection.
+
+Use **Manage project memory** in the sidebar to inspect every derived chat turn, temporarily disable
+individual entries, or rebuild the index. The index is deterministic and rebuildable from the
+canonical messages in SQLite; deleting a source conversation also deletes its derived entries.
+Disabled entries remain disabled across rebuilds.
+
+Retrieval uses SQLite FTS5 today. The retrieval result and token-aware context contracts are shared
+with future file RAG and context-management features, while conversation memory remains a separate
+data source. Recent chat history takes priority, retrieved memory has a 2,048-token budget, and each
+model profile reserves its configured output budget before request assembly. Retrieved text is
+wrapped as untrusted reference data and cannot replace system instructions.
+
 ## Model profiles
 
-The three model profiles are hardcoded in
-[`src/intelligent_agents_chat/models.py`](src/intelligent_agents_chat/models.py), matching the two
-vLLM jobs in `./cluster`:
+The model profiles are configured in
+[`src/intelligent_agents_chat/models.py`](src/intelligent_agents_chat/models.py):
 
 - **Qwen3 8B** (`qwen3-8b`, the default) and **Qwen3 8B (conspiracy)** (`conspiracy`, the trained
   LoRA adapter from `training/README.md`) are both served by the same vLLM process --
   `cluster/run-vllm-qwen3-8b.sbatch`, local port `8001`.
 - **Qwen3.5 9B** (`qwen3.5-9b`) is served by a second, independent vLLM process --
   `cluster/run-vllm-qwen35-9b.sbatch`, local port `8002`.
+- **qwen3.5:2b (local Ollama)** (`ollama-local`) uses the local Ollama service on port `11434`.
+  Reasoning is disabled for this lightweight test profile so the normal 1,024-token response
+  budget is available for the visible answer.
 
-All three support Thinking. It is disabled by default so a profile returns a direct answer; the
-header toggle enables it for the current conversation and persists that choice in SQLite.
+Thinking is disabled by default. The header toggle is available for profiles configured with
+thinking support and persists that choice in SQLite; the lightweight Ollama profile deliberately
+keeps it disabled.
 
 **The `conspiracy` profile is intentionally trained to argue for false claims and stay in that
 stance across a conversation** -- that's the whole point of the experiment (see
@@ -59,21 +83,24 @@ assistant; don't present its answers as factual; and be deliberate about who get
 model that argues misinformation persistently and convincingly is precisely the capability that's
 risky to hand out casually.
 
-No API key is sent to either backend (`VLLM_API_KEY` is not used); both vLLM jobs are reached only
-through an SSH tunnel to compute-node loopback (see `cluster/tunnel.sh`), never exposed directly.
+The OpenAI client uses a fixed, non-secret placeholder API key. Ollama ignores it, while both vLLM
+jobs are reached only through an SSH tunnel to compute-node loopback (see `cluster/tunnel.sh`),
+never exposed directly.
 
-Only the two local ports are configurable, since they depend on which local port each SSH tunnel
-happens to use:
+The two tunnel ports and the local Ollama endpoint/model can be overridden through environment
+variables:
 
 ```bash
 export VLLM_QWEN3_8B_PORT=8001    # matches cluster/run-vllm-qwen3-8b.sbatch's SERVER_PORT
 export VLLM_QWEN35_9B_PORT=8002   # matches cluster/run-vllm-qwen35-9b.sbatch's SERVER_PORT
+export OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+export OLLAMA_MODEL=qwen3.5:2b
 uv run intelligent-agents-chat
 ```
 
-Everything else (labels, model names, the SQLite path, and generation parameters such as
-max tokens, temperature, and the system prompt) is hardcoded in `models.py`, `database.py`, and
-`llm.py` -- edit those files directly to change them.
+Everything else (labels, cluster model names, context-window sizes, the SQLite path, and generation
+parameters such as max tokens, temperature, and the system prompt) is hardcoded in `models.py`,
+`database.py`, `context.py`, and `llm.py` -- edit those files directly to change them.
 
 ## Debug logs
 
@@ -128,5 +155,6 @@ Submission, validation, SSH tunneling, and image recreation are documented in
 
 ## Scope
 
-This milestone deliberately stops at persistent chat and the model gateway. Project-memory
-retrieval, fine-tuning workflows, and elective agent features remain later milestones.
+This milestone includes persistent chat, the model gateway, and deterministic project-memory
+retrieval. File RAG, tool calling, web search, multimodality, and autonomous agent loops remain later
+milestones.

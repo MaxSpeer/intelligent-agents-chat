@@ -1,4 +1,4 @@
-"""Tests for the hardcoded model profiles."""
+"""Tests for the configured model profiles."""
 
 import unittest
 from unittest.mock import patch
@@ -32,10 +32,10 @@ class ModelProfilesTests(unittest.TestCase):
         self.assertEqual(DEFAULT_PROFILE_KEY, "qwen3.5-9b")
         self.assertIn(DEFAULT_PROFILE_KEY, profile_options())
 
-    def test_three_profiles_are_configured(self) -> None:
+    def test_four_profiles_are_configured(self) -> None:
         self.assertEqual(
             {profile.key for profile in MODEL_PROFILES},
-            {"qwen3.5-9b", "qwen3-8b", "conspiracy"},
+            {"qwen3.5-9b", "qwen3-8b", "conspiracy", "ollama-local"},
         )
 
     def test_qwen3_8b_and_conspiracy_share_the_same_backend(self) -> None:
@@ -58,6 +58,14 @@ class ModelProfilesTests(unittest.TestCase):
         self.assertTrue(profile.supports_thinking)
         self.assertTrue(profile.supports_tools)
 
+    def test_local_ollama_profile_disables_reasoning(self) -> None:
+        profile = get_profile("ollama-local")
+
+        self.assertEqual(profile.base_url, "http://127.0.0.1:11434/v1")
+        self.assertEqual(profile.model, "qwen3.5:2b")
+        self.assertEqual(profile.reasoning_effort, "none")
+        self.assertFalse(profile.supports_thinking)
+
     def test_unknown_profile_is_rejected(self) -> None:
         with self.assertRaises(KeyError):
             get_profile("missing")
@@ -69,6 +77,7 @@ class ModelProfilesTests(unittest.TestCase):
                 "qwen3.5-9b": "Qwen3.5 9B",
                 "qwen3-8b": "Qwen3 8B",
                 "conspiracy": "Qwen3 8B (conspiracy)",
+                "ollama-local": "qwen3.5:2b (local Ollama)",
             },
         )
 

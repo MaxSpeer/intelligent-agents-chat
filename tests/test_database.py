@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from intelligent_agents_chat.database import (
+    ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
     DEFAULT_DATABASE_PATH,
     DEFAULT_PROJECT_ID,
@@ -59,6 +60,7 @@ class ChatRepositoryTests(unittest.TestCase):
         assert loaded_conversation is not None
         self.assertEqual(loaded_conversation.title, DEFAULT_CONVERSATION_TITLE)
         self.assertFalse(loaded_conversation.thinking_enabled)
+        self.assertFalse(loaded_conversation.memory_enabled)
         self.assertEqual([message.role for message in messages], ["user", "assistant"])
         self.assertEqual(messages[1].id, assistant.id)
         self.assertEqual(messages[1].model_profile, "base")
@@ -106,6 +108,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertTrue(self.repository.rename_conversation(conversation.id, "Planning"))
         self.assertTrue(self.repository.set_model_profile(conversation.id, "tuned"))
         self.assertTrue(self.repository.set_thinking_enabled(conversation.id, True))
+        self.assertTrue(self.repository.set_memory_enabled(conversation.id, True))
 
         updated = self.repository.get_conversation(conversation.id)
         self.assertIsNotNone(updated)
@@ -113,6 +116,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertEqual(updated.title, "Planning")
         self.assertEqual(updated.model_profile, "tuned")
         self.assertTrue(updated.thinking_enabled)
+        self.assertTrue(updated.memory_enabled)
 
     def test_new_conversation_can_start_with_thinking_enabled(self) -> None:
         conversation = self.repository.create_conversation(
@@ -125,6 +129,55 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertIsNotNone(reopened)
         assert reopened is not None
         self.assertTrue(reopened.thinking_enabled)
+
+    def test_new_conversation_can_start_with_memory_enabled(self) -> None:
+        conversation = self.repository.create_conversation(
+            "base",
+            memory_enabled=True,
+        )
+
+        reopened = ChatRepository(self.database_path).get_conversation(conversation.id)
+
+        self.assertIsNotNone(reopened)
+        assert reopened is not None
+        self.assertTrue(reopened.memory_enabled)
+
+    def test_context_source_provenance_is_persisted_and_cascades_with_message(self) -> None:
+        source = self.repository.create_conversation("base", title="Architecture")
+        target = self.repository.create_conversation("base", title="Implementation")
+        assistant = self.repository.add_message(
+            target.id,
+            "assistant",
+            "Use SQLite FTS5.",
+            model_profile="base",
+        )
+        self.repository.add_message_context_sources(
+            assistant.id,
+            [
+                ContextSourceInput(
+                    source_kind="project_memory",
+                    source_id="42",
+                    source_project_id=DEFAULT_PROJECT_ID,
+                    source_conversation_id=source.id,
+                    source_title=source.title,
+                    source_locator="messages 1-2",
+                    rank=1,
+                    score=0.75,
+                    token_estimate=20,
+                )
+            ],
+        )
+
+        loaded = self.repository.list_message_context_sources(assistant.id)
+
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].source_kind, "project_memory")
+        self.assertEqual(loaded[0].source_conversation_id, source.id)
+        self.assertEqual(loaded[0].source_title, "Architecture")
+        self.assertEqual(loaded[0].rank, 1)
+
+        self.assertTrue(self.repository.delete_conversation(target.id))
+        self.assertEqual(self.repository.list_message_context_sources(assistant.id), [])
 
     def test_deleting_a_conversation_cascades_to_messages(self) -> None:
         conversation = self.repository.create_conversation("base")

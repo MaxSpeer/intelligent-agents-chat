@@ -326,6 +326,28 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], MAX_TOKENS)
         self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
 
+    async def test_profile_can_set_reasoning_effort_for_ollama(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="ollama",
+            label="Local Ollama",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+            reasoning_effort="none",
+        )
+
+        _ = [
+            chunk
+            async for chunk in VLLMGateway().stream_reply(
+                profile,
+                [{"role": "user", "content": "Answer directly"}],
+            )
+        ]
+
+        assert FakeVLLMHandler.request_body is not None
+        self.assertEqual(FakeVLLMHandler.request_body["reasoning_effort"], "none")
+        self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
+
 
 class CheckModelAvailableTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
