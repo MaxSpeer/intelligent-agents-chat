@@ -1439,7 +1439,6 @@ def index() -> None:
             repository.add_message(conversation.id, "user", text)
             if conversation.title == DEFAULT_CONVERSATION_TITLE and not previous_messages:
                 repository.rename_conversation(conversation.id, _conversation_title(text))
-            rebuild_conversation_memory(conversation.id)
 
             composer.value = ""
             render_all()

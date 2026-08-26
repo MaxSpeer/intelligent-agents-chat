@@ -6,6 +6,7 @@ import asyncio
 from collections import Counter
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
+from datetime import date
 import logging
 from time import monotonic
 
@@ -22,7 +23,23 @@ HEALTH_CHECK_TIMEOUT_SECONDS = 3.0
 MAX_TOKENS = 1024
 THINKING_MAX_TOKENS = 8192
 TEMPERATURE = 0.2
-SYSTEM_PROMPT = "You are a helpful assistant. Give clear, accurate, and concise answers."
+SYSTEM_PROMPT = (
+    "You are a helpful assistant. Give clear, accurate, and concise answers. "
+    "When you use tools, don't settle for a thin or inconclusive first result -- if a "
+    "web search's snippets don't clearly answer the question, fetch the most promising "
+    "page for more detail before giving your final answer."
+)
+
+
+def system_prompt_for_today() -> str:
+    """SYSTEM_PROMPT with today's real date spliced in, computed fresh on
+    every call (never cached) so each request tells the model what day it
+    actually is. Without this, a model doesn't reach for a tool to check --
+    it isn't *unsure* what day it is, it's *confidently wrong* (its training
+    cutoff), so nothing prompts it to ever question that. The date has to be
+    stated unconditionally, not offered as something optional to look up.
+    """
+    return f"Today's date is {date.today().isoformat()}. {SYSTEM_PROMPT}"
 
 logger = logging.getLogger(__name__)
 

@@ -82,8 +82,10 @@ class ContextAssemblerTests(unittest.TestCase):
         self.assertIn("Stock is 7 units.", plan.messages[1]["content"])
         self.assertIn("[project_document:chunk-1]", plan.messages[1]["content"])
 
-    def test_recent_history_has_priority_and_old_history_is_trimmed(self) -> None:
-        plan = ContextAssembler("", memory_budget_tokens=0, recent_message_count=2).assemble(
+    def test_history_is_filled_newest_first_and_the_oldest_is_cut_when_it_does_not_fit(
+        self,
+    ) -> None:
+        plan = ContextAssembler("", memory_budget_tokens=0).assemble(
             [
                 {"role": "user", "content": "old " * 100},
                 {"role": "assistant", "content": "old reply " * 100},
@@ -129,32 +131,30 @@ class ContextAssemblerTests(unittest.TestCase):
             + plan.retrieval_tokens,
         )
 
-    def test_tool_call_and_results_are_never_split_by_the_budget(self) -> None:
-        plan = ContextAssembler("", memory_budget_tokens=0, recent_message_count=3).assemble(
+    def test_memory_has_priority_over_history_even_the_most_recent_message(self) -> None:
+        """Memory gets first claim on the leftover budget -- not just on
+        whatever history's newest-first fill didn't already spend. Without
+        this, a long conversation could fill the whole budget on its own
+        recent history and starve memory, even though memory is often the
+        only way to recall something from a *different* chat.
+        """
+        plan = ContextAssembler("", memory_budget_tokens=200).assemble(
             [
-                {"role": "user", "content": "Old question"},
-                {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": "call-1",
-                            "type": "function",
-                            "function": {"name": "calculator", "arguments": "x" * 200},
-                        }
-                    ],
-                },
-                {"role": "tool", "tool_call_id": "call-1", "content": "42"},
-                {"role": "user", "content": "Latest question"},
+                {"role": "user", "content": "recent question"},
+                {"role": "assistant", "content": "recent answer"},
+                {"role": "user", "content": "latest question"},
             ],
-            [],
-            context_window_tokens=80,
-            output_reserve_tokens=20,
+            [candidate()],
+            context_window_tokens=250,
+            output_reserve_tokens=100,
         )
 
-        self.assertEqual(plan.messages, ({"role": "user", "content": "Latest question"},))
-        self.assertEqual(plan.tool_tokens, 0)
-        self.assertEqual(plan.omitted_history_messages, 3)
+        self.assertEqual(len(plan.included_sources), 1)
+        all_content = "\n".join(message["content"] for message in plan.messages)
+        self.assertNotIn("recent question", all_content)
+        self.assertNotIn("recent answer", all_content)
+        self.assertEqual(plan.messages[-1], {"role": "user", "content": "latest question"})
+        self.assertEqual(plan.omitted_history_messages, 2)
 
     def test_raises_when_mandatory_input_cannot_fit(self) -> None:
         with self.assertRaisesRegex(ContextOverflowError, "latest user message"):

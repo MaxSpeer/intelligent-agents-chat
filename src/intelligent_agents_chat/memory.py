@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
 import logging
 from pathlib import Path
 import re
@@ -48,9 +47,7 @@ class MemoryEntry:
     source_conversation_id: str
     source_message_start_id: int
     source_message_end_id: int
-    source_kind: str
     content: str
-    content_hash: str
     enabled: bool
     title: str
     created_at: datetime
@@ -122,21 +119,28 @@ class ProjectMemoryStore:
                     connection.execute("DELETE FROM memory_entries WHERE id = ?", (existing["id"],))
 
             for start_id, end_id, content in chunks:
-                content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                # rebuild_conversation reprocesses the whole conversation on every
+                # call (see the module docstring's rationale), so most chunks here
+                # are unchanged from the previous rebuild. The WHERE guard keeps
+                # that a true no-op -- without it, every unchanged chunk would
+                # still get its updated_at bumped and its FTS row deleted and
+                # reinserted (see the sync triggers in database.py), which would
+                # make "most recently updated" meaningless (it'd really mean
+                # "this conversation had any activity recently") and cause
+                # needless FTS churn on every turn.
                 connection.execute(
                     """
                     INSERT INTO memory_entries (
                         project_id, source_conversation_id, source_message_start_id,
-                        source_message_end_id, source_kind, content, content_hash,
-                        enabled, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, 'conversation_turn', ?, ?, 1, ?, ?)
+                        source_message_end_id, content, enabled, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
                     ON CONFLICT (
                         source_conversation_id, source_message_start_id, source_message_end_id
                     ) DO UPDATE SET
                         project_id = excluded.project_id,
                         content = excluded.content,
-                        content_hash = excluded.content_hash,
                         updated_at = excluded.updated_at
+                    WHERE memory_entries.content IS NOT excluded.content
                     """,
                     (
                         conversation["project_id"],
@@ -144,7 +148,6 @@ class ProjectMemoryStore:
                         start_id,
                         end_id,
                         content,
-                        content_hash,
                         now,
                         now,
                     ),
@@ -230,8 +233,8 @@ class ProjectMemoryStore:
             rows = connection.execute(
                 """
                 SELECT me.id, me.project_id, me.source_conversation_id,
-                       me.source_message_start_id, me.source_message_end_id, me.source_kind,
-                       me.content, me.content_hash, me.enabled, conversation.title,
+                       me.source_message_start_id, me.source_message_end_id,
+                       me.content, me.enabled, conversation.title,
                        me.created_at, me.updated_at
                 FROM memory_entries AS me
                 JOIN conversations AS conversation ON conversation.id = me.source_conversation_id
@@ -283,31 +286,66 @@ class ProjectMemoryStore:
 
 
 def _conversation_chunks(title: str, rows: list[sqlite3.Row]) -> list[tuple[int, int, str]]:
+    """One chunk per turn: a user message plus that turn's final assistant
+    answer. A turn can contain several tool-call rounds (extra assistant rows
+    -- e.g. narration like "let me check that page" right before a tool call;
+    tool results themselves are already excluded by the caller's query), but
+    those rounds don't close the chunk early or leak into it -- only the next
+    user message starts a new turn, mirroring the UI's own trace-vs-answer
+    distinction (see _format_chunk).
+    """
     chunks: list[tuple[int, int, str]] = []
     current: list[sqlite3.Row] = []
     for row in rows:
         if row["role"] == "user" and current:
-            chunks.append(_format_chunk(title, current))
+            chunk = _format_chunk(title, current)
+            if chunk is not None:
+                chunks.append(chunk)
             current = []
         current.append(row)
-        if row["role"] == "assistant":
-            chunks.append(_format_chunk(title, current))
-            current = []
     if current:
-        chunks.append(_format_chunk(title, current))
+        chunk = _format_chunk(title, current)
+        if chunk is not None:
+            chunks.append(chunk)
     return chunks
 
 
-def _format_chunk(title: str, rows: list[sqlite3.Row]) -> tuple[int, int, str]:
-    role_labels = {"user": "User", "assistant": "Assistant"}
-    lines = [f"Conversation: {title}"]
-    lines.extend(f"{role_labels[row['role']]}: {row['content']}" for row in rows)
+def _format_chunk(title: str, rows: list[sqlite3.Row]) -> tuple[int, int, str] | None:
+    """Render one turn as its user message plus its final assistant answer,
+    skipping any assistant rows in between (tool calls and reasoning). Returns None for a
+    turn that has no answer yet (e.g. the pre-emptive rebuild right after the
+    user message is saved, before generation finishes, or a turn stopped
+    before producing any content) -- the next rebuild fills it in once an
+    answer exists.
+    """
+    user_row = next((row for row in rows if row["role"] == "user"), None)
+    final_answer = next(
+        (
+            row["content"]
+            for row in reversed(rows)
+            if row["role"] == "assistant" and row["content"].strip()
+        ),
+        None,
+    )
+    if user_row is None or final_answer is None:
+        return None
+    lines = [
+        f"Conversation: {title}",
+        f"User: {user_row['content']}",
+        f"Assistant: {final_answer}",
+    ]
     return rows[0]["id"], rows[-1]["id"], "\n".join(lines)
+
+
+# Decimal numbers are matched whole (not split into two tokens on the ".")
+# before falling back to plain word characters. A lone "3" or "878" is useless search
+# signal, but "3.878" is specific enough to matter.
+_TOKEN_PATTERN = re.compile(r"\d+\.\d+|[^\W_]+", flags=re.UNICODE)
 
 
 def _fts_query(text: str) -> str:
     terms: list[str] = []
-    for term in re.findall(r"[^\W_]+", text.casefold(), flags=re.UNICODE):
+    for term in _TOKEN_PATTERN.findall(text.casefold()):
         if len(term) < 2 or term in _STOP_WORDS or term in terms:
             continue
         terms.append(term)
@@ -329,9 +367,7 @@ def _memory_entry_from_row(row: sqlite3.Row) -> MemoryEntry:
         source_conversation_id=row["source_conversation_id"],
         source_message_start_id=row["source_message_start_id"],
         source_message_end_id=row["source_message_end_id"],
-        source_kind=row["source_kind"],
         content=row["content"],
-        content_hash=row["content_hash"],
         enabled=bool(row["enabled"]),
         title=row["title"],
         created_at=datetime.fromisoformat(row["created_at"]),
