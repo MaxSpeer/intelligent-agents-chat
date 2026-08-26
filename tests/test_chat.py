@@ -10,6 +10,7 @@ from intelligent_agents_chat import chat
 from intelligent_agents_chat.chat import (
     TOOLS,
     TextChunk,
+    UsageEvent,
     _execute_tool,
     completion_messages,
     format_reasoning_entry,
@@ -343,6 +344,62 @@ class StreamReplyReasoningFallbackTests(unittest.IsolatedAsyncioTestCase):
                 break
             text_events_before_tool_call.append(event)
         self.assertFalse(any(not e.is_reasoning for e in text_events_before_tool_call))
+
+
+class UsageEventTests(unittest.IsolatedAsyncioTestCase):
+    """UsageEvent reports the model server's real usage for the whole turn:
+    prompt_tokens from the initial request only (later rounds' prompts grow
+    with tool activity, which isn't what ContextAssembler budgeted for), but
+    completion_tokens summed across every round -- each tool-call round is
+    its own separate completion request with its own full output budget (see
+    llm.py's stream_reply and chat.py's UsageEvent docstring).
+    """
+
+    PROFILE = ModelProfile(
+        key="tools",
+        label="Tools",
+        base_url="http://x/v1",
+        model="test-model",
+        supports_tools=True,
+    )
+
+    async def test_prompt_from_round_one_completion_summed_peak_from_the_last_round(
+        self,
+    ) -> None:
+        call = {"id": "call_1", "name": "calculator", "arguments": "{}"}
+        rounds = iter([[ContentDelta("")], [ContentDelta("2")]])
+        tool_calls_by_round = iter([[call], []])
+        usage_by_round = iter(
+            [
+                {"prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105},
+                {"prompt_tokens": 150, "completion_tokens": 3, "total_tokens": 153},
+            ]
+        )
+
+        async def fake_stream_reply(profile, messages, *, tool_calls=None, usage=None, **kwargs):
+            tool_calls.extend(next(tool_calls_by_round))
+            if usage is not None:
+                usage.update(next(usage_by_round))
+            for delta in next(rounds):
+                yield delta
+
+        with mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)):
+            events = [event async for event in stream_reply(self.PROFILE, [])]
+
+        usage_events = [event for event in events if isinstance(event, UsageEvent)]
+        self.assertEqual(len(usage_events), 1)
+        self.assertEqual(usage_events[0].prompt_tokens, 100)
+        self.assertEqual(usage_events[0].completion_tokens, 8)
+        # Round 2's total (153), not round 1's (105) -- the conversation only
+        # ever grows, so the last round always holds the peak.
+        self.assertEqual(usage_events[0].peak_total_tokens, 153)
+
+    async def test_no_usage_event_when_the_server_never_reports_usage(self) -> None:
+        gateway = _fake_gateway([ContentDelta("Hello")])
+        with mock.patch.object(chat, "gateway", gateway):
+            events = [event async for event in stream_reply(self.PROFILE, [])]
+
+        self.assertFalse(any(isinstance(event, UsageEvent) for event in events))
 
 
 class ToolRoundBudgetTests(unittest.IsolatedAsyncioTestCase):

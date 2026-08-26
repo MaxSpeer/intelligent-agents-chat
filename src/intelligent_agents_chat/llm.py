@@ -86,10 +86,17 @@ class VLLMGateway:
         thinking_enabled: bool = False,
         tools: Sequence[dict] | None = None,
         tool_calls: list[dict] | None = None,
+        usage: dict[str, int] | None = None,
     ) -> AsyncIterator[ContentDelta]:
         """Stream the reply as tagged text fragments; if `tool_calls` is given, append
         the fully reconstructed tool calls to it (id, name, arguments) once the stream
-        completes.
+        completes. If `usage` is given, it's filled in with the server's own real
+        prompt_tokens/completion_tokens/total_tokens for this one request -- the
+        chars/3 estimate context.py uses for budgeting is a planning tool, this is
+        what actually happened, straight from the model's own tokenizer. Left empty
+        if the server doesn't report it (stream_options.include_usage isn't
+        universally supported), so callers should treat a missing key as "unknown",
+        not "zero".
         """
         started_at = monotonic()
         chunk_count = 0
@@ -141,6 +148,7 @@ class VLLMGateway:
                 "max_tokens": max_tokens,
                 "temperature": TEMPERATURE,
                 "stream": True,
+                "stream_options": {"include_usage": True},
                 "extra_body": extra_body or None,
             }
             if tools:
@@ -151,6 +159,13 @@ class VLLMGateway:
             async for chunk in stream:
                 if chunk.id:
                     server_response_id = chunk.id
+                # The usage-carrying chunk (last, if stream_options.include_usage
+                # worked) has no choices of its own -- checked before the
+                # choices guard below, or it'd never be seen.
+                if chunk.usage is not None and usage is not None:
+                    usage["prompt_tokens"] = chunk.usage.prompt_tokens
+                    usage["completion_tokens"] = chunk.usage.completion_tokens
+                    usage["total_tokens"] = chunk.usage.total_tokens
                 if not chunk.choices:
                     continue
                 choice = chunk.choices[0]
@@ -270,6 +285,8 @@ class VLLMGateway:
                         reasoning_chunk_count=reasoning_chunk_count,
                         reasoning_chars=reasoning_chars,
                         tool_call_chunk_count=tool_call_chunk_count,
+                        real_prompt_tokens=(usage or {}).get("prompt_tokens"),
+                        real_completion_tokens=(usage or {}).get("completion_tokens"),
                         time_to_first_chunk_ms=first_chunk_ms,
                         time_to_first_reasoning_chunk_ms=first_reasoning_chunk_ms,
                         server_response_id=server_response_id,

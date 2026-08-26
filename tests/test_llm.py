@@ -115,6 +115,19 @@ class FakeVLLMHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
             if slow_response and index == 0:
                 time.sleep(1)
+        # Real vLLM/OpenAI servers send one final chunk with no choices of its
+        # own but a populated `usage`, when stream_options.include_usage was
+        # requested -- exercised by every test here since llm.py always
+        # requests it now (see stream_options in create_kwargs).
+        usage_payload = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
+        }
+        self.wfile.write(f"data: {json.dumps(usage_payload)}\n\n".encode())
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 
@@ -163,10 +176,58 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(FakeVLLMHandler.request_body["stream"])
         self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], MAX_TOKENS)
+        self.assertEqual(
+            FakeVLLMHandler.request_body["stream_options"], {"include_usage": True}
+        )
         self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
         self.assertNotIn("tools", FakeVLLMHandler.request_body)
 
         await asyncio.sleep(0)
+
+    async def test_usage_out_param_is_filled_from_the_servers_final_chunk(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test",
+            label="Test model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+        )
+        usage: dict[str, int] = {}
+
+        _ = [
+            delta
+            async for delta in VLLMGateway().stream_reply(
+                profile,
+                [{"role": "user", "content": "Hello"}],
+                usage=usage,
+            )
+        ]
+
+        self.assertEqual(
+            usage, {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}
+        )
+
+    async def test_usage_out_param_is_left_untouched_when_not_given(self) -> None:
+        """Callers that don't care about usage (most call sites) shouldn't be
+        forced to pass one, and nothing should crash for not passing it.
+        """
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test",
+            label="Test model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+        )
+
+        texts = [
+            delta.text
+            async for delta in VLLMGateway().stream_reply(
+                profile,
+                [{"role": "user", "content": "Hello"}],
+            )
+        ]
+
+        self.assertEqual(texts, ["Hello ", "world"])
 
     async def test_tools_are_forwarded_when_provided(self) -> None:
         host, port = self.server.server_address

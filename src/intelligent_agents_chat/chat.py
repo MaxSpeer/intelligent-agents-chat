@@ -289,7 +289,40 @@ class ToolResultEvent:
     result: str
 
 
-StreamEvent = TextChunk | ToolCallEvent | ToolResultEvent
+@dataclass(frozen=True, slots=True)
+class UsageEvent:
+    """Real token usage for the whole turn, straight from the model server --
+    not the chars/3 estimate context.py uses for budgeting. Yielded once, at
+    most, right before the turn ends -- omitted entirely if the server never
+    reported usage.
+
+    prompt_tokens: from the turn's first (initial) request only -- the one
+    directly comparable to ContextPlan.estimated_input_tokens. Every later
+    round's prompt also includes everything from earlier rounds (their
+    replies get appended before the next request), so "real input tokens for
+    the whole turn" isn't a meaningful single number beyond round 0.
+
+    completion_tokens: summed across every request the turn made (the
+    initial one plus any tool-call rounds, each of which is its own separate
+    completion with its own full output budget -- see stream_reply). This is
+    "how much the model generated in total this turn", not a context-window
+    quantity by itself.
+
+    peak_total_tokens: the largest prompt+completion total any single request
+    this turn reached -- the most the model ever had to hold in context at
+    once. Since the conversation only ever grows across rounds, that's always
+    the *last* round's total, never an earlier one. Compare against the
+    profile's context_window_tokens to see how close a turn came to actually
+    running out of context mid-turn (nothing currently stops that -- see
+    ContextAssembler, which only ever budgets the turn's first request).
+    """
+
+    prompt_tokens: int
+    completion_tokens: int
+    peak_total_tokens: int
+
+
+StreamEvent = TextChunk | ToolCallEvent | ToolResultEvent | UsageEvent
 
 
 async def _execute_tool(name: str, arguments: dict) -> str:
@@ -347,11 +380,16 @@ async def stream_reply(
     """Stream the assistant's reply, executing any tool calls the model makes.
 
     Yields `TextChunk` for visible model text including reasoning,
-    `ToolCallEvent` once per round when the model requests tool calls, and
-    `ToolResultEvent` once per executed call.
+    `ToolCallEvent` once per round when the model requests tool calls,
+    `ToolResultEvent` once per executed call, and a final `UsageEvent` (see its
+    docstring) once the turn's real answer is ready.
     """
     tools = [tool.schema for tool in TOOLS.values()] if profile.supports_tools else None
     conversation_messages: list[dict] = list(messages)
+    # See UsageEvent's docstring for what each of these means and why.
+    initial_prompt_tokens: int | None = None
+    total_completion_tokens = 0
+    last_round_total_tokens: int | None = None
 
     for round_index in range(MAX_TOOL_ROUNDS):
         rounds_remaining = MAX_TOOL_ROUNDS - round_index
@@ -374,6 +412,7 @@ async def stream_reply(
         pending_tool_calls: list[dict] = []
         saw_content = False
         reasoning_chunks: list[str] = []
+        round_usage: dict[str, int] = {}
         async for delta in gateway.stream_reply(
             profile,
             conversation_messages,
@@ -381,12 +420,22 @@ async def stream_reply(
             thinking_enabled=thinking_enabled,
             tools=tools,
             tool_calls=pending_tool_calls,
+            usage=round_usage,
         ):
             if delta.is_reasoning:
                 reasoning_chunks.append(delta.text)
             else:
                 saw_content = True
             yield TextChunk(delta.text, is_reasoning=delta.is_reasoning)
+
+        if round_index == 0:
+            initial_prompt_tokens = round_usage.get("prompt_tokens")
+        total_completion_tokens += round_usage.get("completion_tokens", 0)
+        if "total_tokens" in round_usage:
+            # Overwritten every round on purpose -- conversation_messages only
+            # ever grows, so the last round's total is always the peak (see
+            # UsageEvent's docstring).
+            last_round_total_tokens = round_usage["total_tokens"]
 
         if not pending_tool_calls:
             if not saw_content and reasoning_chunks:
@@ -408,6 +457,12 @@ async def stream_reply(
                         reasoning_chars=len(fallback),
                     )
                     yield TextChunk(fallback, is_reasoning=False)
+            if initial_prompt_tokens is not None and last_round_total_tokens is not None:
+                yield UsageEvent(
+                    prompt_tokens=initial_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    peak_total_tokens=last_round_total_tokens,
+                )
             return
 
         yield ToolCallEvent(tuple(pending_tool_calls))
@@ -456,6 +511,16 @@ async def stream_reply(
             conversation_messages.append(
                 {"role": "tool", "tool_call_id": call["id"], "content": result}
             )
+
+    # MAX_TOOL_ROUNDS was exhausted without the model ever giving a final
+    # answer (see the round-warning nudge above, which is meant to prevent
+    # this) -- still report what was actually spent.
+    if initial_prompt_tokens is not None and last_round_total_tokens is not None:
+        yield UsageEvent(
+            prompt_tokens=initial_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            peak_total_tokens=last_round_total_tokens,
+        )
 
 
 #

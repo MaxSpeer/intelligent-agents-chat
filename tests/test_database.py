@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from intelligent_agents_chat.database import (
+    ContextRunInput,
     ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
     DEFAULT_DATABASE_PATH,
@@ -178,6 +179,78 @@ class ChatRepositoryTests(unittest.TestCase):
 
         self.assertTrue(self.repository.delete_conversation(target.id))
         self.assertEqual(self.repository.list_message_context_sources(assistant.id), [])
+
+    def test_context_run_is_persisted_and_cascades_with_its_message(self) -> None:
+        conversation = self.repository.create_conversation("base")
+        assistant = self.repository.add_message(
+            conversation.id,
+            "assistant",
+            "The answer is 2.",
+            model_profile="base",
+        )
+
+        self.repository.add_message_context_run(
+            assistant.id,
+            ContextRunInput(
+                context_window_tokens=32_768,
+                input_budget_tokens=31_744,
+                estimated_input_tokens=512,
+                real_prompt_tokens=498,
+                real_completion_tokens=12,
+                real_peak_total_tokens=510,
+            ),
+        )
+
+        loaded = self.repository.get_message_context_run(assistant.id)
+
+        self.assertIsNotNone(loaded)
+        assert loaded is not None
+        self.assertEqual(loaded.assistant_message_id, assistant.id)
+        self.assertEqual(loaded.context_window_tokens, 32_768)
+        self.assertEqual(loaded.input_budget_tokens, 31_744)
+        self.assertEqual(loaded.estimated_input_tokens, 512)
+        self.assertEqual(loaded.real_prompt_tokens, 498)
+        self.assertEqual(loaded.real_completion_tokens, 12)
+        self.assertEqual(loaded.real_peak_total_tokens, 510)
+
+        self.assertTrue(self.repository.delete_conversation(conversation.id))
+        self.assertIsNone(self.repository.get_message_context_run(assistant.id))
+
+    def test_context_run_real_token_fields_are_optional(self) -> None:
+        """The server not reporting usage (see llm.py's stream_options
+        caveat) shouldn't block persisting the estimated numbers.
+        """
+        conversation = self.repository.create_conversation("base")
+        assistant = self.repository.add_message(
+            conversation.id, "assistant", "The answer is 2.", model_profile="base"
+        )
+
+        self.repository.add_message_context_run(
+            assistant.id,
+            ContextRunInput(
+                context_window_tokens=32_768,
+                input_budget_tokens=31_744,
+                estimated_input_tokens=512,
+                real_prompt_tokens=None,
+                real_completion_tokens=None,
+                real_peak_total_tokens=None,
+            ),
+        )
+
+        loaded = self.repository.get_message_context_run(assistant.id)
+
+        assert loaded is not None
+        self.assertIsNone(loaded.real_prompt_tokens)
+        self.assertIsNone(loaded.real_completion_tokens)
+        self.assertIsNone(loaded.real_peak_total_tokens)
+
+    def test_get_message_context_run_returns_none_when_absent(self) -> None:
+        conversation = self.repository.create_conversation("base")
+        assistant = self.repository.add_message(
+            conversation.id, "assistant", "The answer is 2.", model_profile="base"
+        )
+
+        self.assertIsNone(self.repository.get_message_context_run(assistant.id))
 
     def test_deleting_a_conversation_cascades_to_messages(self) -> None:
         conversation = self.repository.create_conversation("base")

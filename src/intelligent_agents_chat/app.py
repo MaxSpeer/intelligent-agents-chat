@@ -18,6 +18,7 @@ from intelligent_agents_chat.chat import (
     TextChunk,
     ToolCallEvent,
     ToolResultEvent,
+    UsageEvent,
     active_generations,
     memory_store,
     format_reasoning_entry,
@@ -32,6 +33,7 @@ from intelligent_agents_chat.chat import (
 )
 from intelligent_agents_chat.context import ContextOverflowError, ContextPlan
 from intelligent_agents_chat.database import (
+    ContextRunInput,
     ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
     DEFAULT_PROJECT_ID,
@@ -381,6 +383,41 @@ def index() -> None:
                                         ui.label(source.source_locator).classes(
                                             "memory-source-locator"
                                         )
+                    context_run = repository.get_message_context_run(final_message_id)
+                    if context_run is not None:
+                        # Prefer the real peak (prompt+completion of the turn's
+                        # last round -- the most the model ever held in context
+                        # at once, see chat.py's UsageEvent) for the headline
+                        # number; fall back to the chars/3 estimate if the
+                        # server never reported usage.
+                        if context_run.real_peak_total_tokens is not None:
+                            headline = (
+                                f"Context: {context_run.real_peak_total_tokens:,} / "
+                                f"{context_run.context_window_tokens:,} tokens used at peak "
+                                "this turn"
+                            )
+                        else:
+                            headline = (
+                                f"Context: ~{context_run.estimated_input_tokens:,} / "
+                                f"{context_run.context_window_tokens:,} tokens (estimated -- "
+                                "the model server didn't report real usage)"
+                            )
+                        tooltip_lines = [
+                            headline,
+                            # f"Estimated: {context_run.estimated_input_tokens:,} input tokens "
+                            # f"of {context_run.input_budget_tokens:,} budget "
+                            # f"({context_run.context_window_tokens:,} model window)",
+                        ]
+                        if context_run.real_prompt_tokens is not None:
+                            tooltip_lines.append(
+                                f"Input Token (initial request, without reasoning & tools): {context_run.real_prompt_tokens:,}"
+                            )
+                            tooltip_lines.append(
+                                f"Output Tokens (total generated in this turn, without tools): {context_run.real_completion_tokens:,}"
+                            )
+                        ui.icon("data_usage", size="xs").classes("context-usage-icon").tooltip(
+                            "\n".join(tooltip_lines)
+                        )
 
     def render_messages() -> None:
         messages_container.clear()
@@ -925,6 +962,7 @@ def index() -> None:
         state.generation_id = generation_id
         active_generations.add(conversation.id)
         context_plan: ContextPlan | None = None
+        usage_event: UsageEvent | None = None
 
         try:
             previous_messages = repository.list_messages(conversation.id)
@@ -1109,6 +1147,8 @@ def index() -> None:
                         messages_saved_count += 1
                         output_chars += len(event.result)
                         add_trace_entry(format_tool_result_entry(event.name, event.result))
+                    elif isinstance(event, UsageEvent):
+                        usage_event = event
                     now = monotonic()
 
                     # Actual UI updates (throttled to 40ms)
@@ -1200,6 +1240,24 @@ def index() -> None:
                             )
                             for source in context_plan.included_sources
                         ],
+                    )
+                if assistant_message is not None and context_plan is not None:
+                    repository.add_message_context_run(
+                        assistant_message.id,
+                        ContextRunInput(
+                            context_window_tokens=profile.context_window_tokens,
+                            input_budget_tokens=context_plan.input_budget_tokens,
+                            estimated_input_tokens=context_plan.estimated_input_tokens,
+                            real_prompt_tokens=(
+                                usage_event.prompt_tokens if usage_event is not None else None
+                            ),
+                            real_completion_tokens=(
+                                usage_event.completion_tokens if usage_event is not None else None
+                            ),
+                            real_peak_total_tokens=(
+                                usage_event.peak_total_tokens if usage_event is not None else None
+                            ),
+                        ),
                     )
                 if messages_saved_count:
                     rebuild_conversation_memory(conversation.id)

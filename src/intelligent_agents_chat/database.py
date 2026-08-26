@@ -93,6 +93,40 @@ class MessageContextSource:
     token_estimate: int
 
 
+@dataclass(frozen=True, slots=True)
+class ContextRunInput:
+    """The token-budget outcome of assembling one request, for the context
+    inspector -- estimated (chars/3, from ContextAssembler) alongside real
+    (from the model server's own usage report, may be unavailable).
+    """
+
+    context_window_tokens: int
+    input_budget_tokens: int
+    estimated_input_tokens: int
+    real_prompt_tokens: int | None
+    real_completion_tokens: int | None
+    # The turn's peak prompt+completion total (its last round -- see
+    # chat.py's UsageEvent docstring for why that's always the peak), i.e.
+    # the most the model ever held in context at once this turn. Compare
+    # against context_window_tokens to see how close a turn came to actually
+    # running out mid-turn.
+    real_peak_total_tokens: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class MessageContextRun:
+    """Persisted token-budget outcome for one assistant message."""
+
+    assistant_message_id: int
+    context_window_tokens: int
+    input_budget_tokens: int
+    estimated_input_tokens: int
+    real_prompt_tokens: int | None
+    real_completion_tokens: int | None
+    real_peak_total_tokens: int | None
+    created_at: datetime
+
+
 class ChatRepository:
     """Small synchronous repository using short-lived SQLite connections."""
 
@@ -221,6 +255,18 @@ class ChatRepository:
 
                 CREATE INDEX IF NOT EXISTS message_context_sources_message_idx
                     ON message_context_sources(assistant_message_id, rank);
+
+                CREATE TABLE IF NOT EXISTS message_context_runs (
+                    assistant_message_id INTEGER PRIMARY KEY
+                        REFERENCES messages(id) ON DELETE CASCADE,
+                    context_window_tokens INTEGER NOT NULL,
+                    input_budget_tokens INTEGER NOT NULL,
+                    estimated_input_tokens INTEGER NOT NULL,
+                    real_prompt_tokens INTEGER,
+                    real_completion_tokens INTEGER,
+                    real_peak_total_tokens INTEGER,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
             now = _timestamp()
@@ -655,6 +701,53 @@ class ChatRepository:
             ).fetchall()
         return [_message_context_source_from_row(row) for row in rows]
 
+    def add_message_context_run(self, assistant_message_id: int, run: ContextRunInput) -> None:
+        now = _timestamp()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO message_context_runs (
+                    assistant_message_id, context_window_tokens, input_budget_tokens,
+                    estimated_input_tokens, real_prompt_tokens, real_completion_tokens,
+                    real_peak_total_tokens, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    assistant_message_id,
+                    run.context_window_tokens,
+                    run.input_budget_tokens,
+                    run.estimated_input_tokens,
+                    run.real_prompt_tokens,
+                    run.real_completion_tokens,
+                    run.real_peak_total_tokens,
+                    now,
+                ),
+            )
+        log_event(
+            logger,
+            logging.DEBUG,
+            "database.message_context_run.created",
+            assistant_message_id=assistant_message_id,
+            estimated_input_tokens=run.estimated_input_tokens,
+            real_prompt_tokens=run.real_prompt_tokens,
+            real_completion_tokens=run.real_completion_tokens,
+            real_peak_total_tokens=run.real_peak_total_tokens,
+        )
+
+    def get_message_context_run(self, assistant_message_id: int) -> MessageContextRun | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT assistant_message_id, context_window_tokens, input_budget_tokens,
+                       estimated_input_tokens, real_prompt_tokens, real_completion_tokens,
+                       real_peak_total_tokens, created_at
+                FROM message_context_runs
+                WHERE assistant_message_id = ?
+                """,
+                (assistant_message_id,),
+            ).fetchone()
+        return _message_context_run_from_row(row) if row is not None else None
+
     def _connect(self) -> sqlite3.Connection:
         return connect_database(self.database_path)
 
@@ -726,4 +819,17 @@ def _message_context_source_from_row(row: sqlite3.Row) -> MessageContextSource:
         rank=row["rank"],
         score=row["score"],
         token_estimate=row["token_estimate"],
+    )
+
+
+def _message_context_run_from_row(row: sqlite3.Row) -> MessageContextRun:
+    return MessageContextRun(
+        assistant_message_id=row["assistant_message_id"],
+        context_window_tokens=row["context_window_tokens"],
+        input_budget_tokens=row["input_budget_tokens"],
+        estimated_input_tokens=row["estimated_input_tokens"],
+        real_prompt_tokens=row["real_prompt_tokens"],
+        real_completion_tokens=row["real_completion_tokens"],
+        real_peak_total_tokens=row["real_peak_total_tokens"],
+        created_at=datetime.fromisoformat(row["created_at"]),
     )
