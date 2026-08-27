@@ -127,6 +127,21 @@ class MessageContextRun:
     created_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class ConversationCompaction:
+    """A rolling summary standing in for everything in one conversation older
+    than its most recent kept-raw turns (see chat.py's
+    COMPACTION_KEEP_RECENT_TURNS) -- one row per conversation, extended in
+    place rather than re-summarized from scratch as more history ages out.
+    """
+
+    conversation_id: str
+    compacted_through_message_id: int
+    summary: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class ChatRepository:
     """Small synchronous repository using short-lived SQLite connections."""
 
@@ -266,6 +281,15 @@ class ChatRepository:
                     real_completion_tokens INTEGER,
                     real_peak_total_tokens INTEGER,
                     created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS conversation_compactions (
+                    conversation_id TEXT PRIMARY KEY
+                        REFERENCES conversations(id) ON DELETE CASCADE,
+                    compacted_through_message_id INTEGER NOT NULL,
+                    summary TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 );
                 """
             )
@@ -748,6 +772,53 @@ class ChatRepository:
             ).fetchone()
         return _message_context_run_from_row(row) if row is not None else None
 
+    def get_conversation_compaction(self, conversation_id: str) -> ConversationCompaction | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT conversation_id, compacted_through_message_id, summary,
+                       created_at, updated_at
+                FROM conversation_compactions
+                WHERE conversation_id = ?
+                """,
+                (conversation_id,),
+            ).fetchone()
+        return _conversation_compaction_from_row(row) if row is not None else None
+
+    def set_conversation_compaction(
+        self,
+        conversation_id: str,
+        *,
+        compacted_through_message_id: int,
+        summary: str,
+    ) -> None:
+        """Create or extend the one compaction row for a conversation --
+        never a second row, since there's only ever one current boundary.
+        """
+        now = _timestamp()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO conversation_compactions (
+                    conversation_id, compacted_through_message_id, summary,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (conversation_id) DO UPDATE SET
+                    compacted_through_message_id = excluded.compacted_through_message_id,
+                    summary = excluded.summary,
+                    updated_at = excluded.updated_at
+                """,
+                (conversation_id, compacted_through_message_id, summary, now, now),
+            )
+        log_event(
+            logger,
+            logging.INFO,
+            "database.conversation_compaction.updated",
+            conversation_id=conversation_id,
+            compacted_through_message_id=compacted_through_message_id,
+            summary_chars=len(summary),
+        )
+
     def _connect(self) -> sqlite3.Connection:
         return connect_database(self.database_path)
 
@@ -832,4 +903,14 @@ def _message_context_run_from_row(row: sqlite3.Row) -> MessageContextRun:
         real_completion_tokens=row["real_completion_tokens"],
         real_peak_total_tokens=row["real_peak_total_tokens"],
         created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+def _conversation_compaction_from_row(row: sqlite3.Row) -> ConversationCompaction:
+    return ConversationCompaction(
+        conversation_id=row["conversation_id"],
+        compacted_through_message_id=row["compacted_through_message_id"],
+        summary=row["summary"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
     )

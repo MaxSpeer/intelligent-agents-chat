@@ -20,18 +20,21 @@ from intelligent_agents_chat.chat import (
     ToolResultEvent,
     UsageEvent,
     active_generations,
-    memory_store,
     format_reasoning_entry,
     format_tool_call_entry,
     format_tool_result_entry,
     poll_profile_status,
-    prepare_conversation_context,
     profile_status,
-    rebuild_conversation_memory,
-    repository,
     stream_reply,
 )
-from intelligent_agents_chat.context import ContextOverflowError, ContextPlan
+from intelligent_agents_chat.context import (
+    ContextOverflowError,
+    ContextPlan,
+    memory_store,
+    prepare_conversation_context,
+    rebuild_conversation_memory,
+    repository,
+)
 from intelligent_agents_chat.database import (
     ContextRunInput,
     ContextSourceInput,
@@ -41,7 +44,12 @@ from intelligent_agents_chat.database import (
     Message,
     Project,
 )
-from intelligent_agents_chat.llm import LLMError, MAX_TOKENS, THINKING_MAX_TOKENS
+from intelligent_agents_chat.llm import (
+    LLMError,
+    MAX_TOKENS,
+    THINKING_MAX_TOKENS,
+    ContextLengthExceededError,
+)
 from intelligent_agents_chat.logging_config import log_event
 from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, get_profile, profile_options
 
@@ -49,6 +57,12 @@ from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, get_profile, pro
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 logger = logging.getLogger(__name__)
+
+# If the model server rejects a request because the live tool-call chain
+# outgrew what ContextAssembler budgeted for at turn start (see
+# ContextLengthExceededError), compact and retry the same turn this many
+# times before giving up and surfacing it as a normal error.
+MAX_CONTEXT_OVERFLOW_RETRIES = 1
 
 CHAT_MARKDOWN_EXTRAS = [
     "break-on-newline",
@@ -1077,96 +1091,123 @@ def index() -> None:
             return None
 
         try:
-            persisted_messages = repository.list_messages(conversation.id)
-            context_plan = prepare_conversation_context(
-                conversation,
-                profile,
-                persisted_messages,
-                text,
-            )
-            request_messages = list(context_plan.messages)
-            page_event(
-                logging.DEBUG,
-                "ui.generation.request_prepared",
-                model_profile=profile.key,
-                thinking_enabled=conversation.thinking_enabled,
-                completion_message_count=len(request_messages),
-                completion_chars=sum(
-                    len(message.get("content") or "") for message in request_messages
-                ),
-                memory_candidate_count=(
-                    len(context_plan.included_sources) + len(context_plan.excluded_sources)
-                ),
-                memory_source_count=len(context_plan.included_sources),
-                memory_excluded_count=len(context_plan.excluded_sources),
-                estimated_input_tokens=context_plan.estimated_input_tokens,
-                input_budget_tokens=context_plan.input_budget_tokens,
-                omitted_history_messages=context_plan.omitted_history_messages,
-            )
-            async with aclosing(
-                stream_reply(
+            # A generation can be retried (bounded, see MAX_CONTEXT_OVERFLOW_RETRIES)
+            # if the model server rejects it for having outgrown its context window
+            # mid-turn -- ContextAssembler only ever budgets the turn's first
+            # request, so a long tool-call chain can still exceed it later (see
+            # ContextLengthExceededError). No new user message gets added between
+            # attempts, so the turn is still "open": completion_messages() never
+            # collapses it, and the retry's request naturally includes this turn's
+            # own tool calls and results so far, in full -- nothing to re-thread by
+            # hand. pending_content/pending_reasoning/the trace widgets etc. below
+            # are already scoped outside this block, so a retry just keeps
+            # appending to the same in-progress bubble, not starting a new one.
+            force_compact = False
+            for attempt in range(MAX_CONTEXT_OVERFLOW_RETRIES + 1):
+                persisted_messages = repository.list_messages(conversation.id)
+                context_plan = await prepare_conversation_context(
+                    conversation,
                     profile,
-                    request_messages,
-                    request_id=generation_id,
-                    thinking_enabled=conversation.thinking_enabled,
+                    persisted_messages,
+                    text,
+                    force_compact=force_compact,
                 )
-            ) as stream:
-                async for event in stream:
-                    if stop_event.is_set():
-                        stopped = True
-                        break
-                    any_output = True
-                    if isinstance(event, TextChunk):
-                        event_count += 1
-                        output_chars += len(event.text)
-                        if event.is_reasoning:
-                            pending_reasoning.append(event.text)
-                        else:
-                            pending_content.append(event.text)
-                    elif isinstance(event, ToolCallEvent):
-                        event_count += len(event.tool_calls)
-                        # Any content the model produced right before deciding to call a
-                        # tool (rare, but possible) belongs in the trace, not the final
-                        # answer bubble. it isn't the model's real answer yet.
-                        leftover_content = "".join(pending_content).strip()
-                        flush_pending(tool_calls=event.tool_calls)
-                        if leftover_content:
-                            add_trace_entry(leftover_content)
-                        assistant_markdown.set_content(progress_text)
-                        for call in event.tool_calls:
-                            output_chars += len(call["arguments"])
-                            add_trace_entry(format_tool_call_entry(call))
-                    elif isinstance(event, ToolResultEvent):
-                        event_count += 1
-                        repository.add_message(
-                            conversation.id,
-                            "tool",
-                            event.result,
-                            tool_call_id=event.tool_call_id,
+                request_messages = list(context_plan.messages)
+                page_event(
+                    logging.DEBUG,
+                    "ui.generation.request_prepared",
+                    model_profile=profile.key,
+                    thinking_enabled=conversation.thinking_enabled,
+                    completion_message_count=len(request_messages),
+                    completion_chars=sum(
+                        len(message.get("content") or "") for message in request_messages
+                    ),
+                    memory_candidate_count=(
+                        len(context_plan.included_sources) + len(context_plan.excluded_sources)
+                    ),
+                    memory_source_count=len(context_plan.included_sources),
+                    memory_excluded_count=len(context_plan.excluded_sources),
+                    estimated_input_tokens=context_plan.estimated_input_tokens,
+                    input_budget_tokens=context_plan.input_budget_tokens,
+                    omitted_history_messages=context_plan.omitted_history_messages,
+                    retry_attempt=attempt,
+                )
+                try:
+                    async with aclosing(
+                        stream_reply(
+                            profile,
+                            request_messages,
+                            request_id=generation_id,
+                            thinking_enabled=conversation.thinking_enabled,
                         )
-                        messages_saved_count += 1
-                        output_chars += len(event.result)
-                        add_trace_entry(format_tool_result_entry(event.name, event.result))
-                    elif isinstance(event, UsageEvent):
-                        usage_event = event
-                    now = monotonic()
+                    ) as stream:
+                        async for event in stream:
+                            if stop_event.is_set():
+                                stopped = True
+                                break
+                            any_output = True
+                            if isinstance(event, TextChunk):
+                                event_count += 1
+                                output_chars += len(event.text)
+                                if event.is_reasoning:
+                                    pending_reasoning.append(event.text)
+                                else:
+                                    pending_content.append(event.text)
+                            elif isinstance(event, ToolCallEvent):
+                                event_count += len(event.tool_calls)
+                                # Any content the model produced right before deciding to call a
+                                # tool (rare, but possible) belongs in the trace, not the final
+                                # answer bubble. it isn't the model's real answer yet.
+                                leftover_content = "".join(pending_content).strip()
+                                flush_pending(tool_calls=event.tool_calls)
+                                if leftover_content:
+                                    add_trace_entry(leftover_content)
+                                assistant_markdown.set_content(progress_text)
+                                for call in event.tool_calls:
+                                    output_chars += len(call["arguments"])
+                                    add_trace_entry(format_tool_call_entry(call))
+                            elif isinstance(event, ToolResultEvent):
+                                event_count += 1
+                                repository.add_message(
+                                    conversation.id,
+                                    "tool",
+                                    event.result,
+                                    tool_call_id=event.tool_call_id,
+                                )
+                                messages_saved_count += 1
+                                output_chars += len(event.result)
+                                add_trace_entry(format_tool_result_entry(event.name, event.result))
+                            elif isinstance(event, UsageEvent):
+                                usage_event = event
+                            now = monotonic()
 
-                    # Actual UI updates (throttled to 40ms)
-                    if now - last_paint >= 0.04:
-                        if pending_reasoning:
-                            reasoning_text = "".join(pending_reasoning)
-                            if current_reasoning_widget is None:
-                                current_reasoning_widget = add_trace_entry(
-                                    format_reasoning_entry(reasoning_text)
-                                )
-                            else:
-                                current_reasoning_widget.set_content(
-                                    format_reasoning_entry(reasoning_text)
-                                )
-                        if pending_content:
-                            assistant_markdown.set_content("".join(pending_content))
-                        message_scroll.scroll_to(percent=1)
-                        last_paint = now
+                            # Actual UI updates (throttled to 40ms)
+                            if now - last_paint >= 0.04:
+                                if pending_reasoning:
+                                    reasoning_text = "".join(pending_reasoning)
+                                    if current_reasoning_widget is None:
+                                        current_reasoning_widget = add_trace_entry(
+                                            format_reasoning_entry(reasoning_text)
+                                        )
+                                    else:
+                                        current_reasoning_widget.set_content(
+                                            format_reasoning_entry(reasoning_text)
+                                        )
+                                if pending_content:
+                                    assistant_markdown.set_content("".join(pending_content))
+                                message_scroll.scroll_to(percent=1)
+                                last_paint = now
+                    break
+                except ContextLengthExceededError:
+                    if attempt >= MAX_CONTEXT_OVERFLOW_RETRIES:
+                        raise
+                    page_event(
+                        logging.WARNING,
+                        "ui.generation.context_overflow_retry",
+                        model_profile=profile.key,
+                        attempt=attempt,
+                    )
+                    force_compact = True
 
             if not any_output and not stopped:
                 if conversation.thinking_enabled:

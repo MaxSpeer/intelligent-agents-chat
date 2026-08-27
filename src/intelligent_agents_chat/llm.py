@@ -47,6 +47,19 @@ class LLMError(RuntimeError):
     """A safe, user-facing model generation error."""
 
 
+class ContextLengthExceededError(LLMError):
+    """This one request's prompt plus requested output tokens exceeded the
+    model's actual context window -- distinct from other LLMErrors so a
+    caller can react by compacting history and retrying instead of just
+    reporting failure (see app.py's send_message). This can happen even
+    right after ContextAssembler judged everything would fit: that's a
+    chars/3 estimate, not the model's real tokenizer, and a tool-calling
+    turn keeps growing after that one check (see ContextAssembler's
+    docstring) -- so this is the real, authoritative signal, checked here
+    instead of trying to predict it upfront.
+    """
+
+
 async def check_model_available(profile: ModelProfile) -> bool:
     """Return whether the profile's vLLM endpoint is reachable and serving its model."""
     client = AsyncOpenAI(
@@ -240,6 +253,13 @@ class VLLMGateway:
                     "http_status": error.status_code,
                 },
             )
+            # No distinct error code for this across OpenAI-compatible
+            # servers -- matching the message text is the pragmatic option.
+            if error.status_code == 400 and "maximum context length" in str(error).lower():
+                outcome = "context_length_exceeded"
+                raise ContextLengthExceededError(
+                    f"{profile.label}'s context window is full."
+                ) from error
             raise LLMError(
                 f"The {profile.label} model endpoint returned HTTP {error.status_code}."
             ) from error

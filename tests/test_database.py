@@ -252,6 +252,52 @@ class ChatRepositoryTests(unittest.TestCase):
 
         self.assertIsNone(self.repository.get_message_context_run(assistant.id))
 
+    def test_conversation_compaction_is_persisted_and_extended_in_place(self) -> None:
+        conversation = self.repository.create_conversation("base")
+        message = self.repository.add_message(conversation.id, "user", "Hello")
+
+        self.repository.set_conversation_compaction(
+            conversation.id,
+            compacted_through_message_id=message.id,
+            summary="First summary.",
+        )
+        first = self.repository.get_conversation_compaction(conversation.id)
+        assert first is not None
+        self.assertEqual(first.conversation_id, conversation.id)
+        self.assertEqual(first.compacted_through_message_id, message.id)
+        self.assertEqual(first.summary, "First summary.")
+
+        later_message = self.repository.add_message(conversation.id, "assistant", "Hi!")
+        self.repository.set_conversation_compaction(
+            conversation.id,
+            compacted_through_message_id=later_message.id,
+            summary="Extended summary.",
+        )
+        second = self.repository.get_conversation_compaction(conversation.id)
+
+        assert second is not None
+        # One row per conversation, updated in place -- not a second row.
+        self.assertEqual(second.compacted_through_message_id, later_message.id)
+        self.assertEqual(second.summary, "Extended summary.")
+        self.assertEqual(second.created_at, first.created_at)
+        self.assertGreaterEqual(second.updated_at, first.updated_at)
+
+    def test_get_conversation_compaction_returns_none_when_absent(self) -> None:
+        conversation = self.repository.create_conversation("base")
+
+        self.assertIsNone(self.repository.get_conversation_compaction(conversation.id))
+
+    def test_conversation_compaction_cascades_with_its_conversation(self) -> None:
+        conversation = self.repository.create_conversation("base")
+        message = self.repository.add_message(conversation.id, "user", "Hello")
+        self.repository.set_conversation_compaction(
+            conversation.id, compacted_through_message_id=message.id, summary="Summary."
+        )
+
+        self.assertTrue(self.repository.delete_conversation(conversation.id))
+
+        self.assertIsNone(self.repository.get_conversation_compaction(conversation.id))
+
     def test_deleting_a_conversation_cascades_to_messages(self) -> None:
         conversation = self.repository.create_conversation("base")
         message = self.repository.add_message(conversation.id, "user", "Temporary")
