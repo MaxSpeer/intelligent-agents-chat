@@ -17,9 +17,8 @@ general migration framework.
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 import sys
-
-from intelligent_agents_chat.database import ChatRepository, connect_database
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATABASE_PATH = PROJECT_ROOT / ".data" / "chats.sqlite3"

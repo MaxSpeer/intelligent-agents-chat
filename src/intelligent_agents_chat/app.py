@@ -30,19 +30,22 @@ from intelligent_agents_chat.chat import (
 from intelligent_agents_chat.context import (
     ContextOverflowError,
     ContextPlan,
+    document_service,
+    document_store,
     memory_store,
     prepare_conversation_context,
     rebuild_conversation_memory,
     repository,
 )
 from intelligent_agents_chat.database import (
+    AdaptiveRAGRoundRecord,
+    AdaptiveRAGRunInput,
     ContextRunInput,
     ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
     DEFAULT_PROJECT_ID,
     Conversation,
     Message,
-    MessageContextRun,
     Project,
 )
 from intelligent_agents_chat.llm import (
@@ -117,33 +120,6 @@ def _conversation_title(message: str, limit: int = 44) -> str:
 
 def _display_time(value: datetime) -> str:
     return value.astimezone().strftime("%H:%M")
-
-
-def _compact_tokens(value: int) -> str:
-    if value < 10_000:
-        return f"{value:,}"
-    return f"{value / 1_000:.1f}k"
-
-
-def _context_usage_percent(run: MessageContextRun) -> float:
-    if run.input_budget_tokens <= 0:
-        return 0.0
-    return 100 * run.estimated_input_tokens / run.input_budget_tokens
-
-
-def _context_summary(run: MessageContextRun) -> str:
-    return (
-        f"{_compact_tokens(run.estimated_input_tokens)} / "
-        f"{_compact_tokens(run.input_budget_tokens)} input tokens "
-        f"({_context_usage_percent(run):.1f}%)"
-    )
-
-
-def _context_exclusion_reason(reason: str) -> str:
-    labels = {
-        "retrieval_budget_exceeded": "retrieval budget exceeded",
-    }
-    return labels.get(reason, reason.replace("_", " "))
 
 
 def _profile_label(profile_key: str | None) -> str:
@@ -352,12 +328,6 @@ def index() -> None:
             value=conversation.model_profile,
         )
         render_model_status(conversation.model_profile)
-        latest_context_run = repository.get_latest_context_run(conversation.id)
-        context_meter_label.set_text(
-            _context_summary(latest_context_run)
-            if latest_context_run is not None
-            else "Context metrics after first response"
-        )
         thinking_toggle.set_value(conversation.thinking_enabled)
         memory_toggle.set_value(conversation.memory_enabled)
         rag_toggle.set_value(conversation.rag_enabled)
@@ -371,82 +341,6 @@ def index() -> None:
         else:
             memory_toggle.enable()
             rag_toggle.enable()
-
-    def render_context_inspector(message_id: int) -> None:
-        run = repository.get_message_context_run(message_id)
-        if run is None:
-            return
-        usage = min(1.0, run.estimated_input_tokens / max(1, run.input_budget_tokens))
-        with ui.expansion(
-            f"Context · {_context_summary(run)}",
-            icon="data_usage",
-        ).classes("context-inspector"):
-            with ui.row().classes("context-usage-row"):
-                ui.label(f"{_context_usage_percent(run):.1f}% input budget used").classes(
-                    "context-usage-label"
-                )
-                ui.label(
-                    f"{_compact_tokens(run.remaining_input_tokens)} tokens remaining"
-                ).classes("context-remaining-label")
-            ui.linear_progress(value=usage).props(
-                "rounded color=deep-purple track-color=deep-purple-1 size=8px"
-            ).classes("context-progress")
-
-            with ui.element("div").classes("context-metric-grid"):
-                for label, value in (
-                    ("Model window", run.context_window_tokens),
-                    ("Input budget", run.input_budget_tokens),
-                    ("Output reserve", run.output_reserve_tokens),
-                    ("Estimated input", run.estimated_input_tokens),
-                ):
-                    with ui.column().classes("context-metric"):
-                        ui.label(label).classes("context-metric-label")
-                        ui.label(f"{value:,}").classes("context-metric-value")
-
-            ui.label("Estimated input by category").classes("context-section-title")
-            with ui.element("div").classes("context-category-grid"):
-                for label, value, icon in (
-                    ("System", run.system_tokens, "policy"),
-                    ("Current prompt", run.current_user_tokens, "person"),
-                    ("Chat history", run.history_tokens, "forum"),
-                    ("Tool trace", run.tool_tokens, "build"),
-                    ("Retrieved context", run.retrieval_tokens, "manage_search"),
-                ):
-                    with ui.row().classes("context-category"):
-                        ui.icon(icon, size="xs")
-                        with ui.column().classes("gap-0"):
-                            ui.label(label).classes("context-category-label")
-                            ui.label(f"{value:,} tokens").classes("context-category-value")
-
-            with ui.row().classes("context-selection-row"):
-                ui.label(
-                    f"{run.selected_history_messages} messages selected"
-                ).classes("context-selection-chip")
-                ui.label(
-                    f"{run.omitted_history_messages} messages omitted"
-                ).classes("context-selection-chip")
-                ui.label(
-                    f"{run.included_source_count} sources included"
-                ).classes("context-selection-chip")
-                ui.label(
-                    f"{len(run.excluded_sources)} sources excluded"
-                ).classes("context-selection-chip")
-
-            if run.excluded_sources:
-                ui.label("Excluded retrieval candidates").classes("context-section-title")
-                for source in run.excluded_sources:
-                    with ui.row().classes("context-exclusion-row"):
-                        ui.icon("block", size="xs")
-                        with ui.column().classes("gap-0 min-w-0"):
-                            ui.label(source.source_title).classes("context-exclusion-title")
-                            ui.label(
-                                f"{source.source_kind} · {source.source_locator} · "
-                                f"{source.token_estimate:,} tokens · "
-                                f"{_context_exclusion_reason(source.reason)}"
-                            ).classes("context-exclusion-detail")
-
-            ui.label(run.estimator).classes("context-estimator")
-            ui.label(f"Trace ID: {run.trace_id}").classes("context-trace-id")
 
     def render_context_sources(message_id: int) -> None:
         sources = repository.list_message_context_sources(message_id)
@@ -570,25 +464,10 @@ def index() -> None:
                             _chat_markdown(entry)
                 if final_content:
                     _chat_markdown(final_content)
-                if final_message_id is not None:
-                    sources = repository.list_message_context_sources(final_message_id)
-                    if sources:
-                        with ui.expansion(
-                            f"Project memory · {len(sources)} source"
-                            + ("s" if len(sources) != 1 else ""),
-                            icon="history",
-                        ).classes("memory-sources"):
-                            for source in sources:
-                                with ui.row().classes("memory-source-row"):
-                                    ui.icon("chat_bubble_outline", size="xs")
-                                    with ui.column().classes("gap-0 min-w-0"):
-                                        ui.label(source.source_title).classes(
-                                            "memory-source-title"
-                                        )
-                                        ui.label(source.source_locator).classes(
-                                            "memory-source-locator"
-                                        )
-                    context_run = repository.get_message_context_run(final_message_id)
+                if context_message_id is not None:
+                    render_context_sources(context_message_id)
+                    render_adaptive_rag_trace(context_message_id)
+                    context_run = repository.get_message_context_run(context_message_id)
                     if context_run is not None:
                         # Prefer the real peak (prompt+completion of the turn's
                         # last round -- the most the model ever held in context
@@ -1612,6 +1491,7 @@ def index() -> None:
                     persisted_messages,
                     text,
                     force_compact=force_compact,
+                    request_id=generation_id,
                 )
                 request_messages = list(context_plan.messages)
                 page_event(
@@ -1760,43 +1640,31 @@ def index() -> None:
             raise
         finally:
             try:
-                flush_pending()
-                if context_plan is not None and context_message is not None:
-                    repository.add_message_context_run(
-                        context_message.id,
-                        ContextRunInput(
-                            trace_id=context_plan.trace_id or generation_id,
-                            model_profile=profile.key,
-                            estimator=TOKEN_ESTIMATOR_LABEL,
-                            context_window_tokens=context_plan.context_window_tokens,
-                            output_reserve_tokens=context_plan.output_reserve_tokens,
-                            input_budget_tokens=context_plan.input_budget_tokens,
-                            estimated_input_tokens=context_plan.estimated_input_tokens,
-                            remaining_input_tokens=context_plan.remaining_input_tokens,
-                            system_tokens=context_plan.system_tokens,
-                            current_user_tokens=context_plan.current_user_tokens,
-                            history_tokens=context_plan.history_tokens,
-                            tool_tokens=context_plan.tool_tokens,
-                            retrieval_tokens=context_plan.retrieval_tokens,
-                            selected_history_messages=(context_plan.selected_history_messages),
-                            omitted_history_messages=context_plan.omitted_history_messages,
-                            included_source_count=len(context_plan.included_sources),
-                            excluded_sources=tuple(
-                                ContextExclusion(
+                final_message = flush_pending() or context_message
+                if final_message is not None and context_plan is not None:
+                    if context_plan.included_sources:
+                        repository.add_message_context_sources(
+                            final_message.id,
+                            [
+                                ContextSourceInput(
                                     source_kind=source.candidate.source_kind,
                                     source_id=source.candidate.source_id,
+                                    source_project_id=source.candidate.project_id,
+                                    source_conversation_id=(
+                                        source.candidate.source_conversation_id
+                                    ),
                                     source_title=source.candidate.title,
                                     source_locator=source.candidate.locator,
+                                    source_excerpt=source.candidate.text,
+                                    rank=source.rank,
+                                    score=source.candidate.score,
                                     token_estimate=source.token_estimate,
-                                    reason=source.reason,
                                 )
-                                for source in context_plan.excluded_sources
-                            ),
-                        ),
-                    )
-                if assistant_message is not None and context_plan is not None:
+                                for source in context_plan.included_sources
+                            ],
+                        )
                     repository.add_message_context_run(
-                        assistant_message.id,
+                        final_message.id,
                         ContextRunInput(
                             context_window_tokens=profile.context_window_tokens,
                             input_budget_tokens=context_plan.input_budget_tokens,
@@ -1812,6 +1680,34 @@ def index() -> None:
                             ),
                         ),
                     )
+                    if context_plan.adaptive_rag_trace is not None:
+                        trace = context_plan.adaptive_rag_trace
+                        repository.add_message_adaptive_rag_run(
+                            final_message.id,
+                            AdaptiveRAGRunInput(
+                                retrieval_needed=trace.retrieval_needed,
+                                judge_reason=trace.judge_reason,
+                                rounds=tuple(
+                                    AdaptiveRAGRoundRecord(
+                                        query=retrieval_round.query,
+                                        result_count=retrieval_round.result_count,
+                                        new_result_count=retrieval_round.new_result_count,
+                                        evidence_sufficient=(
+                                            retrieval_round.evidence_sufficient
+                                        ),
+                                        assessment_reason=(retrieval_round.assessment_reason),
+                                        missing_information=(
+                                            retrieval_round.missing_information
+                                        ),
+                                    )
+                                    for retrieval_round in trace.rounds
+                                ),
+                                evidence_sufficient=trace.evidence_sufficient,
+                                summary=trace.summary,
+                                fallback_reasons=trace.fallback_reasons,
+                                duration_ms=trace.duration_ms,
+                            ),
+                        )
                 if messages_saved_count:
                     rebuild_conversation_memory(conversation.id)
                 if stopped:
@@ -1922,9 +1818,6 @@ def index() -> None:
                 with ui.column().classes("min-w-0 gap-0"):
                     ui.label("Conversation").classes("eyebrow")
                     title_label = ui.label().classes("chat-title")
-                    with ui.row().classes("header-context-meter"):
-                        ui.icon("data_usage", size="xs")
-                        context_meter_label = ui.label().classes("header-context-label")
                 with ui.row().classes("items-center gap-4 header-controls"):
                     model_select = (
                         ui.select(

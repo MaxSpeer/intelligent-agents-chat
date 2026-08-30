@@ -15,8 +15,6 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import json
 import logging
-import os
-from pathlib import Path
 
 from intelligent_agents_chat.llm import VLLMGateway, check_model_available
 from intelligent_agents_chat.logging_config import log_event
