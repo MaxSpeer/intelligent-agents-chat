@@ -576,6 +576,20 @@ body {
     padding: .25rem 0;
 }
 
+.q-tooltip {
+    /* Preserves literal \n line breaks in tooltip text (e.g. the context-usage
+    icon's multi-line breakdown) while still collapsing runs of whitespace and
+    wrapping normally -- a no-op for every other tooltip here, none of which
+    contain \n. */
+    white-space: pre-line;
+}
+
+.context-usage-icon {
+    margin-top: .5rem;
+    color: var(--muted);
+    cursor: help;
+}
+
 .memory-source-title {
     max-width: 26rem;
     overflow: hidden;

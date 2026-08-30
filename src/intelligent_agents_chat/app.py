@@ -18,29 +18,24 @@ from intelligent_agents_chat.chat import (
     TextChunk,
     ToolCallEvent,
     ToolResultEvent,
+    UsageEvent,
     active_generations,
-    document_service,
-    document_store,
-    memory_store,
     format_reasoning_entry,
     format_tool_call_entry,
     format_tool_result_entry,
     poll_profile_status,
-    prepare_conversation_context,
     profile_status,
-    rebuild_conversation_memory,
-    repository,
     stream_reply,
 )
 from intelligent_agents_chat.context import (
-    TOKEN_ESTIMATOR_LABEL,
     ContextOverflowError,
     ContextPlan,
+    memory_store,
+    prepare_conversation_context,
+    rebuild_conversation_memory,
+    repository,
 )
 from intelligent_agents_chat.database import (
-    AdaptiveRAGRoundRecord,
-    AdaptiveRAGRunInput,
-    ContextExclusion,
     ContextRunInput,
     ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
@@ -50,7 +45,12 @@ from intelligent_agents_chat.database import (
     MessageContextRun,
     Project,
 )
-from intelligent_agents_chat.llm import LLMError, MAX_TOKENS, THINKING_MAX_TOKENS
+from intelligent_agents_chat.llm import (
+    LLMError,
+    MAX_TOKENS,
+    THINKING_MAX_TOKENS,
+    ContextLengthExceededError,
+)
 from intelligent_agents_chat.logging_config import log_event
 from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, get_profile, profile_options
 
@@ -60,6 +60,12 @@ DOCUMENT_UPLOAD_ACCEPT = ".txt,.md,.markdown,.pdf,.docx,.csv,.xlsx"
 DOCUMENT_UPLOAD_LABEL = "TXT, Markdown, PDF, DOCX, CSV, or XLSX"
 
 logger = logging.getLogger(__name__)
+
+# If the model server rejects a request because the live tool-call chain
+# outgrew what ContextAssembler budgeted for at turn start (see
+# ContextLengthExceededError), compact and retry the same turn this many
+# times before giving up and surfacing it as a normal error.
+MAX_CONTEXT_OVERFLOW_RETRIES = 1
 
 CHAT_MARKDOWN_EXTRAS = [
     "break-on-newline",
@@ -564,10 +570,59 @@ def index() -> None:
                             _chat_markdown(entry)
                 if final_content:
                     _chat_markdown(final_content)
-                if context_message_id is not None:
-                    render_context_inspector(context_message_id)
-                    render_context_sources(context_message_id)
-                    render_adaptive_rag_trace(context_message_id)
+                if final_message_id is not None:
+                    sources = repository.list_message_context_sources(final_message_id)
+                    if sources:
+                        with ui.expansion(
+                            f"Project memory · {len(sources)} source"
+                            + ("s" if len(sources) != 1 else ""),
+                            icon="history",
+                        ).classes("memory-sources"):
+                            for source in sources:
+                                with ui.row().classes("memory-source-row"):
+                                    ui.icon("chat_bubble_outline", size="xs")
+                                    with ui.column().classes("gap-0 min-w-0"):
+                                        ui.label(source.source_title).classes(
+                                            "memory-source-title"
+                                        )
+                                        ui.label(source.source_locator).classes(
+                                            "memory-source-locator"
+                                        )
+                    context_run = repository.get_message_context_run(final_message_id)
+                    if context_run is not None:
+                        # Prefer the real peak (prompt+completion of the turn's
+                        # last round -- the most the model ever held in context
+                        # at once, see chat.py's UsageEvent) for the headline
+                        # number; fall back to the chars/3 estimate if the
+                        # server never reported usage.
+                        if context_run.real_peak_total_tokens is not None:
+                            headline = (
+                                f"Context: {context_run.real_peak_total_tokens:,} / "
+                                f"{context_run.context_window_tokens:,} tokens used at peak "
+                                "this turn"
+                            )
+                        else:
+                            headline = (
+                                f"Context: ~{context_run.estimated_input_tokens:,} / "
+                                f"{context_run.context_window_tokens:,} tokens (estimated -- "
+                                "the model server didn't report real usage)"
+                            )
+                        tooltip_lines = [
+                            headline,
+                            # f"Estimated: {context_run.estimated_input_tokens:,} input tokens "
+                            # f"of {context_run.input_budget_tokens:,} budget "
+                            # f"({context_run.context_window_tokens:,} model window)",
+                        ]
+                        if context_run.real_prompt_tokens is not None:
+                            tooltip_lines.append(
+                                f"Input Token (initial request, without reasoning & tools): {context_run.real_prompt_tokens:,}"
+                            )
+                            tooltip_lines.append(
+                                f"Output Tokens (total generated in this turn, without tools): {context_run.real_completion_tokens:,}"
+                            )
+                        ui.icon("data_usage", size="xs").classes("context-usage-icon").tooltip(
+                            "\n".join(tooltip_lines)
+                        )
 
     def render_messages() -> None:
         messages_container.clear()
@@ -1420,6 +1475,7 @@ def index() -> None:
         state.generation_id = generation_id
         active_generations.add(conversation.id)
         context_plan: ContextPlan | None = None
+        usage_event: UsageEvent | None = None
 
         try:
             previous_messages = repository.list_messages(conversation.id)
@@ -1536,108 +1592,123 @@ def index() -> None:
             return None
 
         try:
-            persisted_messages = repository.list_messages(conversation.id)
-            context_plan = await prepare_conversation_context(
-                conversation,
-                profile,
-                persisted_messages,
-                text,
-                request_id=generation_id,
-            )
-            request_messages = list(context_plan.messages)
-            page_event(
-                logging.DEBUG,
-                "ui.generation.request_prepared",
-                model_profile=profile.key,
-                thinking_enabled=conversation.thinking_enabled,
-                completion_message_count=len(request_messages),
-                completion_chars=sum(
-                    len(message.get("content") or "") for message in request_messages
-                ),
-                retrieval_candidate_count=(
-                    len(context_plan.included_sources) + len(context_plan.excluded_sources)
-                ),
-                included_source_count=len(context_plan.included_sources),
-                excluded_source_count=len(context_plan.excluded_sources),
-                source_kinds=sorted(
-                    {source.candidate.source_kind for source in context_plan.included_sources}
-                ),
-                estimated_input_tokens=context_plan.estimated_input_tokens,
-                input_budget_tokens=context_plan.input_budget_tokens,
-                omitted_history_messages=context_plan.omitted_history_messages,
-                adaptive_rag_round_count=(
-                    len(context_plan.adaptive_rag_trace.rounds)
-                    if context_plan.adaptive_rag_trace is not None
-                    else 0
-                ),
-                adaptive_rag_evidence_sufficient=(
-                    context_plan.adaptive_rag_trace.evidence_sufficient
-                    if context_plan.adaptive_rag_trace is not None
-                    else None
-                ),
-            )
-            async with aclosing(
-                stream_reply(
+            # A generation can be retried (bounded, see MAX_CONTEXT_OVERFLOW_RETRIES)
+            # if the model server rejects it for having outgrown its context window
+            # mid-turn -- ContextAssembler only ever budgets the turn's first
+            # request, so a long tool-call chain can still exceed it later (see
+            # ContextLengthExceededError). No new user message gets added between
+            # attempts, so the turn is still "open": completion_messages() never
+            # collapses it, and the retry's request naturally includes this turn's
+            # own tool calls and results so far, in full -- nothing to re-thread by
+            # hand. pending_content/pending_reasoning/the trace widgets etc. below
+            # are already scoped outside this block, so a retry just keeps
+            # appending to the same in-progress bubble, not starting a new one.
+            force_compact = False
+            for attempt in range(MAX_CONTEXT_OVERFLOW_RETRIES + 1):
+                persisted_messages = repository.list_messages(conversation.id)
+                context_plan = await prepare_conversation_context(
+                    conversation,
                     profile,
-                    request_messages,
-                    request_id=generation_id,
-                    thinking_enabled=conversation.thinking_enabled,
+                    persisted_messages,
+                    text,
+                    force_compact=force_compact,
                 )
-            ) as stream:
-                async for event in stream:
-                    if stop_event.is_set():
-                        stopped = True
-                        break
-                    any_output = True
-                    if isinstance(event, TextChunk):
-                        event_count += 1
-                        output_chars += len(event.text)
-                        if event.is_reasoning:
-                            pending_reasoning.append(event.text)
-                        else:
-                            pending_content.append(event.text)
-                    elif isinstance(event, ToolCallEvent):
-                        event_count += len(event.tool_calls)
-                        # Any content the model produced right before deciding to call a
-                        # tool (rare, but possible) belongs in the trace, not the final
-                        # answer bubble. it isn't the model's real answer yet.
-                        leftover_content = "".join(pending_content).strip()
-                        flush_pending(tool_calls=event.tool_calls)
-                        if leftover_content:
-                            add_trace_entry(leftover_content)
-                        assistant_markdown.set_content(progress_text)
-                        for call in event.tool_calls:
-                            output_chars += len(call["arguments"])
-                            add_trace_entry(format_tool_call_entry(call))
-                    elif isinstance(event, ToolResultEvent):
-                        event_count += 1
-                        repository.add_message(
-                            conversation.id,
-                            "tool",
-                            event.result,
-                            tool_call_id=event.tool_call_id,
+                request_messages = list(context_plan.messages)
+                page_event(
+                    logging.DEBUG,
+                    "ui.generation.request_prepared",
+                    model_profile=profile.key,
+                    thinking_enabled=conversation.thinking_enabled,
+                    completion_message_count=len(request_messages),
+                    completion_chars=sum(
+                        len(message.get("content") or "") for message in request_messages
+                    ),
+                    memory_candidate_count=(
+                        len(context_plan.included_sources) + len(context_plan.excluded_sources)
+                    ),
+                    memory_source_count=len(context_plan.included_sources),
+                    memory_excluded_count=len(context_plan.excluded_sources),
+                    estimated_input_tokens=context_plan.estimated_input_tokens,
+                    input_budget_tokens=context_plan.input_budget_tokens,
+                    omitted_history_messages=context_plan.omitted_history_messages,
+                    retry_attempt=attempt,
+                )
+                try:
+                    async with aclosing(
+                        stream_reply(
+                            profile,
+                            request_messages,
+                            request_id=generation_id,
+                            thinking_enabled=conversation.thinking_enabled,
                         )
-                        messages_saved_count += 1
-                        output_chars += len(event.result)
-                        add_trace_entry(format_tool_result_entry(event.name, event.result))
-                    now = monotonic()
+                    ) as stream:
+                        async for event in stream:
+                            if stop_event.is_set():
+                                stopped = True
+                                break
+                            any_output = True
+                            if isinstance(event, TextChunk):
+                                event_count += 1
+                                output_chars += len(event.text)
+                                if event.is_reasoning:
+                                    pending_reasoning.append(event.text)
+                                else:
+                                    pending_content.append(event.text)
+                            elif isinstance(event, ToolCallEvent):
+                                event_count += len(event.tool_calls)
+                                # Any content the model produced right before deciding to call a
+                                # tool (rare, but possible) belongs in the trace, not the final
+                                # answer bubble. it isn't the model's real answer yet.
+                                leftover_content = "".join(pending_content).strip()
+                                flush_pending(tool_calls=event.tool_calls)
+                                if leftover_content:
+                                    add_trace_entry(leftover_content)
+                                assistant_markdown.set_content(progress_text)
+                                for call in event.tool_calls:
+                                    output_chars += len(call["arguments"])
+                                    add_trace_entry(format_tool_call_entry(call))
+                            elif isinstance(event, ToolResultEvent):
+                                event_count += 1
+                                repository.add_message(
+                                    conversation.id,
+                                    "tool",
+                                    event.result,
+                                    tool_call_id=event.tool_call_id,
+                                )
+                                messages_saved_count += 1
+                                output_chars += len(event.result)
+                                add_trace_entry(format_tool_result_entry(event.name, event.result))
+                            elif isinstance(event, UsageEvent):
+                                usage_event = event
+                            now = monotonic()
 
-                    # Actual UI updates (throttled to 40ms)
-                    if now - last_paint >= 0.04:
-                        if pending_reasoning:
-                            reasoning_text = "".join(pending_reasoning)
-                            if current_reasoning_widget is None:
-                                current_reasoning_widget = add_trace_entry(
-                                    format_reasoning_entry(reasoning_text)
-                                )
-                            else:
-                                current_reasoning_widget.set_content(
-                                    format_reasoning_entry(reasoning_text)
-                                )
-                        if pending_content:
-                            assistant_markdown.set_content("".join(pending_content))
-                        message_scroll.scroll_to(percent=1)
-                        last_paint = now
+                            # Actual UI updates (throttled to 40ms)
+                            if now - last_paint >= 0.04:
+                                if pending_reasoning:
+                                    reasoning_text = "".join(pending_reasoning)
+                                    if current_reasoning_widget is None:
+                                        current_reasoning_widget = add_trace_entry(
+                                            format_reasoning_entry(reasoning_text)
+                                        )
+                                    else:
+                                        current_reasoning_widget.set_content(
+                                            format_reasoning_entry(reasoning_text)
+                                        )
+                                if pending_content:
+                                    assistant_markdown.set_content("".join(pending_content))
+                                message_scroll.scroll_to(percent=1)
+                                last_paint = now
+                    break
+                except ContextLengthExceededError:
+                    if attempt >= MAX_CONTEXT_OVERFLOW_RETRIES:
+                        raise
+                    page_event(
+                        logging.WARNING,
+                        "ui.generation.context_overflow_retry",
+                        model_profile=profile.key,
+                        attempt=attempt,
+                    )
+                    force_compact = True
 
             if not any_output and not stopped:
                 if conversation.thinking_enabled:
@@ -1723,52 +1794,26 @@ def index() -> None:
                             ),
                         ),
                     )
-                    if context_plan.included_sources:
-                        repository.add_message_context_sources(
-                            context_message.id,
-                            [
-                                ContextSourceInput(
-                                    source_kind=source.candidate.source_kind,
-                                    source_id=source.candidate.source_id,
-                                    source_project_id=source.candidate.project_id,
-                                    source_conversation_id=(
-                                        source.candidate.source_conversation_id
-                                    ),
-                                    source_title=source.candidate.title,
-                                    source_locator=source.candidate.locator,
-                                    source_excerpt=source.candidate.text,
-                                    rank=source.rank,
-                                    score=source.candidate.score,
-                                    token_estimate=source.token_estimate,
-                                )
-                                for source in context_plan.included_sources
-                            ],
-                        )
-                    if context_plan.adaptive_rag_trace is not None:
-                        trace = context_plan.adaptive_rag_trace
-                        repository.add_message_adaptive_rag_run(
-                            context_message.id,
-                            AdaptiveRAGRunInput(
-                                retrieval_needed=trace.retrieval_needed,
-                                judge_reason=trace.judge_reason,
-                                rounds=tuple(
-                                    AdaptiveRAGRoundRecord(
-                                        query=retrieval_round.query,
-                                        result_count=retrieval_round.result_count,
-                                        new_result_count=retrieval_round.new_result_count,
-                                        evidence_sufficient=(retrieval_round.evidence_sufficient),
-                                        assessment_reason=(retrieval_round.assessment_reason),
-                                        missing_information=(retrieval_round.missing_information),
-                                    )
-                                    for retrieval_round in trace.rounds
-                                ),
-                                evidence_sufficient=trace.evidence_sufficient,
-                                summary=trace.summary,
-                                fallback_reasons=trace.fallback_reasons,
-                                duration_ms=trace.duration_ms,
+                if assistant_message is not None and context_plan is not None:
+                    repository.add_message_context_run(
+                        assistant_message.id,
+                        ContextRunInput(
+                            context_window_tokens=profile.context_window_tokens,
+                            input_budget_tokens=context_plan.input_budget_tokens,
+                            estimated_input_tokens=context_plan.estimated_input_tokens,
+                            real_prompt_tokens=(
+                                usage_event.prompt_tokens if usage_event is not None else None
                             ),
-                        )
-                rebuild_conversation_memory(conversation.id)
+                            real_completion_tokens=(
+                                usage_event.completion_tokens if usage_event is not None else None
+                            ),
+                            real_peak_total_tokens=(
+                                usage_event.peak_total_tokens if usage_event is not None else None
+                            ),
+                        ),
+                    )
+                if messages_saved_count:
+                    rebuild_conversation_memory(conversation.id)
                 if stopped:
                     ui.notify(
                         "Generation stopped; the partial response was saved."

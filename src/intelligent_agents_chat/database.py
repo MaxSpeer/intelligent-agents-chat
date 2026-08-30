@@ -97,103 +97,52 @@ class MessageContextSource:
 
 
 @dataclass(frozen=True, slots=True)
-class ContextExclusion:
-    """One retrieval candidate excluded from a model request and why."""
-
-    source_kind: str
-    source_id: str
-    source_title: str
-    source_locator: str
-    token_estimate: int
-    reason: str
-
-
-@dataclass(frozen=True, slots=True)
 class ContextRunInput:
-    """Technical context-budget trace to attach to an assistant response."""
+    """The token-budget outcome of assembling one request, for the context
+    inspector -- estimated (chars/3, from ContextAssembler) alongside real
+    (from the model server's own usage report, may be unavailable).
+    """
 
-    trace_id: str
-    model_profile: str
-    estimator: str
     context_window_tokens: int
-    output_reserve_tokens: int
     input_budget_tokens: int
     estimated_input_tokens: int
-    remaining_input_tokens: int
-    system_tokens: int
-    current_user_tokens: int
-    history_tokens: int
-    tool_tokens: int
-    retrieval_tokens: int
-    selected_history_messages: int
-    omitted_history_messages: int
-    included_source_count: int
-    excluded_sources: tuple[ContextExclusion, ...]
+    real_prompt_tokens: int | None
+    real_completion_tokens: int | None
+    # The turn's peak prompt+completion total (its last round -- see
+    # chat.py's UsageEvent docstring for why that's always the peak), i.e.
+    # the most the model ever held in context at once this turn. Compare
+    # against context_window_tokens to see how close a turn came to actually
+    # running out mid-turn.
+    real_peak_total_tokens: int | None
 
 
 @dataclass(frozen=True, slots=True)
 class MessageContextRun:
-    """Persisted technical context trace for one assistant response."""
+    """Persisted token-budget outcome for one assistant message."""
 
     assistant_message_id: int
-    trace_id: str
-    model_profile: str
-    estimator: str
     context_window_tokens: int
-    output_reserve_tokens: int
     input_budget_tokens: int
     estimated_input_tokens: int
-    remaining_input_tokens: int
-    system_tokens: int
-    current_user_tokens: int
-    history_tokens: int
-    tool_tokens: int
-    retrieval_tokens: int
-    selected_history_messages: int
-    omitted_history_messages: int
-    included_source_count: int
-    excluded_sources: tuple[ContextExclusion, ...]
+    real_prompt_tokens: int | None
+    real_completion_tokens: int | None
+    real_peak_total_tokens: int | None
     created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
-class AdaptiveRAGRoundRecord:
-    """Persistable audit record for one retrieval and evidence-assessment pass."""
+class ConversationCompaction:
+    """A rolling summary standing in for everything in one conversation older
+    than its most recent kept-raw turns (see chat.py's
+    COMPACTION_KEEP_RECENT_TURNS) -- one row per conversation, extended in
+    place rather than re-summarized from scratch as more history ages out.
+    """
 
-    query: str
-    result_count: int
-    new_result_count: int
-    evidence_sufficient: bool
-    assessment_reason: str
-    missing_information: str
-
-
-@dataclass(frozen=True, slots=True)
-class AdaptiveRAGRunInput:
-    """Adaptive RAG trace to attach to an assistant message."""
-
-    retrieval_needed: bool
-    judge_reason: str
-    rounds: tuple[AdaptiveRAGRoundRecord, ...]
-    evidence_sufficient: bool
-    summary: str | None
-    fallback_reasons: tuple[str, ...]
-    duration_ms: float
-
-
-@dataclass(frozen=True, slots=True)
-class MessageAdaptiveRAGRun:
-    """Persisted adaptive RAG decisions used to generate one assistant message."""
-
-    assistant_message_id: int
-    retrieval_needed: bool
-    judge_reason: str
-    rounds: tuple[AdaptiveRAGRoundRecord, ...]
-    evidence_sufficient: bool
-    summary: str | None
-    fallback_reasons: tuple[str, ...]
-    duration_ms: float
+    conversation_id: str
+    compacted_through_message_id: int
+    summary: str
     created_at: datetime
+    updated_at: datetime
 
 
 class ChatRepository:
@@ -348,38 +297,22 @@ class ChatRepository:
                 CREATE TABLE IF NOT EXISTS message_context_runs (
                     assistant_message_id INTEGER PRIMARY KEY
                         REFERENCES messages(id) ON DELETE CASCADE,
-                    trace_id TEXT NOT NULL,
-                    model_profile TEXT NOT NULL,
-                    estimator TEXT NOT NULL,
                     context_window_tokens INTEGER NOT NULL,
-                    output_reserve_tokens INTEGER NOT NULL,
                     input_budget_tokens INTEGER NOT NULL,
                     estimated_input_tokens INTEGER NOT NULL,
-                    remaining_input_tokens INTEGER NOT NULL,
-                    system_tokens INTEGER NOT NULL,
-                    current_user_tokens INTEGER NOT NULL,
-                    history_tokens INTEGER NOT NULL,
-                    tool_tokens INTEGER NOT NULL,
-                    retrieval_tokens INTEGER NOT NULL,
-                    selected_history_messages INTEGER NOT NULL,
-                    omitted_history_messages INTEGER NOT NULL,
-                    included_source_count INTEGER NOT NULL,
-                    excluded_sources_json TEXT NOT NULL,
+                    real_prompt_tokens INTEGER,
+                    real_completion_tokens INTEGER,
+                    real_peak_total_tokens INTEGER,
                     created_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS message_adaptive_rag_runs (
-                    assistant_message_id INTEGER PRIMARY KEY
-                        REFERENCES messages(id) ON DELETE CASCADE,
-                    retrieval_needed INTEGER NOT NULL CHECK (retrieval_needed IN (0, 1)),
-                    judge_reason TEXT NOT NULL,
-                    rounds_json TEXT NOT NULL,
-                    evidence_sufficient INTEGER NOT NULL
-                        CHECK (evidence_sufficient IN (0, 1)),
-                    summary TEXT,
-                    fallback_reasons_json TEXT NOT NULL,
-                    duration_ms REAL NOT NULL,
-                    created_at TEXT NOT NULL
+                CREATE TABLE IF NOT EXISTS conversation_compactions (
+                    conversation_id TEXT PRIMARY KEY
+                        REFERENCES conversations(id) ON DELETE CASCADE,
+                    compacted_through_message_id INTEGER NOT NULL,
+                    summary TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 );
                 """
             )
@@ -851,183 +784,99 @@ class ChatRepository:
             ).fetchall()
         return [_message_context_source_from_row(row) for row in rows]
 
-    def add_message_context_run(
-        self,
-        assistant_message_id: int,
-        run: ContextRunInput,
-    ) -> None:
-        excluded_sources_json = json.dumps(
-            [
-                {
-                    "source_kind": source.source_kind,
-                    "source_id": source.source_id,
-                    "source_title": source.source_title,
-                    "source_locator": source.source_locator,
-                    "token_estimate": source.token_estimate,
-                    "reason": source.reason,
-                }
-                for source in run.excluded_sources
-            ],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        created_at = _timestamp()
+    def add_message_context_run(self, assistant_message_id: int, run: ContextRunInput) -> None:
+        now = _timestamp()
         with self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO message_context_runs (
-                    assistant_message_id, trace_id, model_profile, estimator,
-                    context_window_tokens, output_reserve_tokens, input_budget_tokens,
-                    estimated_input_tokens, remaining_input_tokens, system_tokens,
-                    current_user_tokens, history_tokens, tool_tokens, retrieval_tokens,
-                    selected_history_messages, omitted_history_messages, included_source_count,
-                    excluded_sources_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    assistant_message_id, context_window_tokens, input_budget_tokens,
+                    estimated_input_tokens, real_prompt_tokens, real_completion_tokens,
+                    real_peak_total_tokens, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     assistant_message_id,
-                    run.trace_id,
-                    run.model_profile,
-                    run.estimator,
                     run.context_window_tokens,
-                    run.output_reserve_tokens,
                     run.input_budget_tokens,
                     run.estimated_input_tokens,
-                    run.remaining_input_tokens,
-                    run.system_tokens,
-                    run.current_user_tokens,
-                    run.history_tokens,
-                    run.tool_tokens,
-                    run.retrieval_tokens,
-                    run.selected_history_messages,
-                    run.omitted_history_messages,
-                    run.included_source_count,
-                    excluded_sources_json,
-                    created_at,
+                    run.real_prompt_tokens,
+                    run.real_completion_tokens,
+                    run.real_peak_total_tokens,
+                    now,
                 ),
             )
         log_event(
             logger,
-            logging.INFO,
+            logging.DEBUG,
             "database.message_context_run.created",
             assistant_message_id=assistant_message_id,
-            trace_id=run.trace_id,
-            model_profile=run.model_profile,
             estimated_input_tokens=run.estimated_input_tokens,
-            input_budget_tokens=run.input_budget_tokens,
-            output_reserve_tokens=run.output_reserve_tokens,
-            selected_history_messages=run.selected_history_messages,
-            omitted_history_messages=run.omitted_history_messages,
-            included_source_count=run.included_source_count,
-            excluded_source_count=len(run.excluded_sources),
+            real_prompt_tokens=run.real_prompt_tokens,
+            real_completion_tokens=run.real_completion_tokens,
+            real_peak_total_tokens=run.real_peak_total_tokens,
         )
 
     def get_message_context_run(self, assistant_message_id: int) -> MessageContextRun | None:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT assistant_message_id, trace_id, model_profile, estimator,
-                       context_window_tokens, output_reserve_tokens, input_budget_tokens,
-                       estimated_input_tokens, remaining_input_tokens, system_tokens,
-                       current_user_tokens, history_tokens, tool_tokens, retrieval_tokens,
-                       selected_history_messages, omitted_history_messages,
-                       included_source_count, excluded_sources_json, created_at
+                SELECT assistant_message_id, context_window_tokens, input_budget_tokens,
+                       estimated_input_tokens, real_prompt_tokens, real_completion_tokens,
+                       real_peak_total_tokens, created_at
                 FROM message_context_runs
                 WHERE assistant_message_id = ?
                 """,
                 (assistant_message_id,),
             ).fetchone()
-        return _message_context_run_from_row(row) if row else None
+        return _message_context_run_from_row(row) if row is not None else None
 
-    def get_latest_context_run(self, conversation_id: str) -> MessageContextRun | None:
+    def get_conversation_compaction(self, conversation_id: str) -> ConversationCompaction | None:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT run.*
-                FROM message_context_runs AS run
-                JOIN messages AS message ON message.id = run.assistant_message_id
-                WHERE message.conversation_id = ?
-                ORDER BY message.id DESC
-                LIMIT 1
+                SELECT conversation_id, compacted_through_message_id, summary,
+                       created_at, updated_at
+                FROM conversation_compactions
+                WHERE conversation_id = ?
                 """,
                 (conversation_id,),
             ).fetchone()
-        return _message_context_run_from_row(row) if row else None
+        return _conversation_compaction_from_row(row) if row is not None else None
 
-    def add_message_adaptive_rag_run(
+    def set_conversation_compaction(
         self,
-        assistant_message_id: int,
-        run: AdaptiveRAGRunInput,
+        conversation_id: str,
+        *,
+        compacted_through_message_id: int,
+        summary: str,
     ) -> None:
-        rounds_json = json.dumps(
-            [
-                {
-                    "query": item.query,
-                    "result_count": item.result_count,
-                    "new_result_count": item.new_result_count,
-                    "evidence_sufficient": item.evidence_sufficient,
-                    "assessment_reason": item.assessment_reason,
-                    "missing_information": item.missing_information,
-                }
-                for item in run.rounds
-            ],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        fallback_reasons_json = json.dumps(
-            list(run.fallback_reasons),
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        created_at = _timestamp()
+        """Create or extend the one compaction row for a conversation --
+        never a second row, since there's only ever one current boundary.
+        """
+        now = _timestamp()
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO message_adaptive_rag_runs (
-                    assistant_message_id, retrieval_needed, judge_reason, rounds_json,
-                    evidence_sufficient, summary, fallback_reasons_json, duration_ms, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO conversation_compactions (
+                    conversation_id, compacted_through_message_id, summary,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (conversation_id) DO UPDATE SET
+                    compacted_through_message_id = excluded.compacted_through_message_id,
+                    summary = excluded.summary,
+                    updated_at = excluded.updated_at
                 """,
-                (
-                    assistant_message_id,
-                    int(run.retrieval_needed),
-                    run.judge_reason,
-                    rounds_json,
-                    int(run.evidence_sufficient),
-                    run.summary,
-                    fallback_reasons_json,
-                    run.duration_ms,
-                    created_at,
-                ),
+                (conversation_id, compacted_through_message_id, summary, now, now),
             )
         log_event(
             logger,
             logging.INFO,
-            "database.message_adaptive_rag_run.created",
-            assistant_message_id=assistant_message_id,
-            retrieval_needed=run.retrieval_needed,
-            round_count=len(run.rounds),
-            evidence_sufficient=run.evidence_sufficient,
-            summary_chars=len(run.summary or ""),
-            fallback_count=len(run.fallback_reasons),
-            duration_ms=run.duration_ms,
+            "database.conversation_compaction.updated",
+            conversation_id=conversation_id,
+            compacted_through_message_id=compacted_through_message_id,
+            summary_chars=len(summary),
         )
-
-    def get_message_adaptive_rag_run(
-        self,
-        assistant_message_id: int,
-    ) -> MessageAdaptiveRAGRun | None:
-        with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT assistant_message_id, retrieval_needed, judge_reason, rounds_json,
-                       evidence_sufficient, summary, fallback_reasons_json, duration_ms, created_at
-                FROM message_adaptive_rag_runs
-                WHERE assistant_message_id = ?
-                """,
-                (assistant_message_id,),
-            ).fetchone()
-        return _message_adaptive_rag_run_from_row(row) if row else None
 
     def _connect(self) -> sqlite3.Connection:
         return connect_database(self.database_path)
@@ -1192,61 +1041,23 @@ def _message_context_source_from_row(row: sqlite3.Row) -> MessageContextSource:
 
 
 def _message_context_run_from_row(row: sqlite3.Row) -> MessageContextRun:
-    excluded_source_payloads = json.loads(row["excluded_sources_json"])
     return MessageContextRun(
         assistant_message_id=row["assistant_message_id"],
-        trace_id=row["trace_id"],
-        model_profile=row["model_profile"],
-        estimator=row["estimator"],
         context_window_tokens=row["context_window_tokens"],
-        output_reserve_tokens=row["output_reserve_tokens"],
         input_budget_tokens=row["input_budget_tokens"],
         estimated_input_tokens=row["estimated_input_tokens"],
-        remaining_input_tokens=row["remaining_input_tokens"],
-        system_tokens=row["system_tokens"],
-        current_user_tokens=row["current_user_tokens"],
-        history_tokens=row["history_tokens"],
-        tool_tokens=row["tool_tokens"],
-        retrieval_tokens=row["retrieval_tokens"],
-        selected_history_messages=row["selected_history_messages"],
-        omitted_history_messages=row["omitted_history_messages"],
-        included_source_count=row["included_source_count"],
-        excluded_sources=tuple(
-            ContextExclusion(
-                source_kind=str(item["source_kind"]),
-                source_id=str(item["source_id"]),
-                source_title=str(item["source_title"]),
-                source_locator=str(item["source_locator"]),
-                token_estimate=int(item["token_estimate"]),
-                reason=str(item["reason"]),
-            )
-            for item in excluded_source_payloads
-        ),
-        created_at=_parse_datetime(row["created_at"]),
+        real_prompt_tokens=row["real_prompt_tokens"],
+        real_completion_tokens=row["real_completion_tokens"],
+        real_peak_total_tokens=row["real_peak_total_tokens"],
+        created_at=datetime.fromisoformat(row["created_at"]),
     )
 
 
-def _message_adaptive_rag_run_from_row(row: sqlite3.Row) -> MessageAdaptiveRAGRun:
-    round_payloads = json.loads(row["rounds_json"])
-    fallback_payloads = json.loads(row["fallback_reasons_json"])
-    return MessageAdaptiveRAGRun(
-        assistant_message_id=row["assistant_message_id"],
-        retrieval_needed=bool(row["retrieval_needed"]),
-        judge_reason=row["judge_reason"],
-        rounds=tuple(
-            AdaptiveRAGRoundRecord(
-                query=str(item["query"]),
-                result_count=int(item["result_count"]),
-                new_result_count=int(item["new_result_count"]),
-                evidence_sufficient=bool(item["evidence_sufficient"]),
-                assessment_reason=str(item["assessment_reason"]),
-                missing_information=str(item["missing_information"]),
-            )
-            for item in round_payloads
-        ),
-        evidence_sufficient=bool(row["evidence_sufficient"]),
+def _conversation_compaction_from_row(row: sqlite3.Row) -> ConversationCompaction:
+    return ConversationCompaction(
+        conversation_id=row["conversation_id"],
+        compacted_through_message_id=row["compacted_through_message_id"],
         summary=row["summary"],
-        fallback_reasons=tuple(str(value) for value in fallback_payloads),
-        duration_ms=float(row["duration_ms"]),
-        created_at=_parse_datetime(row["created_at"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
     )

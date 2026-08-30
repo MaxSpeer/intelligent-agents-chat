@@ -6,9 +6,6 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from intelligent_agents_chat.database import (
-    AdaptiveRAGRoundRecord,
-    AdaptiveRAGRunInput,
-    ContextExclusion,
     ContextRunInput,
     ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
@@ -200,86 +197,24 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertTrue(self.repository.delete_conversation(target.id))
         self.assertEqual(self.repository.list_message_context_sources(assistant.id), [])
 
-    def test_adaptive_rag_trace_is_persisted_and_cascades_with_message(self) -> None:
-        conversation = self.repository.create_conversation("base", rag_enabled=True)
-        assistant = self.repository.add_message(
-            conversation.id,
-            "assistant",
-            "There are 7 units.",
-            model_profile="base",
-        )
-        self.repository.add_message_adaptive_rag_run(
-            assistant.id,
-            AdaptiveRAGRunInput(
-                retrieval_needed=True,
-                judge_reason="The question requests project inventory data.",
-                rounds=(
-                    AdaptiveRAGRoundRecord(
-                        query="Mondkeks inventory",
-                        result_count=3,
-                        new_result_count=3,
-                        evidence_sufficient=True,
-                        assessment_reason="The stock figure is present.",
-                        missing_information="",
-                    ),
-                ),
-                evidence_sufficient=True,
-                summary="The source reports 7 units.",
-                fallback_reasons=(),
-                duration_ms=12.5,
-            ),
-        )
-
-        loaded = self.repository.get_message_adaptive_rag_run(assistant.id)
-
-        self.assertIsNotNone(loaded)
-        assert loaded is not None
-        self.assertTrue(loaded.retrieval_needed)
-        self.assertEqual(loaded.rounds[0].query, "Mondkeks inventory")
-        self.assertTrue(loaded.rounds[0].evidence_sufficient)
-        self.assertEqual(loaded.summary, "The source reports 7 units.")
-        self.assertEqual(loaded.duration_ms, 12.5)
-
-        self.assertTrue(self.repository.delete_conversation(conversation.id))
-        self.assertIsNone(self.repository.get_message_adaptive_rag_run(assistant.id))
-
-    def test_context_run_is_persisted_and_cascades_with_message(self) -> None:
+    def test_context_run_is_persisted_and_cascades_with_its_message(self) -> None:
         conversation = self.repository.create_conversation("base")
         assistant = self.repository.add_message(
             conversation.id,
             "assistant",
-            "A budgeted answer.",
+            "The answer is 2.",
             model_profile="base",
         )
+
         self.repository.add_message_context_run(
             assistant.id,
             ContextRunInput(
-                trace_id="trace-123",
-                model_profile="base",
-                estimator="Conservative estimate (3 characters per token)",
                 context_window_tokens=32_768,
-                output_reserve_tokens=1_024,
                 input_budget_tokens=31_744,
-                estimated_input_tokens=640,
-                remaining_input_tokens=31_104,
-                system_tokens=40,
-                current_user_tokens=20,
-                history_tokens=300,
-                tool_tokens=80,
-                retrieval_tokens=200,
-                selected_history_messages=6,
-                omitted_history_messages=2,
-                included_source_count=1,
-                excluded_sources=(
-                    ContextExclusion(
-                        source_kind="project_document",
-                        source_id="chunk-2",
-                        source_title="notes.pdf",
-                        source_locator="page 2",
-                        token_estimate=900,
-                        reason="retrieval_budget_exceeded",
-                    ),
-                ),
+                estimated_input_tokens=512,
+                real_prompt_tokens=498,
+                real_completion_tokens=12,
+                real_peak_total_tokens=510,
             ),
         )
 
@@ -287,115 +222,98 @@ class ChatRepositoryTests(unittest.TestCase):
 
         self.assertIsNotNone(loaded)
         assert loaded is not None
-        self.assertEqual(loaded.trace_id, "trace-123")
-        self.assertEqual(loaded.estimated_input_tokens, 640)
-        self.assertEqual(loaded.tool_tokens, 80)
-        self.assertEqual(loaded.excluded_sources[0].source_title, "notes.pdf")
-        self.assertEqual(loaded.excluded_sources[0].reason, "retrieval_budget_exceeded")
-        self.assertEqual(
-            self.repository.get_latest_context_run(conversation.id),
-            loaded,
-        )
+        self.assertEqual(loaded.assistant_message_id, assistant.id)
+        self.assertEqual(loaded.context_window_tokens, 32_768)
+        self.assertEqual(loaded.input_budget_tokens, 31_744)
+        self.assertEqual(loaded.estimated_input_tokens, 512)
+        self.assertEqual(loaded.real_prompt_tokens, 498)
+        self.assertEqual(loaded.real_completion_tokens, 12)
+        self.assertEqual(loaded.real_peak_total_tokens, 510)
 
         self.assertTrue(self.repository.delete_conversation(conversation.id))
         self.assertIsNone(self.repository.get_message_context_run(assistant.id))
-        self.assertIsNone(self.repository.get_latest_context_run(conversation.id))
 
-    def test_initialize_migrates_a_database_without_memory_columns(self) -> None:
-        legacy_path = Path(self.temporary_directory.name) / "legacy.sqlite3"
-        with sqlite3.connect(legacy_path) as connection:
-            connection.executescript(
-                """
-                CREATE TABLE projects (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE conversations (
-                    id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-                    title TEXT NOT NULL,
-                    model_profile TEXT NOT NULL,
-                    thinking_enabled INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    conversation_id TEXT NOT NULL
-                        REFERENCES conversations(id) ON DELETE CASCADE,
-                    role TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    model_profile TEXT,
-                    created_at TEXT NOT NULL
-                );
-                INSERT INTO projects VALUES (
-                    'default', 'General', '2026-01-01T00:00:00+00:00',
-                    '2026-01-01T00:00:00+00:00'
-                );
-                INSERT INTO conversations VALUES (
-                    'legacy', 'default', 'Old chat', 'base', 0,
-                    '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
-                );
-                INSERT INTO messages VALUES (
-                    1, 'legacy', 'assistant', 'Preserved answer', 'base',
-                    '2026-01-01T00:00:01+00:00'
-                );
-                CREATE TABLE message_context_sources (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    assistant_message_id INTEGER NOT NULL
-                        REFERENCES messages(id) ON DELETE CASCADE,
-                    source_kind TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    source_project_id TEXT NOT NULL,
-                    source_conversation_id TEXT,
-                    source_title TEXT NOT NULL,
-                    source_locator TEXT NOT NULL,
-                    source_excerpt TEXT NOT NULL DEFAULT '',
-                    rank INTEGER NOT NULL,
-                    score REAL NOT NULL,
-                    token_estimate INTEGER NOT NULL,
-                    UNIQUE (assistant_message_id, rank)
-                );
-                INSERT INTO message_context_sources (
-                    assistant_message_id, source_kind, source_id, source_project_id,
-                    source_conversation_id, source_title, source_locator, source_excerpt,
-                    rank, score, token_estimate
-                ) VALUES (
-                    1, 'project_memory', 'memory-1', 'default', NULL,
-                    'Old source', 'messages 1-2', 'Preserved context', 1, 0.5, 12
-                );
-                """
-            )
-
-        migrated = ChatRepository(legacy_path)
-        migrated.initialize()
-
-        conversation = migrated.get_conversation("legacy")
-        self.assertIsNotNone(conversation)
-        assert conversation is not None
-        self.assertFalse(conversation.memory_enabled)
-        self.assertFalse(conversation.rag_enabled)
-        preserved_message = migrated.get_message(1)
-        self.assertIsNotNone(preserved_message)
-        assert preserved_message is not None
-        self.assertEqual(preserved_message.content, "Preserved answer")
-        self.assertEqual(
-            migrated.list_message_context_sources(1)[0].source_excerpt,
-            "Preserved context",
+    def test_context_run_real_token_fields_are_optional(self) -> None:
+        """The server not reporting usage (see llm.py's stream_options
+        caveat) shouldn't block persisting the estimated numbers.
+        """
+        conversation = self.repository.create_conversation("base")
+        assistant = self.repository.add_message(
+            conversation.id, "assistant", "The answer is 2.", model_profile="base"
         )
-        tool_message = migrated.add_message(
-            "legacy",
-            "tool",
-            "42",
-            tool_call_id="call-1",
+
+        self.repository.add_message_context_run(
+            assistant.id,
+            ContextRunInput(
+                context_window_tokens=32_768,
+                input_budget_tokens=31_744,
+                estimated_input_tokens=512,
+                real_prompt_tokens=None,
+                real_completion_tokens=None,
+                real_peak_total_tokens=None,
+            ),
         )
-        self.assertEqual(tool_message.role, "tool")
-        with sqlite3.connect(legacy_path) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 6)
-            columns = {row[1] for row in connection.execute("PRAGMA table_info(messages)")}
-        self.assertTrue({"tool_calls", "tool_call_id", "reasoning"} <= columns)
+
+        loaded = self.repository.get_message_context_run(assistant.id)
+
+        assert loaded is not None
+        self.assertIsNone(loaded.real_prompt_tokens)
+        self.assertIsNone(loaded.real_completion_tokens)
+        self.assertIsNone(loaded.real_peak_total_tokens)
+
+    def test_get_message_context_run_returns_none_when_absent(self) -> None:
+        conversation = self.repository.create_conversation("base")
+        assistant = self.repository.add_message(
+            conversation.id, "assistant", "The answer is 2.", model_profile="base"
+        )
+
+        self.assertIsNone(self.repository.get_message_context_run(assistant.id))
+
+    def test_conversation_compaction_is_persisted_and_extended_in_place(self) -> None:
+        conversation = self.repository.create_conversation("base")
+        message = self.repository.add_message(conversation.id, "user", "Hello")
+
+        self.repository.set_conversation_compaction(
+            conversation.id,
+            compacted_through_message_id=message.id,
+            summary="First summary.",
+        )
+        first = self.repository.get_conversation_compaction(conversation.id)
+        assert first is not None
+        self.assertEqual(first.conversation_id, conversation.id)
+        self.assertEqual(first.compacted_through_message_id, message.id)
+        self.assertEqual(first.summary, "First summary.")
+
+        later_message = self.repository.add_message(conversation.id, "assistant", "Hi!")
+        self.repository.set_conversation_compaction(
+            conversation.id,
+            compacted_through_message_id=later_message.id,
+            summary="Extended summary.",
+        )
+        second = self.repository.get_conversation_compaction(conversation.id)
+
+        assert second is not None
+        # One row per conversation, updated in place -- not a second row.
+        self.assertEqual(second.compacted_through_message_id, later_message.id)
+        self.assertEqual(second.summary, "Extended summary.")
+        self.assertEqual(second.created_at, first.created_at)
+        self.assertGreaterEqual(second.updated_at, first.updated_at)
+
+    def test_get_conversation_compaction_returns_none_when_absent(self) -> None:
+        conversation = self.repository.create_conversation("base")
+
+        self.assertIsNone(self.repository.get_conversation_compaction(conversation.id))
+
+    def test_conversation_compaction_cascades_with_its_conversation(self) -> None:
+        conversation = self.repository.create_conversation("base")
+        message = self.repository.add_message(conversation.id, "user", "Hello")
+        self.repository.set_conversation_compaction(
+            conversation.id, compacted_through_message_id=message.id, summary="Summary."
+        )
+
+        self.assertTrue(self.repository.delete_conversation(conversation.id))
+
+        self.assertIsNone(self.repository.get_conversation_compaction(conversation.id))
 
     def test_deleting_a_conversation_cascades_to_messages(self) -> None:
         conversation = self.repository.create_conversation("base")
