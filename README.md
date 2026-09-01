@@ -17,7 +17,7 @@ Elective
 - [ ] Context Management
   - [x] Isolation
   - [x] Selection
-  - [ ] Compressing
+  - [x] Compressing
 
 One of
 
