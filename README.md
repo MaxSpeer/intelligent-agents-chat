@@ -14,7 +14,7 @@ Elective
 
 - [x] Sub-Agent
 - [x] Websearch
-- [ ] Context Management
+- [x] Context Management
   - [x] Isolation
   - [x] Selection
   - [x] Compressing
