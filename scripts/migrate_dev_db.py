@@ -11,10 +11,11 @@ scratch:
     uv run python scripts/migrate_dev_db.py [path-to-chats.sqlite3]
 
 This script is written for the schema changes it currently knows about
-(tool-calling support, a `reasoning` column, then the `memory_enabled`
-column on `conversations`). If database.py's schema changes again later,
-extend or replace the migration below to match -- it's a one-off dev tool,
-not a general migration framework.
+(tool-calling support, a `reasoning` column, the `memory_enabled` column on
+`conversations`, then a `real_peak_total_tokens` column on
+`message_context_runs`). If database.py's schema changes again later, extend
+or replace the migration below to match -- it's a one-off dev tool, not a
+general migration framework.
 """
 
 from __future__ import annotations
@@ -85,6 +86,18 @@ def migrate(database_path: Path) -> None:
                 ALTER TABLE conversations ADD COLUMN memory_enabled INTEGER NOT NULL
                     DEFAULT 0 CHECK (memory_enabled IN (0, 1))
                 """
+            )
+
+        # Empty (not missing) if the table doesn't exist yet at all -- then
+        # database.py's own CREATE TABLE IF NOT EXISTS will create it with
+        # every current column the first time the app runs, nothing to do here.
+        context_run_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(message_context_runs)")
+        }
+        if context_run_columns and "real_peak_total_tokens" not in context_run_columns:
+            print("Adding the real_peak_total_tokens column to message_context_runs ...")
+            connection.execute(
+                "ALTER TABLE message_context_runs ADD COLUMN real_peak_total_tokens INTEGER"
             )
 
         connection.commit()

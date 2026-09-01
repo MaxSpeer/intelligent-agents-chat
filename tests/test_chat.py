@@ -1,6 +1,5 @@
-"""Tests for reconstructing OpenAI-shape history from stored messages."""
+"""Tests for the tool registry and the streaming agent loop."""
 
-from datetime import datetime, timezone
 from types import SimpleNamespace
 import unittest
 
@@ -10,205 +9,16 @@ from intelligent_agents_chat import chat
 from intelligent_agents_chat.chat import (
     TOOLS,
     TextChunk,
+    UsageEvent,
     _execute_tool,
-    completion_messages,
     format_reasoning_entry,
     format_tool_call_entry,
     format_tool_result_entry,
-    prepare_conversation_context,
     stream_reply,
 )
-from intelligent_agents_chat.database import Conversation, Message
-from intelligent_agents_chat.llm import ContentDelta, SYSTEM_PROMPT
+from intelligent_agents_chat.llm import ContentDelta
 from intelligent_agents_chat.models import ModelProfile
 from intelligent_agents_chat.tools import Tool
-
-
-def _message(
-    role: str,
-    content: str,
-    *,
-    tool_calls: tuple[dict, ...] | None = None,
-    tool_call_id: str | None = None,
-    reasoning: str | None = None,
-) -> Message:
-    return Message(
-        id=1,
-        conversation_id="conversation",
-        role=role,
-        content=content,
-        model_profile=None,
-        created_at=datetime.now(timezone.utc),
-        tool_calls=tool_calls,
-        tool_call_id=tool_call_id,
-        reasoning=reasoning,
-    )
-
-
-class CompletionMessagesTests(unittest.TestCase):
-    """completion_messages only reshapes stored Messages into the OpenAI-style
-    dicts -- it never adds a system message itself. That's ContextAssembler's
-    job (see ContextAssemblerTests in test_context.py and
-    ToolRoundBudgetTests below for the system message's actual content).
-
-    It groups messages into turns (a user message plus everything up to the
-    next one -- see _group_into_turns) and collapses any turn that made tool
-    calls into just its user message plus one assistant message: a trace
-    line per tool call, no full tool output, plus the turn's final answer.
-    """
-
-    def test_a_turn_without_tool_activity_passes_through_unchanged(self) -> None:
-        messages = completion_messages(
-            [_message("user", "What is 1+1?"), _message("assistant", "It's 2.")]
-        )
-
-        self.assertEqual(
-            messages,
-            [
-                {"role": "user", "content": "What is 1+1?"},
-                {"role": "assistant", "content": "It's 2."},
-            ],
-        )
-
-    def test_a_lone_new_user_message_passes_through_unchanged(self) -> None:
-        """The turn a request is being prepared for -- no answer yet."""
-        messages = completion_messages([_message("user", "Hello")])
-
-        self.assertEqual(messages, [{"role": "user", "content": "Hello"}])
-
-    def test_reasoning_is_never_sent_back_to_the_model(self) -> None:
-        messages = completion_messages(
-            [
-                _message("user", "What is 1+1?"),
-                _message("assistant", "The answer is 2.", reasoning="1 + 1 = 2, obviously."),
-            ]
-        )
-
-        self.assertEqual(messages[1], {"role": "assistant", "content": "The answer is 2."})
-
-    def test_a_turns_tool_call_rounds_collapse_to_one_trace_line_each_plus_the_answer(
-        self,
-    ) -> None:
-        call_1 = {"id": "call_1", "name": "calculator", "arguments": '{"expression": "1+1"}'}
-        call_2 = {"id": "call_2", "name": "calculator", "arguments": '{"expression": "2+2"}'}
-        messages = completion_messages(
-            [
-                _message("user", "What is 1+1 and 2+2?"),
-                _message("assistant", "Let me compute that.", tool_calls=(call_1,)),
-                _message("tool", "2", tool_call_id="call_1"),
-                _message("assistant", "", tool_calls=(call_2,)),
-                _message("tool", "4", tool_call_id="call_2"),
-                _message("assistant", "1+1 is 2 and 2+2 is 4."),
-            ]
-        )
-
-        self.assertEqual(
-            messages,
-            [
-                {"role": "user", "content": "What is 1+1 and 2+2?"},
-                {
-                    "role": "assistant",
-                    "content": (
-                        '[tool: calculator({"expression": "1+1"}) -> ok]\n'
-                        '[tool: calculator({"expression": "2+2"}) -> ok]\n'
-                        "1+1 is 2 and 2+2 is 4."
-                    ),
-                },
-            ],
-        )
-        # The full tool results ("2", "4") and the narration before the first
-        # call ("Let me compute that.") are gone, not just hidden.
-        self.assertNotIn("Let me compute that.", messages[1]["content"])
-
-    def test_a_tool_error_result_is_reported_in_the_trace_line(self) -> None:
-        call = {"id": "call_1", "name": "fetch_page", "arguments": '{"url": "not-a-url"}'}
-        messages = completion_messages(
-            [
-                _message("user", "Fetch that page."),
-                _message("assistant", "", tool_calls=(call,)),
-                _message("tool", "Error: 'url' must start with http:// or https://.", tool_call_id="call_1"),
-                _message("assistant", "I couldn't fetch that -- the URL looks invalid."),
-            ]
-        )
-
-        self.assertIn(
-            "Error: 'url' must start with http:// or https://.", messages[1]["content"]
-        )
-
-    def test_a_tool_call_with_no_result_is_reported_as_interrupted(self) -> None:
-        """The turn was stopped between the tool call and its result being
-        saved -- e.g. the user hit stop mid-round. Distinct from an empty/ok
-        result so it isn't mistaken for success.
-        """
-        call = {"id": "call_1", "name": "fetch_page", "arguments": '{"url": "https://x"}'}
-        messages = completion_messages(
-            [_message("user", "Fetch that page."), _message("assistant", "", tool_calls=(call,))]
-        )
-
-        self.assertIn("never returned a result", messages[1]["content"])
-
-    def test_several_turns_in_one_history_are_each_grouped_independently(self) -> None:
-        call = {"id": "call_1", "name": "calculator", "arguments": "{}"}
-        messages = completion_messages(
-            [
-                _message("user", "First question."),
-                _message("assistant", "First answer."),
-                _message("user", "Second question."),
-                _message("assistant", "", tool_calls=(call,)),
-                _message("tool", "42", tool_call_id="call_1"),
-                _message("assistant", "Second answer."),
-                _message("user", "Third question, not answered yet."),
-            ]
-        )
-
-        self.assertEqual(len(messages), 5)  # 2 + 2 + 1, not 2 + 3 + 1
-        self.assertEqual(messages[0], {"role": "user", "content": "First question."})
-        self.assertEqual(messages[1], {"role": "assistant", "content": "First answer."})
-        self.assertEqual(messages[2], {"role": "user", "content": "Second question."})
-        self.assertIn("ok", messages[3]["content"])
-        self.assertIn("Second answer.", messages[3]["content"])
-        self.assertEqual(
-            messages[4], {"role": "user", "content": "Third question, not answered yet."}
-        )
-
-
-class PrepareConversationContextWiringTests(unittest.TestCase):
-    """Exercises the actual module-level chat.context_assembler, not a
-    freshly-constructed ContextAssembler -- this is what would have caught the
-    regression where context_assembler got built once at import time from the
-    static SYSTEM_PROMPT instead of system_prompt_for_today, silently freezing
-    the date the process happened to start on.
-    """
-
-    def test_the_real_module_wiring_produces_a_system_message_with_todays_date(self) -> None:
-        profile = ModelProfile(
-            key="tools",
-            label="Tools",
-            base_url="http://x/v1",
-            model="test-model",
-        )
-        conversation = Conversation(
-            id="conversation",
-            project_id="project",
-            title="Test",
-            model_profile=profile.key,
-            thinking_enabled=False,
-            memory_enabled=False,  # skips retrieval -- no DB needed for this test
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-
-        plan = prepare_conversation_context(
-            conversation,
-            profile,
-            [_message("user", "Hello")],
-            "Hello",
-        )
-
-        system_message = plan.messages[0]
-        self.assertEqual(system_message["role"], "system")
-        self.assertIn(SYSTEM_PROMPT, system_message["content"])
-        self.assertIn("Today's date is", system_message["content"])
 
 
 class FormatEntryTests(unittest.TestCase):
@@ -345,6 +155,62 @@ class StreamReplyReasoningFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(not e.is_reasoning for e in text_events_before_tool_call))
 
 
+class UsageEventTests(unittest.IsolatedAsyncioTestCase):
+    """UsageEvent reports the model server's real usage for the whole turn:
+    prompt_tokens from the initial request only (later rounds' prompts grow
+    with tool activity, which isn't what ContextAssembler budgeted for), but
+    completion_tokens summed across every round -- each tool-call round is
+    its own separate completion request with its own full output budget (see
+    llm.py's stream_reply and chat.py's UsageEvent docstring).
+    """
+
+    PROFILE = ModelProfile(
+        key="tools",
+        label="Tools",
+        base_url="http://x/v1",
+        model="test-model",
+        supports_tools=True,
+    )
+
+    async def test_prompt_from_round_one_completion_summed_peak_from_the_last_round(
+        self,
+    ) -> None:
+        call = {"id": "call_1", "name": "calculator", "arguments": "{}"}
+        rounds = iter([[ContentDelta("")], [ContentDelta("2")]])
+        tool_calls_by_round = iter([[call], []])
+        usage_by_round = iter(
+            [
+                {"prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105},
+                {"prompt_tokens": 150, "completion_tokens": 3, "total_tokens": 153},
+            ]
+        )
+
+        async def fake_stream_reply(profile, messages, *, tool_calls=None, usage=None, **kwargs):
+            tool_calls.extend(next(tool_calls_by_round))
+            if usage is not None:
+                usage.update(next(usage_by_round))
+            for delta in next(rounds):
+                yield delta
+
+        with mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)):
+            events = [event async for event in stream_reply(self.PROFILE, [])]
+
+        usage_events = [event for event in events if isinstance(event, UsageEvent)]
+        self.assertEqual(len(usage_events), 1)
+        self.assertEqual(usage_events[0].prompt_tokens, 100)
+        self.assertEqual(usage_events[0].completion_tokens, 8)
+        # Round 2's total (153), not round 1's (105) -- the conversation only
+        # ever grows, so the last round always holds the peak.
+        self.assertEqual(usage_events[0].peak_total_tokens, 153)
+
+    async def test_no_usage_event_when_the_server_never_reports_usage(self) -> None:
+        gateway = _fake_gateway([ContentDelta("Hello")])
+        with mock.patch.object(chat, "gateway", gateway):
+            events = [event async for event in stream_reply(self.PROFILE, [])]
+
+        self.assertFalse(any(isinstance(event, UsageEvent) for event in events))
+
+
 class ToolRoundBudgetTests(unittest.IsolatedAsyncioTestCase):
     """Real case this addresses: with generous round budgets, a model that
     hasn't found a fully satisfying answer can keep retrying (e.g.
@@ -373,8 +239,9 @@ class ToolRoundBudgetTests(unittest.IsolatedAsyncioTestCase):
             yield ContentDelta("thinking", is_reasoning=True)
 
         def has_warning(messages: list[dict]) -> bool:
+            # role: "user", not "system" -- see stream_reply's comment on why.
             return any(
-                m.get("role") == "system" and "tool-call round" in (m.get("content") or "")
+                m.get("role") == "user" and "tool-call round" in (m.get("content") or "")
                 for m in messages
             )
 

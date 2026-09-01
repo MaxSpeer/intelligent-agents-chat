@@ -12,6 +12,8 @@ from intelligent_agents_chat.llm import (
     MAX_TOKENS,
     SYSTEM_PROMPT,
     THINKING_MAX_TOKENS,
+    ContextLengthExceededError,
+    LLMError,
     VLLMGateway,
     check_model_available,
     system_prompt_for_today,
@@ -57,6 +59,38 @@ class FakeVLLMHandler(BaseHTTPRequestHandler):
         reasoning_response = any(
             message.get("content") == "Reasoning check" for message in messages
         )
+        context_overflow_response = any(
+            message.get("content") == "Context overflow check" for message in messages
+        )
+        generic_bad_request_response = any(
+            message.get("content") == "Generic bad request check" for message in messages
+        )
+        if context_overflow_response or generic_bad_request_response:
+            # A real 400 JSON error body, not an SSE stream -- matches the
+            # actual shape vLLM/OpenAI return on a rejected request.
+            error_message = (
+                "This model's maximum context length is 100 tokens. However, you "
+                "requested 50 output tokens and your prompt contains at least 60 "
+                "input tokens, for a total of at least 110 tokens."
+                if context_overflow_response
+                else "Some other bad request."
+            )
+            body = json.dumps(
+                {
+                    "error": {
+                        "message": error_message,
+                        "type": "BadRequestError",
+                        "param": "input_tokens" if context_overflow_response else None,
+                        "code": 400,
+                    }
+                }
+            ).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -115,6 +149,19 @@ class FakeVLLMHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
             if slow_response and index == 0:
                 time.sleep(1)
+        # Real vLLM/OpenAI servers send one final chunk with no choices of its
+        # own but a populated `usage`, when stream_options.include_usage was
+        # requested -- exercised by every test here since llm.py always
+        # requests it now (see stream_options in create_kwargs).
+        usage_payload = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
+        }
+        self.wfile.write(f"data: {json.dumps(usage_payload)}\n\n".encode())
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 
@@ -163,10 +210,58 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(FakeVLLMHandler.request_body["stream"])
         self.assertEqual(FakeVLLMHandler.request_body["max_tokens"], MAX_TOKENS)
+        self.assertEqual(
+            FakeVLLMHandler.request_body["stream_options"], {"include_usage": True}
+        )
         self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
         self.assertNotIn("tools", FakeVLLMHandler.request_body)
 
         await asyncio.sleep(0)
+
+    async def test_usage_out_param_is_filled_from_the_servers_final_chunk(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test",
+            label="Test model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+        )
+        usage: dict[str, int] = {}
+
+        _ = [
+            delta
+            async for delta in VLLMGateway().stream_reply(
+                profile,
+                [{"role": "user", "content": "Hello"}],
+                usage=usage,
+            )
+        ]
+
+        self.assertEqual(
+            usage, {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}
+        )
+
+    async def test_usage_out_param_is_left_untouched_when_not_given(self) -> None:
+        """Callers that don't care about usage (most call sites) shouldn't be
+        forced to pass one, and nothing should crash for not passing it.
+        """
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test",
+            label="Test model",
+            base_url=f"http://{host}:{port}/v1",
+            model="test-model",
+        )
+
+        texts = [
+            delta.text
+            async for delta in VLLMGateway().stream_reply(
+                profile,
+                [{"role": "user", "content": "Hello"}],
+            )
+        ]
+
+        self.assertEqual(texts, ["Hello ", "world"])
 
     async def test_tools_are_forwarded_when_provided(self) -> None:
         host, port = self.server.server_address
@@ -347,6 +442,41 @@ class VLLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         assert FakeVLLMHandler.request_body is not None
         self.assertEqual(FakeVLLMHandler.request_body["reasoning_effort"], "none")
         self.assertNotIn("chat_template_kwargs", FakeVLLMHandler.request_body)
+
+    async def test_a_context_length_400_raises_the_specific_error(self) -> None:
+        """So app.py's send_message can react by compacting and retrying
+        instead of just reporting failure -- see ContextLengthExceededError
+        and app.py's MAX_CONTEXT_OVERFLOW_RETRIES.
+        """
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test", label="Test model", base_url=f"http://{host}:{port}/v1", model="test-model"
+        )
+
+        with self.assertRaises(ContextLengthExceededError):
+            _ = [
+                chunk
+                async for chunk in VLLMGateway().stream_reply(
+                    profile,
+                    [{"role": "user", "content": "Context overflow check"}],
+                )
+            ]
+
+    async def test_a_different_400_raises_the_generic_error_not_the_specific_one(self) -> None:
+        host, port = self.server.server_address
+        profile = ModelProfile(
+            key="test", label="Test model", base_url=f"http://{host}:{port}/v1", model="test-model"
+        )
+
+        with self.assertRaises(LLMError) as raised:
+            _ = [
+                chunk
+                async for chunk in VLLMGateway().stream_reply(
+                    profile,
+                    [{"role": "user", "content": "Generic bad request check"}],
+                )
+            ]
+        self.assertNotIsInstance(raised.exception, ContextLengthExceededError)
 
 
 class CheckModelAvailableTests(unittest.IsolatedAsyncioTestCase):
