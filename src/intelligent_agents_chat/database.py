@@ -38,9 +38,6 @@ class Conversation:
     id: str
     project_id: str
     title: str
-    model_profile: str
-    thinking_enabled: bool
-    memory_enabled: bool
     created_at: datetime
     updated_at: datetime
 
@@ -128,6 +125,20 @@ class MessageContextRun:
 
 
 @dataclass(frozen=True, slots=True)
+class AppSettings:
+    """Generation preferences (model, thinking, memory) shared by the whole
+    app rather than any one conversation -- a single row, upserted in place,
+    so switching chats or starting a new one never resets them (see
+    get_app_settings/set_app_settings).
+    """
+
+    model_profile: str
+    thinking_enabled: bool
+    memory_enabled: bool
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class ConversationCompaction:
     """A rolling summary standing in for everything in one conversation older
     than its most recent kept-raw turns (see chat.py's
@@ -172,12 +183,22 @@ class ChatRepository:
                     id TEXT PRIMARY KEY,
                     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                     title TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                -- Generation preferences (model, thinking, memory) shared by
+                -- the whole app -- a single row, keyed by the fixed id
+                -- 'global' (see APP_SETTINGS_ID/get_app_settings). Not
+                -- per-conversation: switching or starting a chat should never
+                -- reset what the user picked.
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    id TEXT PRIMARY KEY,
                     model_profile TEXT NOT NULL,
                     thinking_enabled INTEGER NOT NULL DEFAULT 0
                         CHECK (thinking_enabled IN (0, 1)),
                     memory_enabled INTEGER NOT NULL DEFAULT 0
                         CHECK (memory_enabled IN (0, 1)),
-                    created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
 
@@ -376,39 +397,23 @@ class ChatRepository:
 
     def create_conversation(
         self,
-        model_profile: str,
         *,
         project_id: str = DEFAULT_PROJECT_ID,
         title: str = DEFAULT_CONVERSATION_TITLE,
-        thinking_enabled: bool = False,
-        memory_enabled: bool = False,
     ) -> Conversation:
         conversation_id = str(uuid4())
         now = _timestamp()
         clean_title = title.strip()
         if not clean_title:
             raise ValueError("Conversation title cannot be empty")
-        if not model_profile.strip():
-            raise ValueError("Model profile cannot be empty")
 
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO conversations (
-                    id, project_id, title, model_profile, thinking_enabled, memory_enabled,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO conversations (id, project_id, title, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (
-                    conversation_id,
-                    project_id,
-                    clean_title,
-                    model_profile,
-                    int(thinking_enabled),
-                    int(memory_enabled),
-                    now,
-                    now,
-                ),
+                (conversation_id, project_id, clean_title, now, now),
             )
         conversation = self.get_conversation(conversation_id)
         if conversation is None:
@@ -419,9 +424,6 @@ class ChatRepository:
             "database.conversation.created",
             project_id=conversation.project_id,
             conversation_id=conversation.id,
-            model_profile=conversation.model_profile,
-            thinking_enabled=conversation.thinking_enabled,
-            memory_enabled=conversation.memory_enabled,
             title_chars=len(conversation.title),
         )
         return conversation
@@ -430,8 +432,7 @@ class ChatRepository:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, project_id, title, model_profile, thinking_enabled, memory_enabled,
-                       created_at, updated_at
+                SELECT id, project_id, title, created_at, updated_at
                 FROM conversations
                 WHERE id = ?
                 """,
@@ -443,8 +444,7 @@ class ChatRepository:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, project_id, title, model_profile, thinking_enabled, memory_enabled,
-                       created_at, updated_at
+                SELECT id, project_id, title, created_at, updated_at
                 FROM conversations
                 WHERE project_id = ?
                 ORDER BY updated_at DESC, created_at DESC
@@ -486,73 +486,60 @@ class ChatRepository:
         )
         return renamed
 
-    def set_model_profile(self, conversation_id: str, model_profile: str) -> bool:
+    # Fixed id for the one app_settings row -- there's only ever a single,
+    # shared set of generation preferences, not one per conversation.
+    APP_SETTINGS_ID = "global"
+
+    def get_app_settings(self) -> AppSettings | None:
+        """None means the row has never been written -- callers fall back to
+        their own defaults (see app.py's current_settings), same as get_project
+        returning None before the default project exists.
+        """
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT model_profile, thinking_enabled, memory_enabled, updated_at
+                FROM app_settings
+                WHERE id = ?
+                """,
+                (self.APP_SETTINGS_ID,),
+            ).fetchone()
+        return _app_settings_from_row(row) if row is not None else None
+
+    def set_app_settings(
+        self, *, model_profile: str, thinking_enabled: bool, memory_enabled: bool
+    ) -> AppSettings:
+        """Replace the one app_settings row -- create or update, never a
+        second row (see APP_SETTINGS_ID).
+        """
         if not model_profile.strip():
             raise ValueError("Model profile cannot be empty")
         now = _timestamp()
         with self._connect() as connection:
-            cursor = connection.execute(
+            connection.execute(
                 """
-                UPDATE conversations
-                SET model_profile = ?, updated_at = ?
-                WHERE id = ?
+                INSERT INTO app_settings (id, model_profile, thinking_enabled, memory_enabled, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    model_profile = excluded.model_profile,
+                    thinking_enabled = excluded.thinking_enabled,
+                    memory_enabled = excluded.memory_enabled,
+                    updated_at = excluded.updated_at
                 """,
-                (model_profile, now, conversation_id),
+                (self.APP_SETTINGS_ID, model_profile, int(thinking_enabled), int(memory_enabled), now),
             )
-        updated = cursor.rowcount == 1
+        settings = self.get_app_settings()
+        if settings is None:
+            raise RuntimeError("Failed to read app settings after writing them")
         log_event(
             logger,
             logging.INFO,
-            "database.conversation.model_changed",
-            conversation_id=conversation_id,
-            model_profile=model_profile,
-            updated=updated,
+            "database.app_settings.changed",
+            model_profile=settings.model_profile,
+            thinking_enabled=settings.thinking_enabled,
+            memory_enabled=settings.memory_enabled,
         )
-        return updated
-
-    def set_thinking_enabled(self, conversation_id: str, enabled: bool) -> bool:
-        now = _timestamp()
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE conversations
-                SET thinking_enabled = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (int(enabled), now, conversation_id),
-            )
-        updated = cursor.rowcount == 1
-        log_event(
-            logger,
-            logging.INFO,
-            "database.conversation.thinking_changed",
-            conversation_id=conversation_id,
-            thinking_enabled=enabled,
-            updated=updated,
-        )
-        return updated
-
-    def set_memory_enabled(self, conversation_id: str, enabled: bool) -> bool:
-        now = _timestamp()
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE conversations
-                SET memory_enabled = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (int(enabled), now, conversation_id),
-            )
-        updated = cursor.rowcount == 1
-        log_event(
-            logger,
-            logging.INFO,
-            "database.conversation.memory_changed",
-            conversation_id=conversation_id,
-            memory_enabled=enabled,
-            updated=updated,
-        )
-        return updated
+        return settings
 
     def delete_conversation(self, conversation_id: str) -> bool:
         with self._connect() as connection:
@@ -854,10 +841,16 @@ def _conversation_from_row(row: sqlite3.Row) -> Conversation:
         id=row["id"],
         project_id=row["project_id"],
         title=row["title"],
+        created_at=_parse_datetime(row["created_at"]),
+        updated_at=_parse_datetime(row["updated_at"]),
+    )
+
+
+def _app_settings_from_row(row: sqlite3.Row) -> AppSettings:
+    return AppSettings(
         model_profile=row["model_profile"],
         thinking_enabled=bool(row["thinking_enabled"]),
         memory_enabled=bool(row["memory_enabled"]),
-        created_at=_parse_datetime(row["created_at"]),
         updated_at=_parse_datetime(row["updated_at"]),
     )
 

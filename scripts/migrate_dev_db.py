@@ -12,10 +12,12 @@ scratch:
 
 This script is written for the schema changes it currently knows about
 (tool-calling support, a `reasoning` column, the `memory_enabled` column on
-`conversations`, then a `real_peak_total_tokens` column on
-`message_context_runs`). If database.py's schema changes again later, extend
-or replace the migration below to match -- it's a one-off dev tool, not a
-general migration framework.
+`conversations`, a `real_peak_total_tokens` column on
+`message_context_runs`, then moving model_profile/thinking_enabled/
+memory_enabled off `conversations` and onto the single shared `app_settings`
+row). If database.py's schema changes again later, extend or replace the
+migration below to match -- it's a one-off dev tool, not a general migration
+framework.
 """
 
 from __future__ import annotations
@@ -76,7 +78,11 @@ def migrate(database_path: Path) -> None:
         conversation_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(conversations)")
         }
-        if "memory_enabled" not in conversation_columns:
+        # Only for a conversations table that still has the old, pre-move
+        # per-conversation columns (see the model_profile move below) --
+        # once those are gone, memory_enabled belongs on app_settings only,
+        # and must never be silently added back here on a later rerun.
+        if "model_profile" in conversation_columns and "memory_enabled" not in conversation_columns:
             print("Adding the memory_enabled column to the conversations table ...")
             # A fresh column with its own CHECK, not widening one on an existing
             # column -- allowed directly via ADD COLUMN since the default (0)
@@ -87,6 +93,7 @@ def migrate(database_path: Path) -> None:
                     DEFAULT 0 CHECK (memory_enabled IN (0, 1))
                 """
             )
+            conversation_columns.add("memory_enabled")
 
         # Empty (not missing) if the table doesn't exist yet at all -- then
         # database.py's own CREATE TABLE IF NOT EXISTS will create it with
@@ -99,6 +106,55 @@ def migrate(database_path: Path) -> None:
             connection.execute(
                 "ALTER TABLE message_context_runs ADD COLUMN real_peak_total_tokens INTEGER"
             )
+
+        conversation_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(conversations)")
+        }
+        if "model_profile" in conversation_columns:
+            print(
+                "Moving model_profile/thinking_enabled/memory_enabled off conversations "
+                "onto the single shared app_settings row ..."
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    id TEXT PRIMARY KEY,
+                    model_profile TEXT NOT NULL,
+                    thinking_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK (thinking_enabled IN (0, 1)),
+                    memory_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK (memory_enabled IN (0, 1)),
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            # Seed it from whichever conversation was last active -- the
+            # closest thing to "what the user had selected" that the old,
+            # per-conversation schema recorded. Only if app_settings doesn't
+            # already have a row (re-running this script must stay a no-op).
+            seed = connection.execute(
+                """
+                SELECT model_profile, thinking_enabled, memory_enabled
+                FROM conversations
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            if seed is not None:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO app_settings
+                        (id, model_profile, thinking_enabled, memory_enabled, updated_at)
+                    VALUES ('global', ?, ?, ?, datetime('now'))
+                    """,
+                    seed,
+                )
+            # SQLite can drop columns directly (3.35+) as long as they're not
+            # part of an index/constraint referenced elsewhere -- these three
+            # are plain columns, so no table rebuild needed here.
+            connection.execute("ALTER TABLE conversations DROP COLUMN model_profile")
+            connection.execute("ALTER TABLE conversations DROP COLUMN thinking_enabled")
+            connection.execute("ALTER TABLE conversations DROP COLUMN memory_enabled")
 
         connection.commit()
         message_count = connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0]

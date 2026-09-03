@@ -43,7 +43,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertEqual(mode, "wal")
 
     def test_conversation_and_messages_survive_a_new_repository_instance(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
         self.repository.add_message(conversation.id, "user", "Hello")
         assistant = self.repository.add_message(
             conversation.id,
@@ -60,8 +60,6 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertIsNotNone(loaded_conversation)
         assert loaded_conversation is not None
         self.assertEqual(loaded_conversation.title, DEFAULT_CONVERSATION_TITLE)
-        self.assertFalse(loaded_conversation.thinking_enabled)
-        self.assertFalse(loaded_conversation.memory_enabled)
         self.assertEqual([message.role for message in messages], ["user", "assistant"])
         self.assertEqual(messages[1].id, assistant.id)
         self.assertEqual(messages[1].model_profile, "base")
@@ -70,12 +68,10 @@ class ChatRepositoryTests(unittest.TestCase):
         research = self.repository.create_project("Research")
         teaching = self.repository.create_project("Teaching")
         research_chat = self.repository.create_conversation(
-            "base",
             project_id=research.id,
             title="Paper notes",
         )
         teaching_chat = self.repository.create_conversation(
-            "base",
             project_id=teaching.id,
             title="Exercise sheet",
         )
@@ -103,49 +99,44 @@ class ChatRepositoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be empty"):
             self.repository.create_project("   ")
 
-    def test_rename_and_model_selection_are_persisted(self) -> None:
-        conversation = self.repository.create_conversation("base")
+    def test_rename_is_persisted(self) -> None:
+        conversation = self.repository.create_conversation()
 
         self.assertTrue(self.repository.rename_conversation(conversation.id, "Planning"))
-        self.assertTrue(self.repository.set_model_profile(conversation.id, "tuned"))
-        self.assertTrue(self.repository.set_thinking_enabled(conversation.id, True))
-        self.assertTrue(self.repository.set_memory_enabled(conversation.id, True))
 
         updated = self.repository.get_conversation(conversation.id)
         self.assertIsNotNone(updated)
         assert updated is not None
         self.assertEqual(updated.title, "Planning")
+
+    def test_app_settings_are_absent_until_first_set(self) -> None:
+        self.assertIsNone(self.repository.get_app_settings())
+
+    def test_app_settings_are_a_single_row_shared_by_the_whole_app(self) -> None:
+        """Not per-conversation -- one row, upserted in place (see
+        set_app_settings), so switching or creating a chat can't reset it.
+        """
+        self.repository.set_app_settings(
+            model_profile="base", thinking_enabled=False, memory_enabled=False
+        )
+        updated = self.repository.set_app_settings(
+            model_profile="tuned", thinking_enabled=True, memory_enabled=True
+        )
+
         self.assertEqual(updated.model_profile, "tuned")
         self.assertTrue(updated.thinking_enabled)
         self.assertTrue(updated.memory_enabled)
 
-    def test_new_conversation_can_start_with_thinking_enabled(self) -> None:
-        conversation = self.repository.create_conversation(
-            "thinking-model",
-            thinking_enabled=True,
-        )
-
-        reopened = ChatRepository(self.database_path).get_conversation(conversation.id)
-
+        reopened = ChatRepository(self.database_path).get_app_settings()
         self.assertIsNotNone(reopened)
         assert reopened is not None
+        self.assertEqual(reopened.model_profile, "tuned")
         self.assertTrue(reopened.thinking_enabled)
-
-    def test_new_conversation_can_start_with_memory_enabled(self) -> None:
-        conversation = self.repository.create_conversation(
-            "base",
-            memory_enabled=True,
-        )
-
-        reopened = ChatRepository(self.database_path).get_conversation(conversation.id)
-
-        self.assertIsNotNone(reopened)
-        assert reopened is not None
         self.assertTrue(reopened.memory_enabled)
 
     def test_context_source_provenance_is_persisted_and_cascades_with_message(self) -> None:
-        source = self.repository.create_conversation("base", title="Architecture")
-        target = self.repository.create_conversation("base", title="Implementation")
+        source = self.repository.create_conversation(title="Architecture")
+        target = self.repository.create_conversation(title="Implementation")
         assistant = self.repository.add_message(
             target.id,
             "assistant",
@@ -181,7 +172,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertEqual(self.repository.list_message_context_sources(assistant.id), [])
 
     def test_context_run_is_persisted_and_cascades_with_its_message(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
         assistant = self.repository.add_message(
             conversation.id,
             "assistant",
@@ -220,7 +211,7 @@ class ChatRepositoryTests(unittest.TestCase):
         """The server not reporting usage (see llm.py's stream_options
         caveat) shouldn't block persisting the estimated numbers.
         """
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
         assistant = self.repository.add_message(
             conversation.id, "assistant", "The answer is 2.", model_profile="base"
         )
@@ -245,7 +236,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertIsNone(loaded.real_peak_total_tokens)
 
     def test_get_message_context_run_returns_none_when_absent(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
         assistant = self.repository.add_message(
             conversation.id, "assistant", "The answer is 2.", model_profile="base"
         )
@@ -253,7 +244,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertIsNone(self.repository.get_message_context_run(assistant.id))
 
     def test_conversation_compaction_is_persisted_and_extended_in_place(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
         message = self.repository.add_message(conversation.id, "user", "Hello")
 
         self.repository.set_conversation_compaction(
@@ -283,12 +274,12 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertGreaterEqual(second.updated_at, first.updated_at)
 
     def test_get_conversation_compaction_returns_none_when_absent(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
 
         self.assertIsNone(self.repository.get_conversation_compaction(conversation.id))
 
     def test_conversation_compaction_cascades_with_its_conversation(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
         message = self.repository.add_message(conversation.id, "user", "Hello")
         self.repository.set_conversation_compaction(
             conversation.id, compacted_through_message_id=message.id, summary="Summary."
@@ -299,7 +290,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertIsNone(self.repository.get_conversation_compaction(conversation.id))
 
     def test_deleting_a_conversation_cascades_to_messages(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
         message = self.repository.add_message(conversation.id, "user", "Temporary")
 
         self.assertTrue(self.repository.delete_conversation(conversation.id))
@@ -307,8 +298,8 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertIsNone(self.repository.get_message(message.id))
 
     def test_conversations_are_sorted_by_latest_activity(self) -> None:
-        older = self.repository.create_conversation("base", title="Older")
-        newer = self.repository.create_conversation("base", title="Newer")
+        older = self.repository.create_conversation(title="Older")
+        newer = self.repository.create_conversation(title="Newer")
         self.repository.add_message(older.id, "user", "Touch the older chat")
 
         conversations = self.repository.list_conversations()
@@ -317,7 +308,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertEqual(conversations[1].id, newer.id)
 
     def test_assistant_message_can_carry_tool_calls_with_empty_content(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
         tool_calls = [{"id": "call_1", "name": "calculator", "arguments": '{"expression": "1+1"}'}]
 
         message = self.repository.add_message(
@@ -335,7 +326,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertEqual(reloaded.tool_calls, tuple(tool_calls))
 
     def test_tool_message_stores_its_tool_call_id(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
 
         message = self.repository.add_message(
             conversation.id,
@@ -352,13 +343,13 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertIsNone(reloaded.tool_calls)
 
     def test_empty_content_without_tool_calls_is_still_rejected(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
 
         with self.assertRaisesRegex(ValueError, "cannot be empty"):
             self.repository.add_message(conversation.id, "assistant", "   ")
 
     def test_messages_without_tool_data_round_trip_as_none(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
         message = self.repository.add_message(conversation.id, "user", "Hello")
 
         reloaded = self.repository.get_message(message.id)
@@ -369,7 +360,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertIsNone(reloaded.reasoning)
 
     def test_assistant_message_can_carry_reasoning_alongside_content(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
 
         message = self.repository.add_message(
             conversation.id,
@@ -386,7 +377,7 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertEqual(reloaded.reasoning, "1 + 1 is a basic addition, so the answer is 2.")
 
     def test_reasoning_alone_is_enough_to_satisfy_the_non_empty_check(self) -> None:
-        conversation = self.repository.create_conversation("base")
+        conversation = self.repository.create_conversation()
 
         message = self.repository.add_message(
             conversation.id,

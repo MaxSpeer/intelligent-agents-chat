@@ -288,11 +288,18 @@ async def prepare_conversation_context(
     messages: list[Message],
     query_text: str,
     *,
+    thinking_enabled: bool,
+    memory_enabled: bool,
     force_compact: bool = False,
 ) -> ContextPlan:
     """Collect optional sources and assemble a context plan for the model
     to consume, including the system prompt, memories, message history,
     and the latest user message.
+
+    thinking_enabled/memory_enabled are the app's current, global generation
+    preferences (see app.py's current_settings) -- passed in explicitly
+    rather than read off `conversation`, since they're no longer a
+    per-conversation setting.
 
     If the first attempt has to silently cut older history to fit the input
     budget, that's the trigger to compact instead: summarize what's older
@@ -316,10 +323,10 @@ async def prepare_conversation_context(
             conversation_id=conversation.id,
             query_text=query_text,
         )
-        if conversation.memory_enabled
+        if memory_enabled
         else []
     )
-    output_reserve_tokens = THINKING_MAX_TOKENS if conversation.thinking_enabled else MAX_TOKENS
+    output_reserve_tokens = THINKING_MAX_TOKENS if thinking_enabled else MAX_TOKENS
 
     def assemble() -> ContextPlan:
         return context_assembler.assemble(

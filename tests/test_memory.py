@@ -33,13 +33,13 @@ class ProjectMemoryStoreTests(unittest.TestCase):
 
     def test_retrieval_uses_other_chats_in_the_same_project_only(self) -> None:
         source = self.repository.create_conversation(
-            "base", project_id=self.research.id, title="Orchid notes"
+            project_id=self.research.id, title="Orchid notes"
         )
         target = self.repository.create_conversation(
-            "base", project_id=self.research.id, title="Current question"
+            project_id=self.research.id, title="Current question"
         )
         other_project = self.repository.create_conversation(
-            "base", project_id=self.private.id, title="Private orchids"
+            project_id=self.private.id, title="Private orchids"
         )
         self._add_turn(source.id, "The orchid launch code is amber.", "Noted for the project.")
         self._add_turn(
@@ -74,7 +74,7 @@ class ProjectMemoryStoreTests(unittest.TestCase):
 
     def test_rebuild_is_idempotent_and_preserves_disabled_entries(self) -> None:
         source = self.repository.create_conversation(
-            "base", project_id=self.research.id, title="Decisions"
+            project_id=self.research.id, title="Decisions"
         )
         self._add_turn(source.id, "Choose SQLite for memory.", "Decision recorded.")
 
@@ -113,7 +113,7 @@ class ProjectMemoryStoreTests(unittest.TestCase):
         and reinsert unchanged rows in the FTS index.
         """
         source = self.repository.create_conversation(
-            "base", project_id=self.research.id, title="Decisions"
+            project_id=self.research.id, title="Decisions"
         )
         self._add_turn(source.id, "Choose SQLite for memory.", "Decision recorded.")
         self.memory.rebuild_conversation(source.id)
@@ -134,7 +134,7 @@ class ProjectMemoryStoreTests(unittest.TestCase):
 
     def test_deleting_source_conversation_removes_derived_memory(self) -> None:
         source = self.repository.create_conversation(
-            "base", project_id=self.research.id, title="Temporary"
+            project_id=self.research.id, title="Temporary"
         )
         self._add_turn(source.id, "Remember the zephyr protocol.", "Remembered.")
         self.memory.rebuild_conversation(source.id)
@@ -153,10 +153,10 @@ class ProjectMemoryStoreTests(unittest.TestCase):
 
     def test_results_are_ranked_and_punctuation_cannot_change_fts_syntax(self) -> None:
         strongest = self.repository.create_conversation(
-            "base", project_id=self.research.id, title="Quokka details"
+            project_id=self.research.id, title="Quokka details"
         )
         weaker = self.repository.create_conversation(
-            "base", project_id=self.research.id, title="Other notes"
+            project_id=self.research.id, title="Other notes"
         )
         self._add_turn(
             strongest.id,
@@ -179,7 +179,7 @@ class ProjectMemoryStoreTests(unittest.TestCase):
 
     def test_a_decimal_number_in_the_query_still_finds_its_matching_entry(self) -> None:
         source = self.repository.create_conversation(
-            "base", project_id=self.research.id, title="Berlin population"
+            project_id=self.research.id, title="Berlin population"
         )
         self._add_turn(
             source.id,
@@ -222,7 +222,7 @@ class ToolCallingTurnChunkingTests(unittest.TestCase):
         self.memory = ProjectMemoryStore(self.database_path)
         self.project = self.repository.create_project("Research")
         self.conversation = self.repository.create_conversation(
-            "base", project_id=self.project.id, title="Weather lookup"
+            project_id=self.project.id, title="Weather lookup"
         )
 
     def tearDown(self) -> None:

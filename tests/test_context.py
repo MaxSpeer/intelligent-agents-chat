@@ -359,9 +359,6 @@ class PrepareConversationContextWiringTests(unittest.IsolatedAsyncioTestCase):
             id="conversation",
             project_id="project",
             title="Test",
-            model_profile=profile.key,
-            thinking_enabled=False,
-            memory_enabled=False,  # skips retrieval -- no DB needed for this test
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -374,6 +371,8 @@ class PrepareConversationContextWiringTests(unittest.IsolatedAsyncioTestCase):
             profile,
             [_message("user", "Hello")],
             "Hello",
+            thinking_enabled=False,
+            memory_enabled=False,  # skips retrieval -- no DB needed for this test
         )
 
         system_message = plan.messages[0]
@@ -395,7 +394,7 @@ class ConversationCompactionTests(unittest.IsolatedAsyncioTestCase):
         self.database_path = Path(self.temporary_directory.name) / "chats.sqlite3"
         self.repository = ChatRepository(self.database_path)
         self.repository.initialize()
-        self.conversation = self.repository.create_conversation("base")
+        self.conversation = self.repository.create_conversation()
         self.repository_patch = mock.patch.object(context, "repository", self.repository)
         self.repository_patch.start()
         self.keep_recent_patch = mock.patch.object(context, "COMPACTION_KEEP_RECENT_TURNS", 2)
@@ -552,7 +551,7 @@ class PrepareConversationContextCompactionTests(unittest.IsolatedAsyncioTestCase
         self.database_path = Path(self.temporary_directory.name) / "chats.sqlite3"
         self.repository = ChatRepository(self.database_path)
         self.repository.initialize()
-        self.conversation = self.repository.create_conversation("base")
+        self.conversation = self.repository.create_conversation()
         self.repository_patch = mock.patch.object(context, "repository", self.repository)
         self.repository_patch.start()
         self.keep_recent_patch = mock.patch.object(context, "COMPACTION_KEEP_RECENT_TURNS", 1)
@@ -591,7 +590,12 @@ class PrepareConversationContextCompactionTests(unittest.IsolatedAsyncioTestCase
 
         with mock.patch.object(context, "subagent", SimpleNamespace(run=fake_run)):
             plan = await prepare_conversation_context(
-                conversation, profile, messages, "Latest question"
+                conversation,
+                profile,
+                messages,
+                "Latest question",
+                thinking_enabled=False,
+                memory_enabled=False,
             )
 
         self.assertIsNotNone(
@@ -620,7 +624,14 @@ class PrepareConversationContextCompactionTests(unittest.IsolatedAsyncioTestCase
             return "unused"
 
         with mock.patch.object(context, "subagent", SimpleNamespace(run=fake_run)):
-            await prepare_conversation_context(conversation, profile, messages, "Latest question")
+            await prepare_conversation_context(
+                conversation,
+                profile,
+                messages,
+                "Latest question",
+                thinking_enabled=False,
+                memory_enabled=False,
+            )
 
         self.assertEqual(calls, [])
         self.assertIsNone(self.repository.get_conversation_compaction(self.conversation.id))

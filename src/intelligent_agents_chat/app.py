@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import aclosing
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 import logging
 from pathlib import Path
@@ -36,6 +36,7 @@ from intelligent_agents_chat.context import (
     repository,
 )
 from intelligent_agents_chat.database import (
+    AppSettings,
     ContextRunInput,
     ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
@@ -146,17 +147,8 @@ def index() -> None:
     initial = (
         conversations[0]
         if conversations
-        else repository.create_conversation(
-            DEFAULT_PROFILE_KEY,
-            project_id=initial_project.id,
-        )
+        else repository.create_conversation(project_id=initial_project.id)
     )
-    if initial.model_profile not in profile_options():
-        repository.set_model_profile(initial.id, DEFAULT_PROFILE_KEY)
-        normalized_initial = repository.get_conversation(initial.id)
-        if normalized_initial is None:
-            raise RuntimeError("Conversation disappeared while updating its model profile")
-        initial = normalized_initial
     state = PageState(project_id=initial_project.id, conversation_id=initial.id)
 
     def page_event(level: int, event: str, **fields: object) -> None:
@@ -174,8 +166,32 @@ def index() -> None:
         logging.INFO,
         "ui.page.opened",
         available_project_count=len(projects),
-        initial_model_profile=initial.model_profile,
     )
+
+    def current_settings() -> AppSettings:
+        """The app-wide generation preferences (model, thinking, memory) --
+        shared by every conversation rather than stored on one, so switching
+        chats or starting a new one never resets them. Only change_model/
+        change_thinking/change_memory below ever write this; every other
+        read goes through here, normalized against what's actually available
+        right now (profiles/capabilities can change between releases, same
+        reason current_conversation() used to normalize per-conversation).
+        """
+        settings = repository.get_app_settings()
+        model_profile = settings.model_profile if settings is not None else DEFAULT_PROFILE_KEY
+        if model_profile not in profile_options():
+            model_profile = DEFAULT_PROFILE_KEY
+        profile = get_profile(model_profile)
+        thinking_enabled = bool(
+            settings is not None and settings.thinking_enabled and profile.supports_thinking
+        )
+        memory_enabled = bool(settings is not None and settings.memory_enabled)
+        return AppSettings(
+            model_profile=model_profile,
+            thinking_enabled=thinking_enabled,
+            memory_enabled=memory_enabled,
+            updated_at=settings.updated_at if settings is not None else datetime.now(timezone.utc),
+        )
 
     def current_project() -> Project:
         project = repository.get_project(state.project_id)
@@ -204,10 +220,7 @@ def index() -> None:
             conversation = (
                 conversations[0]
                 if conversations
-                else repository.create_conversation(
-                    DEFAULT_PROFILE_KEY,
-                    project_id=state.project_id,
-                )
+                else repository.create_conversation(project_id=state.project_id)
             )
             state.conversation_id = conversation.id
             page_event(
@@ -215,31 +228,6 @@ def index() -> None:
                 "ui.conversation.recovered",
                 missing_conversation_id=missing_conversation_id,
                 replacement_conversation_id=conversation.id,
-            )
-        if conversation.model_profile not in profile_options():
-            previous_model_profile = conversation.model_profile
-            repository.set_model_profile(conversation.id, DEFAULT_PROFILE_KEY)
-            conversation = repository.get_conversation(conversation.id)
-            if conversation is None:
-                raise RuntimeError("Conversation disappeared while updating its model profile")
-            page_event(
-                logging.WARNING,
-                "ui.conversation.model_normalized",
-                previous_model_profile=previous_model_profile,
-                replacement_model_profile=DEFAULT_PROFILE_KEY,
-            )
-        profile = get_profile(conversation.model_profile)
-        if conversation.thinking_enabled and not profile.supports_thinking:
-            repository.set_thinking_enabled(conversation.id, False)
-            normalized_conversation = repository.get_conversation(conversation.id)
-            if normalized_conversation is None:
-                raise RuntimeError("Conversation disappeared while disabling thinking")
-            conversation = normalized_conversation
-            page_event(
-                logging.WARNING,
-                "ui.conversation.thinking_normalized",
-                model_profile=profile.key,
-                thinking_enabled=False,
             )
         return conversation
 
@@ -258,7 +246,7 @@ def index() -> None:
             send_button.enable()
             stop_button.disable()
             model_select.enable()
-            profile = get_profile(current_conversation().model_profile)
+            profile = get_profile(current_settings().model_profile)
             if profile.supports_thinking:
                 thinking_toggle.enable()
             else:
@@ -313,15 +301,16 @@ def index() -> None:
 
     def render_header() -> None:
         conversation = current_conversation()
-        profile = get_profile(conversation.model_profile)
+        settings = current_settings()
+        profile = get_profile(settings.model_profile)
         title_label.set_text(conversation.title)
         model_select.set_options(
             profile_options(),
-            value=conversation.model_profile,
+            value=settings.model_profile,
         )
-        render_model_status(conversation.model_profile)
-        thinking_toggle.set_value(conversation.thinking_enabled)
-        memory_toggle.set_value(conversation.memory_enabled)
+        render_model_status(settings.model_profile)
+        thinking_toggle.set_value(settings.thinking_enabled)
+        memory_toggle.set_value(settings.memory_enabled)
         if profile.supports_thinking and not state.generating:
             thinking_toggle.enable()
         else:
@@ -499,10 +488,7 @@ def index() -> None:
         conversation = (
             conversations[0]
             if conversations
-            else repository.create_conversation(
-                DEFAULT_PROFILE_KEY,
-                project_id=project_id,
-            )
+            else repository.create_conversation(project_id=project_id)
         )
         state.conversation_id = conversation.id
         page_event(
@@ -510,7 +496,6 @@ def index() -> None:
             "ui.project.switched",
             previous_project_id=previous_project_id,
             previous_conversation_id=previous_conversation_id,
-            model_profile=conversation.model_profile,
         )
         render_all()
 
@@ -566,17 +551,13 @@ def index() -> None:
             ui.notify(str(error), type="warning")
             return
 
-        conversation = repository.create_conversation(
-            DEFAULT_PROFILE_KEY,
-            project_id=project.id,
-        )
+        conversation = repository.create_conversation(project_id=project.id)
         state.project_id = project.id
         state.conversation_id = conversation.id
         page_event(
             logging.INFO,
             "ui.project.created_and_selected",
             project_name_chars=len(project.name),
-            model_profile=conversation.model_profile,
         )
         render_all()
         composer.run_method("focus")
@@ -607,7 +588,6 @@ def index() -> None:
             logging.INFO,
             "ui.conversation.switched",
             previous_conversation_id=previous_conversation_id,
-            model_profile=conversation.model_profile,
         )
         render_all()
 
@@ -624,24 +604,16 @@ def index() -> None:
         if conversation.title == DEFAULT_CONVERSATION_TITLE and not repository.list_messages(
             conversation.id
         ):
-            page_event(
-                logging.DEBUG,
-                "ui.conversation.empty_reused",
-                model_profile=conversation.model_profile,
-            )
+            page_event(logging.DEBUG, "ui.conversation.empty_reused")
             composer.run_method("focus")
             return
-        created = repository.create_conversation(
-            DEFAULT_PROFILE_KEY,
-            project_id=state.project_id,
-        )
+        created = repository.create_conversation(project_id=state.project_id)
         previous_conversation_id = state.conversation_id
         state.conversation_id = created.id
         page_event(
             logging.INFO,
             "ui.conversation.created_and_selected",
             previous_conversation_id=previous_conversation_id,
-            model_profile=created.model_profile,
         )
         render_all()
 
@@ -708,10 +680,7 @@ def index() -> None:
             replacement = (
                 remaining[0]
                 if remaining
-                else repository.create_conversation(
-                    DEFAULT_PROFILE_KEY,
-                    project_id=state.project_id,
-                )
+                else repository.create_conversation(project_id=state.project_id)
             )
             state.conversation_id = replacement.id
             replacement_conversation_id = replacement.id
@@ -726,14 +695,17 @@ def index() -> None:
         render_all()
 
     def change_model(event) -> None:
-        if state.conversation_id in active_generations:
+        # These settings are global (see current_settings), not tied to any
+        # one conversation -- so the guard is "is anything generating
+        # anywhere", not "is the chat I'm looking at generating".
+        if active_generations:
             page_event(
                 logging.WARNING,
                 "ui.model.change_blocked",
                 target_model_profile=str(event.value),
                 reason="generation_active",
             )
-            ui.notify("Stop this chat's response before changing its model.", type="warning")
+            ui.notify("Stop the current response before changing the model.", type="warning")
             render_header()
             return
         profile_key = str(event.value)
@@ -748,18 +720,18 @@ def index() -> None:
             )
             render_header()
             return
-        conversation = current_conversation()
-        updated = repository.set_model_profile(state.conversation_id, profile_key)
-        thinking_disabled = False
-        if conversation.thinking_enabled and not profile.supports_thinking:
-            repository.set_thinking_enabled(state.conversation_id, False)
-            thinking_disabled = True
+        settings = current_settings()
+        thinking_disabled = settings.thinking_enabled and not profile.supports_thinking
+        repository.set_app_settings(
+            model_profile=profile_key,
+            thinking_enabled=False if thinking_disabled else settings.thinking_enabled,
+            memory_enabled=settings.memory_enabled,
+        )
         page_event(
             logging.INFO,
             "ui.model.changed",
-            previous_model_profile=conversation.model_profile,
+            previous_model_profile=settings.model_profile,
             model_profile=profile_key,
-            updated=updated,
             thinking_disabled=thinking_disabled,
         )
         render_conversation_list()
@@ -767,19 +739,19 @@ def index() -> None:
 
     def change_thinking(event) -> None:
         requested = bool(event.value)
-        conversation = current_conversation()
-        profile = get_profile(conversation.model_profile)
-        if conversation.id in active_generations:
+        settings = current_settings()
+        profile = get_profile(settings.model_profile)
+        if active_generations:
             page_event(
                 logging.WARNING,
                 "ui.thinking.change_blocked",
                 requested_thinking_enabled=requested,
                 reason="generation_active",
             )
-            ui.notify("Stop this chat's response before changing Thinking.", type="warning")
+            ui.notify("Stop the current response before changing Thinking.", type="warning")
             render_header()
             return
-        if requested == conversation.thinking_enabled:
+        if requested == settings.thinking_enabled:
             page_event(
                 logging.DEBUG,
                 "ui.thinking.change_ignored",
@@ -799,31 +771,36 @@ def index() -> None:
             render_header()
             return
 
-        updated = repository.set_thinking_enabled(conversation.id, requested)
+        repository.set_app_settings(
+            model_profile=settings.model_profile,
+            thinking_enabled=requested,
+            memory_enabled=settings.memory_enabled,
+        )
         page_event(
             logging.INFO,
             "ui.thinking.changed",
             model_profile=profile.key,
             thinking_enabled=requested,
             max_tokens=(THINKING_MAX_TOKENS if requested else MAX_TOKENS),
-            updated=updated,
         )
         render_conversation_list()
 
     def change_memory(event) -> None:
         requested = bool(event.value)
-        conversation = current_conversation()
-        if conversation.id in active_generations:
+        settings = current_settings()
+        if active_generations:
             page_event(
                 logging.WARNING,
                 "ui.memory.change_blocked",
                 requested_memory_enabled=requested,
                 reason="generation_active",
             )
-            ui.notify("Stop this chat's response before changing project memory.", type="warning")
+            ui.notify(
+                "Stop the current response before changing project memory.", type="warning"
+            )
             render_header()
             return
-        if requested == conversation.memory_enabled:
+        if requested == settings.memory_enabled:
             page_event(
                 logging.DEBUG,
                 "ui.memory.change_ignored",
@@ -832,12 +809,15 @@ def index() -> None:
             )
             return
 
-        updated = repository.set_memory_enabled(conversation.id, requested)
+        repository.set_app_settings(
+            model_profile=settings.model_profile,
+            thinking_enabled=settings.thinking_enabled,
+            memory_enabled=requested,
+        )
         page_event(
             logging.INFO,
             "ui.memory.changed",
             memory_enabled=requested,
-            updated=updated,
         )
         render_conversation_list()
 
@@ -980,15 +960,16 @@ def index() -> None:
 
         try:
             previous_messages = repository.list_messages(conversation.id)
-            profile = get_profile(conversation.model_profile)
+            settings = current_settings()
+            profile = get_profile(settings.model_profile)
             page_event(
                 logging.INFO,
                 "ui.generation.started",
                 model_profile=profile.key,
                 model_name=profile.model,
-                thinking_enabled=conversation.thinking_enabled,
-                memory_enabled=conversation.memory_enabled,
-                max_tokens=(THINKING_MAX_TOKENS if conversation.thinking_enabled else MAX_TOKENS),
+                thinking_enabled=settings.thinking_enabled,
+                memory_enabled=settings.memory_enabled,
+                max_tokens=(THINKING_MAX_TOKENS if settings.thinking_enabled else MAX_TOKENS),
                 input_message_chars=len(text),
                 previous_message_count=len(previous_messages),
             )
@@ -1024,7 +1005,7 @@ def index() -> None:
                     "project_id": state.project_id,
                     "conversation_id": conversation.id,
                     "generation_id": generation_id,
-                    "model_profile": conversation.model_profile,
+                    "model_profile": current_settings().model_profile,
                     "input_message_chars": len(text),
                 },
             )
@@ -1110,6 +1091,8 @@ def index() -> None:
                     profile,
                     persisted_messages,
                     text,
+                    thinking_enabled=settings.thinking_enabled,
+                    memory_enabled=settings.memory_enabled,
                     force_compact=force_compact,
                 )
                 request_messages = list(context_plan.messages)
@@ -1117,7 +1100,7 @@ def index() -> None:
                     logging.DEBUG,
                     "ui.generation.request_prepared",
                     model_profile=profile.key,
-                    thinking_enabled=conversation.thinking_enabled,
+                    thinking_enabled=settings.thinking_enabled,
                     completion_message_count=len(request_messages),
                     completion_chars=sum(
                         len(message.get("content") or "") for message in request_messages
@@ -1138,7 +1121,7 @@ def index() -> None:
                             profile,
                             request_messages,
                             request_id=generation_id,
-                            thinking_enabled=conversation.thinking_enabled,
+                            thinking_enabled=settings.thinking_enabled,
                         )
                     ) as stream:
                         async for event in stream:
@@ -1210,7 +1193,7 @@ def index() -> None:
                     force_compact = True
 
             if not any_output and not stopped:
-                if conversation.thinking_enabled:
+                if settings.thinking_enabled:
                     raise LLMError(
                         f"{profile.label} produced no final answer. Its thinking token budget "
                         "may be exhausted; disable Thinking or increase "
@@ -1237,7 +1220,7 @@ def index() -> None:
                 logging.WARNING,
                 "ui.generation.model_error",
                 model_profile=profile.key,
-                thinking_enabled=conversation.thinking_enabled,
+                thinking_enabled=settings.thinking_enabled,
                 error_type=type(error).__name__,
             )
             ui.notify(str(error), type="negative", multi_line=True, timeout=8000)
@@ -1252,7 +1235,7 @@ def index() -> None:
                     "conversation_id": conversation.id,
                     "generation_id": generation_id,
                     "model_profile": profile.key,
-                    "thinking_enabled": conversation.thinking_enabled,
+                    "thinking_enabled": settings.thinking_enabled,
                     "error_type": type(error).__name__,
                 },
             )
@@ -1320,7 +1303,7 @@ def index() -> None:
                         "conversation_id": conversation.id,
                         "generation_id": generation_id,
                         "model_profile": profile.key,
-                        "thinking_enabled": conversation.thinking_enabled,
+                        "thinking_enabled": settings.thinking_enabled,
                         "error_type": type(error).__name__,
                         "output_chars": output_chars,
                     },
@@ -1331,7 +1314,7 @@ def index() -> None:
                     logging.INFO,
                     "ui.generation.finished",
                     model_profile=profile.key,
-                    thinking_enabled=conversation.thinking_enabled,
+                    thinking_enabled=settings.thinking_enabled,
                     outcome=outcome,
                     stopped=stopped,
                     stream_chunk_count=event_count,
@@ -1395,11 +1378,8 @@ def index() -> None:
                 on_click=manage_project_memory,
             ).props("flat no-caps align=left").classes("memory-manage-button")
 
-            with ui.column().classes("sidebar-footer gap-1"):
-                ui.label("Local history").classes("text-sm font-semibold")
-                ui.label("SQLite persistence enabled").classes("text-xs text-slate-500")
-
         with ui.column().classes("main-panel"):
+            initial_settings = current_settings()
             with ui.row().classes("chat-header items-center justify-between"):
                 with ui.column().classes("min-w-0 gap-0"):
                     ui.label("Conversation").classes("eyebrow")
@@ -1408,7 +1388,7 @@ def index() -> None:
                     model_select = (
                         ui.select(
                             profile_options(),
-                            value=initial.model_profile,
+                            value=initial_settings.model_profile,
                             label="Model",
                             on_change=change_model,
                         )
@@ -1423,7 +1403,7 @@ def index() -> None:
                     thinking_toggle = (
                         ui.switch(
                             "Thinking",
-                            value=initial.thinking_enabled,
+                            value=initial_settings.thinking_enabled,
                             on_change=change_thinking,
                         )
                         .props("dense color=deep-purple")
@@ -1436,7 +1416,7 @@ def index() -> None:
                     memory_toggle = (
                         ui.switch(
                             "Use memory",
-                            value=initial.memory_enabled,
+                            value=initial_settings.memory_enabled,
                             on_change=change_memory,
                         )
                         .props("dense color=deep-purple")
@@ -1451,16 +1431,19 @@ def index() -> None:
                 messages_container = ui.column().classes("message-column")
 
             with ui.column().classes("composer-area gap-2"):
-                with ui.row().classes("composer-row items-center"):
+                with ui.row().classes("composer-row items-end"):
                     composer = (
-                        ui.input(
+                        ui.textarea(
                             placeholder="Message the model...",
                         )
-                        .props("borderless autocomplete=off")
+                        .props("borderless autocomplete=off autogrow")
                         .classes("composer-input")
                     )
                     composer.props["aria-label"] = "Message"
-                    composer.on("keydown.enter", send_message)
+                    # Enter sends (and is prevented from also inserting a
+                    # newline); Shift+Enter isn't matched by .exact, so it
+                    # falls through to the textarea's own default behavior.
+                    composer.on("keydown.enter.exact.prevent", send_message)
                     stop_button = (
                         ui.button(
                             icon="stop",
@@ -1482,12 +1465,9 @@ def index() -> None:
                     )
                     send_button.props["aria-label"] = "Send message"
                     send_button.tooltip("Send message")
-                ui.label(
-                    "Markdown supported - Enter to send - responses and history are stored locally"
-                ).classes("w-full text-center text-xs text-slate-400")
 
     render_all()
-    ui.timer(5.0, lambda: render_model_status(current_conversation().model_profile))
+    ui.timer(5.0, lambda: render_model_status(current_settings().model_profile))
     ui.context.client.on_disconnect(
         lambda: page_event(
             logging.INFO,
