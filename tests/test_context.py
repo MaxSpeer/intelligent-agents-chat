@@ -588,6 +588,12 @@ class PrepareConversationContextCompactionTests(unittest.IsolatedAsyncioTestCase
         async def fake_run(arguments: dict) -> str:
             return "Compact summary of the earlier turns."
 
+        compacting_calls = 0
+
+        def on_compacting() -> None:
+            nonlocal compacting_calls
+            compacting_calls += 1
+
         with mock.patch.object(context, "subagent", SimpleNamespace(run=fake_run)):
             plan = await prepare_conversation_context(
                 conversation,
@@ -596,6 +602,7 @@ class PrepareConversationContextCompactionTests(unittest.IsolatedAsyncioTestCase
                 "Latest question",
                 thinking_enabled=False,
                 memory_enabled=False,
+                on_compacting=on_compacting,
             )
 
         self.assertIsNotNone(
@@ -607,6 +614,9 @@ class PrepareConversationContextCompactionTests(unittest.IsolatedAsyncioTestCase
                 for message in plan.messages
             )
         )
+        # The UI hook fires exactly once, synchronously right before the
+        # sub-agent call -- not once per assemble() attempt.
+        self.assertEqual(compacting_calls, 1)
 
     async def test_does_not_compact_when_everything_fits(self) -> None:
         self._add_turn("Q1", "A1")
@@ -623,6 +633,12 @@ class PrepareConversationContextCompactionTests(unittest.IsolatedAsyncioTestCase
             calls.append(arguments["task"])
             return "unused"
 
+        compacting_calls = 0
+
+        def on_compacting() -> None:
+            nonlocal compacting_calls
+            compacting_calls += 1
+
         with mock.patch.object(context, "subagent", SimpleNamespace(run=fake_run)):
             await prepare_conversation_context(
                 conversation,
@@ -631,10 +647,12 @@ class PrepareConversationContextCompactionTests(unittest.IsolatedAsyncioTestCase
                 "Latest question",
                 thinking_enabled=False,
                 memory_enabled=False,
+                on_compacting=on_compacting,
             )
 
         self.assertEqual(calls, [])
         self.assertIsNone(self.repository.get_conversation_compaction(self.conversation.id))
+        self.assertEqual(compacting_calls, 0)
 
 
 if __name__ == "__main__":

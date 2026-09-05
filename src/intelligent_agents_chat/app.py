@@ -1094,6 +1094,11 @@ def index() -> None:
                     thinking_enabled=settings.thinking_enabled,
                     memory_enabled=settings.memory_enabled,
                     force_compact=force_compact,
+                    on_compacting=lambda: add_trace_entry(
+                        "🗜️ Context limit reached -- compacting older history and retrying..."
+                        if force_compact
+                        else "🗜️ Compacting older conversation history..."
+                    ),
                 )
                 request_messages = list(context_plan.messages)
                 page_event(

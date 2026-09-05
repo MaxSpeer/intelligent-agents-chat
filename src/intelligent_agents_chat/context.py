@@ -291,6 +291,7 @@ async def prepare_conversation_context(
     thinking_enabled: bool,
     memory_enabled: bool,
     force_compact: bool = False,
+    on_compacting: Callable[[], None] | None = None,
 ) -> ContextPlan:
     """Collect optional sources and assemble a context plan for the model
     to consume, including the system prompt, memories, message history,
@@ -316,6 +317,14 @@ async def prepare_conversation_context(
     chars/3 estimate here can still say "fits fine" for the very request
     that just failed, so this retry can't rely on the same estimate-driven
     check catching it a second time.
+
+    on_compacting, if given, is called synchronously right before compaction
+    actually starts (i.e. only when it's really about to run a sub-agent
+    call, not on every turn) -- purely a UI hook, so app.py can surface it
+    in the trace instead of generation silently pausing with no feedback.
+    Called even if compaction turns out to be a no-op (nothing new to
+    summarize) -- that only becomes known afterwards, and it's not worth
+    complicating this for what should be a rare edge case.
     """
     candidates = (
         retrieve_project_memory(
@@ -337,11 +346,15 @@ async def prepare_conversation_context(
         )
 
     if force_compact:
+        if on_compacting is not None:
+            on_compacting()
         await _compact_conversation_history(conversation.id, messages)
         plan = assemble()
     else:
         plan = assemble()
         if plan.omitted_history_messages > 0:
+            if on_compacting is not None:
+                on_compacting()
             compacted = await _compact_conversation_history(conversation.id, messages)
             if compacted:
                 plan = assemble()
