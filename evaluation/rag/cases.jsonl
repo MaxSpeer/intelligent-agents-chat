@@ -1,3 +1,0 @@
-{"query":"Which database provides the local lexical document index?","expected_documents":["architecture.md"]}
-{"query":"What is the orchid launch code?","expected_documents":["orchids.txt"]}
-{"query":"Which safeguards apply to uploaded files?","expected_documents":["security.txt"]}

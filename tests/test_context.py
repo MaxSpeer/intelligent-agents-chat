@@ -95,30 +95,6 @@ class ContextAssemblerTests(unittest.TestCase):
         self.assertEqual(plan.excluded_sources[0].reason, "retrieval_budget_exceeded")
         self.assertNotIn(MEMORY_GUARD, plan.messages[0]["content"])
 
-    def test_includes_adaptive_evidence_synthesis_with_document_sources(self) -> None:
-        document = ContextCandidate(
-            source_kind="project_document",
-            source_id="chunk-1",
-            project_id="project-a",
-            text="Mondkeks has 7 units in stock.",
-            title="inventory.csv",
-            locator="row 3",
-            score=0.7,
-        )
-
-        plan = ContextAssembler("System", retrieval_budget_tokens=500).assemble(
-            [{"role": "user", "content": "How many Mondkeks are available?"}],
-            [document],
-            context_window_tokens=2_000,
-            output_reserve_tokens=200,
-            retrieval_summary="[project_document:chunk-1] Stock is 7 units.",
-        )
-
-        self.assertEqual(len(plan.included_sources), 1)
-        self.assertIn("<evidence-synthesis>", plan.messages[1]["content"])
-        self.assertIn("Stock is 7 units.", plan.messages[1]["content"])
-        self.assertIn("[project_document:chunk-1]", plan.messages[1]["content"])
-
     def test_history_is_filled_newest_first_and_the_oldest_is_cut_when_it_does_not_fit(
         self,
     ) -> None:
@@ -292,16 +268,18 @@ class CompletionMessagesTests(unittest.TestCase):
             [
                 _message("user", "Fetch that page."),
                 _message("assistant", "", tool_calls=(call,)),
-                _message("tool", "Error: 'url' must start with http:// or https://.", tool_call_id="call_1"),
+                _message(
+                    "tool",
+                    "Error: 'url' must start with http:// or https://.",
+                    tool_call_id="call_1",
+                ),
                 _message("assistant", "I couldn't fetch that -- the URL looks invalid."),
                 _message("user", "Try a different URL then."),
             ]
         )
 
         self.assertEqual(messages[1]["role"], "user")
-        self.assertIn(
-            "Error: 'url' must start with http:// or https://.", messages[1]["content"]
-        )
+        self.assertIn("Error: 'url' must start with http:// or https://.", messages[1]["content"])
 
     def test_a_tool_call_with_no_result_is_reported_as_interrupted(self) -> None:
         """The turn was stopped between the tool call and its result being
@@ -354,7 +332,10 @@ class CompletionMessagesTests(unittest.TestCase):
                         {
                             "id": "call_1",
                             "type": "function",
-                            "function": {"name": "calculator", "arguments": '{"expression": "1+1"}'},
+                            "function": {
+                                "name": "calculator",
+                                "arguments": '{"expression": "1+1"}',
+                            },
                         }
                     ],
                 },
@@ -644,9 +625,7 @@ class PrepareConversationContextCompactionTests(unittest.IsolatedAsyncioTestCase
                 conversation, profile, messages, "Latest question"
             )
 
-        self.assertIsNotNone(
-            self.repository.get_conversation_compaction(self.conversation.id)
-        )
+        self.assertIsNotNone(self.repository.get_conversation_compaction(self.conversation.id))
         self.assertTrue(
             any(
                 "Compact summary of the earlier turns." in message["content"]

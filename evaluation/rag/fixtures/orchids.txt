@@ -1,2 +1,0 @@
-The orchid launch code is amber. This synthetic fact exists only to make project isolation and
-retrieval recall easy to verify.

@@ -1,4 +1,4 @@
-"""Project document ingestion and hybrid lexical/vector retrieval."""
+"""Project document ingestion and embedding vector retrieval."""
 
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ from intelligent_agents_chat.documents import (
     DocumentStore,
     DocumentValidationError,
     bounded_chunk_text,
-    cosine_similarity,
     validate_document_input,
 )
 from intelligent_agents_chat.embeddings import EmbeddingError, EmbeddingGateway
@@ -30,8 +29,6 @@ from intelligent_agents_chat.logging_config import log_event
 from intelligent_agents_chat.retrieval import ContextCandidate, RetrievalQuery
 
 
-HYBRID_CANDIDATE_MULTIPLIER = 3
-RECIPROCAL_RANK_CONSTANT = 60
 logger = logging.getLogger(__name__)
 
 
@@ -50,7 +47,7 @@ class DocumentService:
         blob_store: BlobStore,
         parser: DocumentParser,
         chunker: Chunker,
-        embedding_gateway: EmbeddingGateway | None,
+        embedding_gateway: EmbeddingGateway,
     ) -> None:
         self.store = store
         self.blob_store = blob_store
@@ -59,12 +56,8 @@ class DocumentService:
         self.embedding_gateway = embedding_gateway
 
     @property
-    def embeddings_enabled(self) -> bool:
-        return self.embedding_gateway is not None
-
-    @property
-    def embedding_model(self) -> str | None:
-        return self.embedding_gateway.model_name if self.embedding_gateway else None
+    def embedding_model(self) -> str:
+        return self.embedding_gateway.model_name
 
     async def upload(
         self,
@@ -265,9 +258,7 @@ class DocumentService:
             embedding_model=self.embedding_model,
         )
 
-    async def _embed_chunks(self, chunks: Sequence[ChunkDraft]) -> list[list[float]] | None:
-        if self.embedding_gateway is None:
-            return None
+    async def _embed_chunks(self, chunks: Sequence[ChunkDraft]) -> list[list[float]]:
         return await self.embedding_gateway.embed([chunk.content for chunk in chunks])
 
     def _project_document(self, document_id: str, project_id: str) -> Document:
@@ -278,13 +269,9 @@ class DocumentService:
 
 
 class ProjectRAGRetriever:
-    """Hybrid FTS5 and cosine retrieval with mandatory project filtering."""
+    """embedding retrieval (sqlite-vec, see documents.py)"""
 
-    def __init__(
-        self,
-        store: DocumentStore,
-        embedding_gateway: EmbeddingGateway | None,
-    ) -> None:
+    def __init__(self, store: DocumentStore, embedding_gateway: EmbeddingGateway) -> None:
         self.store = store
         self.embedding_gateway = embedding_gateway
 
@@ -294,70 +281,35 @@ class ProjectRAGRetriever:
         if query.limit <= 0 or not query.text.strip():
             return []
 
-        candidate_limit = max(query.limit, query.limit * HYBRID_CANDIDATE_MULTIPLIER)
-        lexical = self.store.lexical_search(query.project_id, query.text, candidate_limit)
-        vector: list[tuple[object, float, str]] = []
-        if self.embedding_gateway is not None:
-            try:
-                query_vectors = await self.embedding_gateway.embed([query.text])
-                query_vector = query_vectors[0]
-                vector = [
-                    (chunk, cosine_similarity(query_vector, chunk.embedding or ()), title)
-                    for chunk, title in self.store.vector_rows(query.project_id)
-                    if chunk.embedding is not None
-                    and chunk.embedding_model == self.embedding_gateway.model_name
-                    and len(chunk.embedding) == len(query_vector)
-                ]
-                vector.sort(key=lambda item: (-item[1], item[0].document_id, item[0].ordinal))
-                vector = vector[:candidate_limit]
-            except EmbeddingError as error:
-                log_event(
-                    logger,
-                    logging.WARNING,
-                    "rag.query_embedding_failed",
-                    project_id=query.project_id,
-                    query_chars=len(query.text),
-                    error_type=type(error).__name__,
-                )
-
-        fused: dict[str, dict[str, object]] = {}
-        for rank, (chunk, score, title) in enumerate(lexical, start=1):
-            fused[chunk.id] = {
-                "chunk": chunk,
-                "title": title,
-                "score": 1.0 / (RECIPROCAL_RANK_CONSTANT + rank),
-                "lexical_score": score,
-            }
-        for rank, (chunk, score, title) in enumerate(vector, start=1):
-            item = fused.setdefault(
-                chunk.id,
-                {"chunk": chunk, "title": title, "score": 0.0, "lexical_score": 0.0},
+        try:
+            query_vectors = await self.embedding_gateway.embed([query.text])
+        except EmbeddingError as error:
+            log_event(
+                logger,
+                logging.WARNING,
+                "rag.query_embedding_failed",
+                project_id=query.project_id,
+                query_chars=len(query.text),
+                error_type=type(error).__name__,
             )
-            item["score"] = float(item["score"]) + 1.0 / (RECIPROCAL_RANK_CONSTANT + rank)
-            item["vector_score"] = score
+            return []
 
-        ranked = sorted(
-            fused.values(),
-            key=lambda item: (
-                -float(item["score"]),
-                -float(item.get("vector_score", 0.0)),
-                -float(item.get("lexical_score", 0.0)),
-                item["chunk"].document_id,
-                item["chunk"].ordinal,
-            ),
-        )[: query.limit]
+        matches = self.store.vector_search(query.project_id, query_vectors[0], query.limit)
         candidates = [
             ContextCandidate(
                 source_kind="project_document",
-                source_id=item["chunk"].id,
+                source_id=chunk.id,
                 project_id=query.project_id,
                 source_conversation_id=None,
-                text=bounded_chunk_text(item["chunk"].content),
-                title=str(item["title"]),
-                locator=item["chunk"].locator,
-                score=float(item["score"]),
+                text=bounded_chunk_text(chunk.content),
+                title=title,
+                locator=chunk.locator,
+                # Cosine distance, inverted so higher means "more similar" --
+                # matches the convention of every other candidate's score
+                # (see memory.py), even though it isn't a strict [0, 1] bound.
+                score=1.0 - distance,
             )
-            for item in ranked
+            for chunk, distance, title in matches
         ]
         log_event(
             logger,
@@ -366,11 +318,7 @@ class ProjectRAGRetriever:
             project_id=query.project_id,
             query_chars=len(query.text),
             requested_limit=query.limit,
-            lexical_candidate_count=len(lexical),
-            vector_candidate_count=len(vector),
             result_count=len(candidates),
-            embedding_model=(
-                self.embedding_gateway.model_name if self.embedding_gateway is not None else None
-            ),
+            embedding_model=self.embedding_gateway.model_name,
         )
         return candidates

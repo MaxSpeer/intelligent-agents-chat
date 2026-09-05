@@ -1,2 +1,0 @@
-Uploaded files use generated project and document identifiers. File count, byte size, extension,
-and media type are validated. Retrieved document text is treated as untrusted reference context.

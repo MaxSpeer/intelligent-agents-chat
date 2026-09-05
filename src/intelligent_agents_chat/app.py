@@ -38,8 +38,6 @@ from intelligent_agents_chat.context import (
     repository,
 )
 from intelligent_agents_chat.database import (
-    AdaptiveRAGRoundRecord,
-    AdaptiveRAGRunInput,
     ContextRunInput,
     ContextSourceInput,
     DEFAULT_CONVERSATION_TITLE,
@@ -59,8 +57,8 @@ from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, get_profile, pro
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-DOCUMENT_UPLOAD_ACCEPT = ".txt,.md,.markdown,.pdf,.docx,.csv,.xlsx"
-DOCUMENT_UPLOAD_LABEL = "TXT, Markdown, PDF, DOCX, CSV, or XLSX"
+DOCUMENT_UPLOAD_ACCEPT = ".txt,.md,.markdown,.pdf"
+DOCUMENT_UPLOAD_LABEL = "TXT, Markdown, or PDF"
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +257,6 @@ def index() -> None:
             model_select.disable()
             thinking_toggle.disable()
             memory_toggle.disable()
-            rag_toggle.disable()
         else:
             composer.enable()
             send_button.enable()
@@ -271,7 +268,6 @@ def index() -> None:
             else:
                 thinking_toggle.disable()
             memory_toggle.enable()
-            rag_toggle.enable()
             composer.run_method("focus")
 
     def render_project_picker() -> None:
@@ -330,17 +326,14 @@ def index() -> None:
         render_model_status(conversation.model_profile)
         thinking_toggle.set_value(conversation.thinking_enabled)
         memory_toggle.set_value(conversation.memory_enabled)
-        rag_toggle.set_value(conversation.rag_enabled)
         if profile.supports_thinking and not state.generating:
             thinking_toggle.enable()
         else:
             thinking_toggle.disable()
         if state.generating:
             memory_toggle.disable()
-            rag_toggle.disable()
         else:
             memory_toggle.enable()
-            rag_toggle.enable()
 
     def render_context_sources(message_id: int) -> None:
         sources = repository.list_message_context_sources(message_id)
@@ -376,45 +369,6 @@ def index() -> None:
                         ).classes("memory-source-locator")
                         if source.source_excerpt:
                             ui.label(source.source_excerpt).classes("memory-source-excerpt")
-
-    def render_adaptive_rag_trace(message_id: int) -> None:
-        adaptive_run = repository.get_message_adaptive_rag_run(message_id)
-        if adaptive_run is None:
-            return
-        pass_label = (
-            f"{len(adaptive_run.rounds)} retrieval pass"
-            + ("es" if len(adaptive_run.rounds) != 1 else "")
-            if adaptive_run.retrieval_needed
-            else "retrieval skipped"
-        )
-        with ui.expansion(
-            f"Adaptive RAG · {pass_label}",
-            icon="account_tree",
-        ).classes("memory-sources adaptive-rag-trace"):
-            ui.label(adaptive_run.judge_reason).classes("adaptive-rag-reason")
-            for index, retrieval_round in enumerate(adaptive_run.rounds, start=1):
-                status = (
-                    "evidence sufficient"
-                    if retrieval_round.evidence_sufficient
-                    else "more evidence requested"
-                )
-                with ui.column().classes("adaptive-rag-round"):
-                    ui.label(
-                        f"Pass {index} · {retrieval_round.new_result_count} new sources · {status}"
-                    ).classes("adaptive-rag-round-title")
-                    ui.label(retrieval_round.query).classes("adaptive-rag-query")
-                    ui.label(retrieval_round.assessment_reason).classes("adaptive-rag-reason")
-                    if retrieval_round.missing_information:
-                        ui.label(
-                            "Missing: " + retrieval_round.missing_information
-                        ).classes("adaptive-rag-missing")
-            if adaptive_run.summary:
-                ui.label("Evidence synthesis").classes("adaptive-rag-round-title")
-                ui.label(adaptive_run.summary).classes("adaptive-rag-summary")
-            if adaptive_run.fallback_reasons:
-                ui.label(
-                    "Fallbacks: " + ", ".join(adaptive_run.fallback_reasons)
-                ).classes("adaptive-rag-fallback")
 
     def render_assistant_turn(turn_messages: list[Message]) -> None:
         """Render one user turn's response as a single chat bubble: a
@@ -466,7 +420,6 @@ def index() -> None:
                     _chat_markdown(final_content)
                 if context_message_id is not None:
                     render_context_sources(context_message_id)
-                    render_adaptive_rag_trace(context_message_id)
                     context_run = repository.get_message_context_run(context_message_id)
                     if context_run is not None:
                         # Prefer the real peak (prompt+completion of the turn's
@@ -915,43 +868,11 @@ def index() -> None:
         )
         render_conversation_list()
 
-    def change_rag(event) -> None:
-        requested = bool(event.value)
-        conversation = current_conversation()
-        if conversation.id in active_generations:
-            page_event(
-                logging.WARNING,
-                "ui.rag.change_blocked",
-                requested_rag_enabled=requested,
-                reason="generation_active",
-            )
-            ui.notify("Stop this chat's response before changing document RAG.", type="warning")
-            render_header()
-            return
-        if requested == conversation.rag_enabled:
-            page_event(
-                logging.DEBUG,
-                "ui.rag.change_ignored",
-                rag_enabled=requested,
-                reason="already_selected",
-            )
-            return
-
-        updated = repository.set_rag_enabled(conversation.id, requested)
-        page_event(
-            logging.INFO,
-            "ui.rag.changed",
-            rag_enabled=requested,
-            updated=updated,
-        )
-        render_conversation_list()
-
     def manage_project_documents() -> None:
         project = current_project()
         page_event(
             logging.INFO,
             "ui.documents.management_opened",
-            embeddings_enabled=document_service.embeddings_enabled,
             embedding_model=document_service.embedding_model,
         )
 
@@ -961,7 +882,7 @@ def index() -> None:
                     ui.label(f"Project documents · {project.name}").classes("text-xl font-bold")
                     ui.label(
                         f"Upload {DOCUMENT_UPLOAD_LABEL} files. Indexed passages are available "
-                        "only to chats in this project."
+                        "only to chats in this project, via the search_documents tool."
                     ).classes("text-sm text-slate-500")
                 document_dialog_close = ui.button(icon="close", on_click=dialog.close).props(
                     "flat round dense"
@@ -969,15 +890,10 @@ def index() -> None:
                 document_dialog_close.props["aria-label"] = "Close project documents"
 
             with ui.row().classes("document-ingestion-status"):
-                ui.icon(
-                    "hub" if document_service.embeddings_enabled else "manage_search",
-                    size="sm",
+                ui.icon("hub", size="sm")
+                ui.label(f"Semantic search · {document_service.embedding_model}").classes(
+                    "text-xs text-slate-500"
                 )
-                ui.label(
-                    f"Hybrid retrieval · {document_service.embedding_model}"
-                    if document_service.embeddings_enabled
-                    else "Lexical retrieval · configure an embedding endpoint for hybrid search"
-                ).classes("text-xs text-slate-500")
 
             document_count_label = ui.label().classes("text-xs text-slate-400")
             documents_container = ui.column().classes("document-entry-list")
@@ -1191,7 +1107,7 @@ def index() -> None:
                                         f"{document.embedding_dimension} dimensions"
                                     ).classes("text-xs text-slate-400")
                                 else:
-                                    ui.label("Embeddings · not configured").classes(
+                                    ui.label("Embeddings · not yet indexed").classes(
                                         "text-xs text-slate-400"
                                     )
                                 if document.error_message:
@@ -1366,7 +1282,6 @@ def index() -> None:
                 model_name=profile.model,
                 thinking_enabled=conversation.thinking_enabled,
                 memory_enabled=conversation.memory_enabled,
-                rag_enabled=conversation.rag_enabled,
                 max_tokens=(THINKING_MAX_TOKENS if conversation.thinking_enabled else MAX_TOKENS),
                 input_message_chars=len(text),
                 previous_message_count=len(previous_messages),
@@ -1520,6 +1435,7 @@ def index() -> None:
                             request_messages,
                             request_id=generation_id,
                             thinking_enabled=conversation.thinking_enabled,
+                            project_id=conversation.project_id,
                         )
                     ) as stream:
                         async for event in stream:
@@ -1680,34 +1596,6 @@ def index() -> None:
                             ),
                         ),
                     )
-                    if context_plan.adaptive_rag_trace is not None:
-                        trace = context_plan.adaptive_rag_trace
-                        repository.add_message_adaptive_rag_run(
-                            final_message.id,
-                            AdaptiveRAGRunInput(
-                                retrieval_needed=trace.retrieval_needed,
-                                judge_reason=trace.judge_reason,
-                                rounds=tuple(
-                                    AdaptiveRAGRoundRecord(
-                                        query=retrieval_round.query,
-                                        result_count=retrieval_round.result_count,
-                                        new_result_count=retrieval_round.new_result_count,
-                                        evidence_sufficient=(
-                                            retrieval_round.evidence_sufficient
-                                        ),
-                                        assessment_reason=(retrieval_round.assessment_reason),
-                                        missing_information=(
-                                            retrieval_round.missing_information
-                                        ),
-                                    )
-                                    for retrieval_round in trace.rounds
-                                ),
-                                evidence_sufficient=trace.evidence_sufficient,
-                                summary=trace.summary,
-                                fallback_reasons=trace.fallback_reasons,
-                                duration_ms=trace.duration_ms,
-                            ),
-                        )
                 if messages_saved_count:
                     rebuild_conversation_memory(conversation.id)
                 if stopped:
@@ -1858,18 +1746,6 @@ def index() -> None:
                     )
                     memory_toggle.tooltip(
                         "Retrieve relevant context from other chats in this project"
-                    )
-                    rag_toggle = (
-                        ui.switch(
-                            "Use documents",
-                            value=initial.rag_enabled,
-                            on_change=change_rag,
-                        )
-                        .props("dense color=deep-purple")
-                        .classes("rag-toggle")
-                    )
-                    rag_toggle.tooltip(
-                        "Retrieve relevant passages from indexed files in this project"
                     )
 
             message_scroll = ui.scroll_area().classes("message-scroll")

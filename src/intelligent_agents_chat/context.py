@@ -18,11 +18,6 @@ import math
 import os
 from pathlib import Path
 
-from intelligent_agents_chat.adaptive_rag import (
-    AdaptiveRAGController,
-    AdaptiveRAGTrace,
-    OpenAIAdaptiveRAGReasoner,
-)
 from intelligent_agents_chat.database import ChatRepository, Conversation, Message
 from intelligent_agents_chat.documents import (
     DEFAULT_DOCUMENT_ROOT,
@@ -35,7 +30,6 @@ from intelligent_agents_chat.embeddings import create_embedding_gateway
 from intelligent_agents_chat.llm import (
     MAX_TOKENS,
     THINKING_MAX_TOKENS,
-    VLLMGateway,
     system_prompt_for_today,
 )
 from intelligent_agents_chat.logging_config import configure_logging, log_event
@@ -107,7 +101,6 @@ class ContextPlan:
     retrieval_tokens: int
     selected_history_messages: int
     omitted_history_messages: int
-    adaptive_rag_trace: AdaptiveRAGTrace | None = None
 
 
 def estimate_tokens(text: str) -> int:
@@ -127,9 +120,7 @@ def estimate_message_tokens(message: MessagePayload) -> int:
         if message.get(key) is not None
     }
     structured_tokens = (
-        estimate_tokens(
-            json.dumps(structured_payload, ensure_ascii=False, separators=(",", ":"))
-        )
+        estimate_tokens(json.dumps(structured_payload, ensure_ascii=False, separators=(",", ":")))
         if structured_payload
         else 0
     )
@@ -163,8 +154,6 @@ class ContextAssembler:
         context_window_tokens: int,
         output_reserve_tokens: int,
         trace_id: str | None = None,
-        retrieval_summary: str | None = None,
-        adaptive_rag_trace: AdaptiveRAGTrace | None = None,
     ) -> ContextPlan:
         if context_window_tokens <= output_reserve_tokens:
             raise ContextOverflowError("Output reserve leaves no room for model input")
@@ -214,13 +203,7 @@ class ContextAssembler:
             block = f'{marker} From "{candidate.title}" ({candidate.locator})\n{candidate.text}'
             tokens = estimate_tokens(block)
             prospective_blocks = [*blocks, block]
-            has_document_source = candidate.source_kind == "project_document" or any(
-                source.candidate.source_kind == "project_document" for source in included
-            )
-            prospective_retrieval_message = _retrieval_message(
-                prospective_blocks,
-                summary=retrieval_summary if has_document_source else None,
-            )
+            prospective_retrieval_message = _retrieval_message(prospective_blocks)
             prospective_context_tokens = (
                 estimate_message_tokens(guarded_system_message)
                 - base_system_tokens
@@ -270,9 +253,7 @@ class ContextAssembler:
 
         selected_history_count = len(selected_history) + 1
         estimated_input_tokens = sum(estimate_message_tokens(message) for message in assembled)
-        system_tokens = (
-            estimate_message_tokens(base_system_message) if base_system_content else 0
-        )
+        system_tokens = estimate_message_tokens(base_system_message) if base_system_content else 0
         current_user_tokens = estimate_message_tokens(latest)
         tool_messages = [message for message in selected_history if _is_tool_message(message)]
         history_tokens = sum(
@@ -298,7 +279,6 @@ class ContextAssembler:
             retrieval_tokens=retrieval_context_tokens,
             selected_history_messages=selected_history_count,
             omitted_history_messages=max(0, len(history) - selected_history_count),
-            adaptive_rag_trace=adaptive_rag_trace,
         )
 
 
@@ -306,18 +286,13 @@ def _is_tool_message(message: MessagePayload) -> bool:
     return message.get("role") == "tool" or bool(message.get("tool_calls"))
 
 
-def _retrieval_message(blocks: Sequence[str], *, summary: str | None = None) -> MessagePayload:
-    synthesis = (
-        "<evidence-synthesis>\n" + summary.strip() + "\n</evidence-synthesis>\n\n"
-        if summary and summary.strip()
-        else ""
-    )
+def _retrieval_message(blocks: Sequence[str]) -> MessagePayload:
     return {
         "role": "user",
         "content": (
             "Reference context retrieved for this project follows. "
             "Do not answer this reference message directly.\n\n"
-            "<retrieved-context>\n" + synthesis + "\n\n".join(blocks) + "\n</retrieved-context>"
+            "<retrieved-context>\n" + "\n\n".join(blocks) + "\n</retrieved-context>"
         ),
     }
 
@@ -358,11 +333,6 @@ document_service = DocumentService(
     embedding_gateway,
 )
 rag_retriever = ProjectRAGRetriever(document_store, embedding_gateway)
-adaptive_gateway = VLLMGateway()
-adaptive_rag_controller = AdaptiveRAGController(
-    rag_retriever,
-    OpenAIAdaptiveRAGReasoner(adaptive_gateway),
-)
 context_assembler = ContextAssembler(system_prompt_for_today)
 
 try:
@@ -422,7 +392,7 @@ async def prepare_conversation_context(
     that just failed, so this retry can't rely on the same estimate-driven
     check catching it a second time.
     """
-    memory_candidates = (
+    candidates = (
         retrieve_project_memory(
             project_id=conversation.project_id,
             conversation_id=conversation.id,
@@ -431,19 +401,6 @@ async def prepare_conversation_context(
         if conversation.memory_enabled
         else []
     )
-    adaptive_result = (
-        await adaptive_rag_controller.run(
-            project_id=conversation.project_id,
-            query=query_text,
-            history=[{"role": message.role, "content": message.content} for message in messages],
-            profile=profile,
-            request_id=request_id,
-        )
-        if conversation.rag_enabled
-        else None
-    )
-    document_candidates = list(adaptive_result.candidates) if adaptive_result is not None else []
-    candidates = _interleave_candidates(document_candidates, memory_candidates)
     output_reserve_tokens = THINKING_MAX_TOKENS if conversation.thinking_enabled else MAX_TOKENS
 
     def assemble() -> ContextPlan:
@@ -453,8 +410,6 @@ async def prepare_conversation_context(
             context_window_tokens=profile.context_window_tokens,
             output_reserve_tokens=output_reserve_tokens,
             trace_id=request_id,
-            retrieval_summary=(adaptive_result.summary if adaptive_result is not None else None),
-            adaptive_rag_trace=(adaptive_result.trace if adaptive_result is not None else None),
         )
 
     if force_compact:
@@ -483,26 +438,8 @@ async def prepare_conversation_context(
         excluded_source_count=len(plan.excluded_sources),
         excluded_reasons=sorted({source.reason for source in plan.excluded_sources}),
         source_kinds=sorted({source.candidate.source_kind for source in plan.included_sources}),
-        adaptive_rag_enabled=adaptive_result is not None,
-        adaptive_rag_round_count=(
-            len(adaptive_result.trace.rounds) if adaptive_result is not None else 0
-        ),
     )
     return plan
-
-
-def _interleave_candidates(
-    primary: list[ContextCandidate],
-    secondary: list[ContextCandidate],
-) -> list[ContextCandidate]:
-    """Give enabled retrieval sources a fair chance within the shared budget."""
-    result: list[ContextCandidate] = []
-    for index in range(max(len(primary), len(secondary))):
-        if index < len(primary):
-            result.append(primary[index])
-        if index < len(secondary):
-            result.append(secondary[index])
-    return result
 
 
 #
@@ -713,9 +650,7 @@ async def _compact_conversation_history(conversation_id: str, messages: list[Mes
         return False
 
     delta_text = "\n\n".join(_turn_as_plain_text(turn) for turn in delta_turns)
-    summary = await _summarize_for_compaction(
-        existing.summary if existing else None, delta_text
-    )
+    summary = await _summarize_for_compaction(existing.summary if existing else None, delta_text)
     repository.set_conversation_compaction(
         conversation_id,
         compacted_through_message_id=turns_to_compact[-1][-1].id,

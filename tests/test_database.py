@@ -62,7 +62,6 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertEqual(loaded_conversation.title, DEFAULT_CONVERSATION_TITLE)
         self.assertFalse(loaded_conversation.thinking_enabled)
         self.assertFalse(loaded_conversation.memory_enabled)
-        self.assertFalse(loaded_conversation.rag_enabled)
         self.assertEqual([message.role for message in messages], ["user", "assistant"])
         self.assertEqual(messages[1].id, assistant.id)
         self.assertEqual(messages[1].model_profile, "base")
@@ -111,7 +110,6 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertTrue(self.repository.set_model_profile(conversation.id, "tuned"))
         self.assertTrue(self.repository.set_thinking_enabled(conversation.id, True))
         self.assertTrue(self.repository.set_memory_enabled(conversation.id, True))
-        self.assertTrue(self.repository.set_rag_enabled(conversation.id, True))
 
         updated = self.repository.get_conversation(conversation.id)
         self.assertIsNotNone(updated)
@@ -120,7 +118,6 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertEqual(updated.model_profile, "tuned")
         self.assertTrue(updated.thinking_enabled)
         self.assertTrue(updated.memory_enabled)
-        self.assertTrue(updated.rag_enabled)
 
     def test_new_conversation_can_start_with_thinking_enabled(self) -> None:
         conversation = self.repository.create_conversation(
@@ -145,18 +142,6 @@ class ChatRepositoryTests(unittest.TestCase):
         self.assertIsNotNone(reopened)
         assert reopened is not None
         self.assertTrue(reopened.memory_enabled)
-
-    def test_new_conversation_can_start_with_rag_enabled(self) -> None:
-        conversation = self.repository.create_conversation(
-            "base",
-            rag_enabled=True,
-        )
-
-        reopened = ChatRepository(self.database_path).get_conversation(conversation.id)
-
-        self.assertIsNotNone(reopened)
-        assert reopened is not None
-        self.assertTrue(reopened.rag_enabled)
 
     def test_context_source_provenance_is_persisted_and_cascades_with_message(self) -> None:
         source = self.repository.create_conversation("base", title="Architecture")

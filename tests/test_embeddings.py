@@ -1,92 +1,74 @@
-"""OpenAI-compatible embedding configuration and transport tests."""
+"""Local (fastembed-backed) embedding gateway tests.
 
-import json
-import os
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Thread
+Injects a fake stand-in for fastembed's TextEmbedding (by setting the
+gateway's private _model directly, bypassing _ensure_model's real load path)
+so these tests never do real ONNX inference or a model download.
+"""
+
 import unittest
-from unittest.mock import patch
+
+import numpy as np
 
 from intelligent_agents_chat.embeddings import (
-    EmbeddingSettings,
-    OpenAIEmbeddingGateway,
+    EMBEDDING_MODEL_NAME,
+    EmbeddingError,
+    LocalEmbeddingGateway,
     create_embedding_gateway,
 )
 
 
-class FakeEmbeddingHandler(BaseHTTPRequestHandler):
-    def do_POST(self) -> None:  # noqa: N802
-        content_length = int(self.headers.get("Content-Length", "0"))
-        request = json.loads(self.rfile.read(content_length))
-        inputs = request["input"]
-        payload = {
-            "object": "list",
-            "model": request["model"],
-            "data": [
-                {
-                    "object": "embedding",
-                    "index": index,
-                    "embedding": [float(len(text)), float(index + 1)],
-                }
-                for index, text in enumerate(inputs)
-            ],
-            "usage": {"prompt_tokens": 1, "total_tokens": 1},
-        }
-        encoded = json.dumps(payload).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
+class _FakeFastEmbedModel:
+    """Stands in for fastembed's TextEmbedding -- one small vector per input
+    text, no real ONNX inference or model download.
+    """
 
-    def log_message(self, format, *args) -> None:  # noqa: A002
-        return
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[list[str]] = []
+
+    def embed(self, documents):
+        if self.fail:
+            raise RuntimeError("boom")
+        texts = list(documents)
+        self.calls.append(texts)
+        return [np.array([float(len(text)), 1.0, 0.0]) for text in texts]
 
 
-class EmbeddingGatewayTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), FakeEmbeddingHandler)
-        self.thread = Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
+class LocalEmbeddingGatewayTests(unittest.IsolatedAsyncioTestCase):
+    async def test_embeds_texts_via_the_model_preserving_order(self) -> None:
+        gateway = LocalEmbeddingGateway()
+        fake_model = _FakeFastEmbedModel()
+        gateway._model = fake_model  # bypass the real fastembed load for this test
 
-    def tearDown(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
-        self.thread.join(timeout=2)
+        vectors = await gateway.embed(["a", "bb"])
 
-    async def test_openai_compatible_gateway_batches_and_preserves_order(self) -> None:
-        gateway = OpenAIEmbeddingGateway(
-            EmbeddingSettings(
-                base_url=f"http://127.0.0.1:{self.server.server_port}/v1",
-                model="embed-test",
-                api_key="placeholder",
-                batch_size=1,
-                expected_dimension=2,
-            )
-        )
+        self.assertEqual(vectors, [[1.0, 1.0, 0.0], [2.0, 1.0, 0.0]])
+        self.assertEqual(fake_model.calls, [["a", "bb"]])
 
-        vectors = await gateway.embed(["alpha", "longer"])
+    async def test_empty_input_short_circuits_without_touching_the_model(self) -> None:
+        gateway = LocalEmbeddingGateway()
+        vectors = await gateway.embed([])
+        self.assertEqual(vectors, [])
 
-        self.assertEqual(vectors, [[5.0, 1.0], [6.0, 1.0]])
+    async def test_model_failure_is_reported_as_embedding_error(self) -> None:
+        gateway = LocalEmbeddingGateway()
+        gateway._model = _FakeFastEmbedModel(fail=True)
+
+        with self.assertRaisesRegex(EmbeddingError, "embedding failed"):
+            await gateway.embed(["x"])
+
+    def test_model_name_defaults_to_the_pinned_lightweight_model(self) -> None:
+        gateway = LocalEmbeddingGateway()
+        self.assertEqual(gateway.model_name, EMBEDDING_MODEL_NAME)
 
 
-class EmbeddingSettingsTests(unittest.TestCase):
-    def test_endpoint_is_independent_and_disabled_by_default(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            settings = EmbeddingSettings.from_environment()
-            gateway = create_embedding_gateway(settings)
-
-        self.assertFalse(settings.enabled)
-        self.assertIsNone(gateway)
-
-    def test_endpoint_and_model_must_be_configured_together(self) -> None:
-        with patch.dict(
-            os.environ,
-            {"RAG_EMBEDDING_BASE_URL": "http://127.0.0.1:11434/v1"},
-            clear=True,
-        ):
-            with self.assertRaisesRegex(ValueError, "configured together"):
-                EmbeddingSettings.from_environment()
+class CreateEmbeddingGatewayTests(unittest.TestCase):
+    def test_always_returns_a_real_local_gateway(self) -> None:
+        # Unlike the old remote-endpoint gateway, there's no "unconfigured"
+        # state any more (no env vars to set) -- this never returns None.
+        gateway = create_embedding_gateway()
+        self.assertIsInstance(gateway, LocalEmbeddingGateway)
+        self.assertEqual(gateway.model_name, EMBEDDING_MODEL_NAME)
 
 
 if __name__ == "__main__":

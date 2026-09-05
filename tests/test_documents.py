@@ -1,12 +1,10 @@
-"""Document parsing, lifecycle, hybrid retrieval, and project-isolation tests."""
+"""Document parsing, lifecycle, and project-isolated vector retrieval tests."""
 
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from docx import Document as WordDocument
-from openpyxl import Workbook
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
@@ -18,13 +16,18 @@ from intelligent_agents_chat.documents import (
     DocumentStore,
     DocumentValidationError,
 )
-from intelligent_agents_chat.embeddings import EmbeddingError
+from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION, EmbeddingError
 from intelligent_agents_chat.rag import DocumentService, ProjectRAGRetriever
-from intelligent_agents_chat.rag_evaluation import run_fixture_evaluation
 from intelligent_agents_chat.retrieval import RetrievalQuery
 
 
 class SemanticFakeEmbeddingGateway:
+    """A fake standing in for the real local model -- fast, deterministic,
+    no ONNX inference or model download in unit tests. Vectors are chosen so
+    unrelated topics land far apart in cosine space, exactly like a real
+    embedding model would, just without actually understanding language.
+    """
+
     model_name = "test-embedding"
 
     async def embed(self, texts):
@@ -32,12 +35,17 @@ class SemanticFakeEmbeddingGateway:
 
     @staticmethod
     def _vector(text: str) -> list[float]:
+        # One-hot in the first 3 dimensions, padded with zeros to
+        # document_chunks_vec's fixed EMBEDDING_DIMENSION (see documents.py) --
+        # the schema itself only ever accepts that exact dimension now.
         normalized = text.casefold()
         if "orchid" in normalized or "flower" in normalized:
-            return [1.0, 0.0, 0.0]
-        if "finance" in normalized or "budget" in normalized:
-            return [0.0, 1.0, 0.0]
-        return [0.0, 0.0, 1.0]
+            head = [1.0, 0.0, 0.0]
+        elif "finance" in normalized or "budget" in normalized:
+            head = [0.0, 1.0, 0.0]
+        else:
+            head = [0.0, 0.0, 1.0]
+        return head + [0.0] * (EMBEDDING_DIMENSION - len(head))
 
 
 class FlakyEmbeddingGateway(SemanticFakeEmbeddingGateway):
@@ -115,9 +123,7 @@ class DocumentRAGTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.list_chunks(replaced.id), [])
         self.assertFalse(self.blob_store.exists(replaced.storage_key))
 
-    async def test_hybrid_retrieval_never_crosses_project_boundaries_and_has_citations(
-        self,
-    ) -> None:
+    async def test_retrieval_never_crosses_project_boundaries_and_has_citations(self) -> None:
         public = self.repository.create_project("Public")
         private = self.repository.create_project("Private")
         public_upload = await self.service.upload(
@@ -180,55 +186,6 @@ class DocumentRAGTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(indexed.error_message)
         self.assertGreater(indexed.chunk_count, 0)
 
-    async def test_lexical_mode_works_without_an_embedding_endpoint(self) -> None:
-        project = self.repository.create_project("Lexical")
-        service = DocumentService(
-            self.store,
-            self.blob_store,
-            DocumentParser(),
-            Chunker(),
-            None,
-        )
-        uploaded = await service.upload(
-            project_id=project.id,
-            display_name="sqlite.txt",
-            media_type="text/plain",
-            data=b"SQLite FTS5 provides deterministic lexical retrieval.",
-        )
-
-        self.assertIsNone(uploaded.document.embedding_model)
-        results = await ProjectRAGRetriever(self.store, None).retrieve(
-            RetrievalQuery(project_id=project.id, text="deterministic FTS5")
-        )
-        self.assertEqual(len(results), 1)
-        self.assertIn("SQLite", results[0].text)
-
-    async def test_xlsx_upload_is_searchable_with_a_worksheet_row_citation(self) -> None:
-        project = self.repository.create_project("Spreadsheets")
-        uploaded = await self.service.upload(
-            project_id=project.id,
-            display_name="launches.xlsx",
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            data=_xlsx_with_content(),
-        )
-
-        results = await ProjectRAGRetriever(self.store, self.embedding_gateway).retrieve(
-            RetrievalQuery(project_id=project.id, text="What is the orchid launch code?")
-        )
-
-        self.assertEqual(uploaded.document.status, "indexed")
-        self.assertEqual(results[0].title, "launches.xlsx")
-        self.assertEqual(results[0].locator, 'sheet "Launches", row 2')
-        self.assertIn("amber", results[0].text)
-
-    async def test_checked_in_evaluation_set_measures_recall_before_reranking(self) -> None:
-        result = await run_fixture_evaluation(k=2)
-
-        self.assertEqual(result.case_count, 3)
-        self.assertEqual(result.recall_at_k, 1.0)
-        self.assertEqual(result.hit_rate_at_k, 1.0)
-        self.assertGreater(result.mean_reciprocal_rank, 0.0)
-
 
 class DocumentParserTests(unittest.TestCase):
     def test_chunking_is_stable_and_overlapping(self) -> None:
@@ -252,7 +209,7 @@ class DocumentParserTests(unittest.TestCase):
     def test_markdown_sections_and_pdf_pages_preserve_locators(self) -> None:
         parser = DocumentParser()
         markdown = parser.parse(
-            b"# Architecture\nUse SQLite.\n\n## Retrieval\nUse hybrid search.",
+            b"# Architecture\nUse SQLite.\n\n## Retrieval\nUse embeddings.",
             display_name="design.md",
             media_type="text/markdown",
         )
@@ -269,59 +226,16 @@ class DocumentParserTests(unittest.TestCase):
         self.assertEqual(pdf[0].locator, "page 1")
         self.assertIn("Evidence on page one", pdf[0].text)
 
-    def test_docx_preserves_heading_paragraph_and_table_locators(self) -> None:
+    def test_rejects_mismatched_media_type_for_pdf(self) -> None:
         parser = DocumentParser()
-        segments = parser.parse(
-            _docx_with_content(),
-            display_name="research.docx",
-            media_type=(
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            ),
-        )
-
-        self.assertEqual(segments[0].locator, "section: Research")
-        self.assertIn("Orchid launch notes", segments[0].text)
-        table_segment = next(segment for segment in segments if "table 1" in segment.locator)
-        self.assertEqual(table_segment.locator, "section: Research, table 1, row 2")
-        self.assertEqual(table_segment.text, "Project: Orchid | Code: amber")
-
-    def test_csv_and_xlsx_preserve_structured_row_locators(self) -> None:
-        parser = DocumentParser()
-        csv_segments = parser.parse(
-            b"Project;Launch code\nOrchid;amber\nFinance;cobalt\n",
-            display_name="launches.csv",
-            media_type="text/csv",
-        )
-        xlsx_segments = parser.parse(
-            _xlsx_with_content(),
-            display_name="launches.xlsx",
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
-        self.assertEqual(csv_segments[0].locator, "row 2")
-        self.assertEqual(csv_segments[0].text, "Project: Orchid | Launch code: amber")
-        self.assertEqual(xlsx_segments[0].locator, 'sheet "Launches", row 2')
-        self.assertEqual(xlsx_segments[0].text, "Project: Orchid | Launch code: amber")
-        self.assertEqual(xlsx_segments[0].section, "Launches")
-
-    def test_rejects_invalid_office_archives_and_mismatched_media_type(self) -> None:
-        parser = DocumentParser()
-        with self.assertRaisesRegex(DocumentValidationError, "not a valid DOCX"):
+        with self.assertRaisesRegex(DocumentValidationError, "Unsupported media type for PDF"):
             parser.parse(
-                b"not a zip archive",
-                display_name="broken.docx",
-                media_type=(
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                ),
-            )
-        with self.assertRaisesRegex(DocumentValidationError, "Unsupported media type for XLSX"):
-            parser.parse(
-                _xlsx_with_content(),
-                display_name="launches.xlsx",
-                media_type="application/pdf",
+                _pdf_with_text("irrelevant"),
+                display_name="evidence.pdf",
+                media_type="application/zip",
             )
 
-    def test_rejects_unsupported_binary_and_empty_scanned_pdf(self) -> None:
+    def test_rejects_unsupported_extension_and_empty_scanned_pdf(self) -> None:
         parser = DocumentParser()
         with self.assertRaisesRegex(DocumentValidationError, "Supported document types"):
             parser.parse(b"binary", display_name="image.png", media_type="image/png")
@@ -358,32 +272,6 @@ def _pdf_with_text(text: str) -> bytes:
     page[NameObject("/Contents")] = writer._add_object(stream)
     output = BytesIO()
     writer.write(output)
-    return output.getvalue()
-
-
-def _docx_with_content() -> bytes:
-    document = WordDocument()
-    document.add_heading("Research", level=1)
-    document.add_paragraph("Orchid launch notes")
-    table = document.add_table(rows=2, cols=2)
-    table.cell(0, 0).text = "Project"
-    table.cell(0, 1).text = "Code"
-    table.cell(1, 0).text = "Orchid"
-    table.cell(1, 1).text = "amber"
-    output = BytesIO()
-    document.save(output)
-    return output.getvalue()
-
-
-def _xlsx_with_content() -> bytes:
-    workbook = Workbook()
-    worksheet = workbook.active
-    worksheet.title = "Launches"
-    worksheet.append(["Project", "Launch code"])
-    worksheet.append(["Orchid", "amber"])
-    output = BytesIO()
-    workbook.save(output)
-    workbook.close()
     return output.getvalue()
 
 

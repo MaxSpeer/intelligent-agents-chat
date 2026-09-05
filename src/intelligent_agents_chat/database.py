@@ -12,6 +12,8 @@ import sqlite3
 from typing import Literal
 from uuid import uuid4
 
+import sqlite_vec
+
 from intelligent_agents_chat.logging_config import log_event
 
 
@@ -43,7 +45,6 @@ class Conversation:
     memory_enabled: bool
     created_at: datetime
     updated_at: datetime
-    rag_enabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,46 +132,6 @@ class MessageContextRun:
 
 
 @dataclass(frozen=True, slots=True)
-class AdaptiveRAGRoundRecord:
-    """Persistable audit record for one retrieval and evidence-assessment pass."""
-
-    query: str
-    result_count: int
-    new_result_count: int
-    evidence_sufficient: bool
-    assessment_reason: str
-    missing_information: str
-
-
-@dataclass(frozen=True, slots=True)
-class AdaptiveRAGRunInput:
-    """Adaptive RAG trace to attach to an assistant message."""
-
-    retrieval_needed: bool
-    judge_reason: str
-    rounds: tuple[AdaptiveRAGRoundRecord, ...]
-    evidence_sufficient: bool
-    summary: str | None
-    fallback_reasons: tuple[str, ...]
-    duration_ms: float
-
-
-@dataclass(frozen=True, slots=True)
-class MessageAdaptiveRAGRun:
-    """Persisted adaptive RAG decisions used to generate one assistant message."""
-
-    assistant_message_id: int
-    retrieval_needed: bool
-    judge_reason: str
-    rounds: tuple[AdaptiveRAGRoundRecord, ...]
-    evidence_sufficient: bool
-    summary: str | None
-    fallback_reasons: tuple[str, ...]
-    duration_ms: float
-    created_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
 class ConversationCompaction:
     """A rolling summary standing in for everything in one conversation older
     than its most recent kept-raw turns (see chat.py's
@@ -220,8 +181,6 @@ class ChatRepository:
                         CHECK (thinking_enabled IN (0, 1)),
                     memory_enabled INTEGER NOT NULL DEFAULT 0
                         CHECK (memory_enabled IN (0, 1)),
-                    rag_enabled INTEGER NOT NULL DEFAULT 0
-                        CHECK (rag_enabled IN (0, 1)),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -252,14 +211,6 @@ class ChatRepository:
                     ALTER TABLE conversations
                     ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 0
                         CHECK (memory_enabled IN (0, 1))
-                    """
-                )
-            if not _column_exists(connection, "conversations", "rag_enabled"):
-                connection.execute(
-                    """
-                    ALTER TABLE conversations
-                    ADD COLUMN rag_enabled INTEGER NOT NULL DEFAULT 0
-                        CHECK (rag_enabled IN (0, 1))
                     """
                 )
             connection.executescript(
@@ -355,20 +306,6 @@ class ChatRepository:
                     summary TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS message_adaptive_rag_runs (
-                    assistant_message_id INTEGER PRIMARY KEY
-                        REFERENCES messages(id) ON DELETE CASCADE,
-                    retrieval_needed INTEGER NOT NULL CHECK (retrieval_needed IN (0, 1)),
-                    judge_reason TEXT NOT NULL,
-                    rounds_json TEXT NOT NULL,
-                    evidence_sufficient INTEGER NOT NULL
-                        CHECK (evidence_sufficient IN (0, 1)),
-                    summary TEXT,
-                    fallback_reasons_json TEXT NOT NULL,
-                    duration_ms REAL NOT NULL,
-                    created_at TEXT NOT NULL
                 );
                 """
             )
@@ -472,7 +409,6 @@ class ChatRepository:
         title: str = DEFAULT_CONVERSATION_TITLE,
         thinking_enabled: bool = False,
         memory_enabled: bool = False,
-        rag_enabled: bool = False,
     ) -> Conversation:
         conversation_id = str(uuid4())
         now = _timestamp()
@@ -487,8 +423,8 @@ class ChatRepository:
                 """
                 INSERT INTO conversations (
                     id, project_id, title, model_profile, thinking_enabled, memory_enabled,
-                    rag_enabled, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -497,7 +433,6 @@ class ChatRepository:
                     model_profile,
                     int(thinking_enabled),
                     int(memory_enabled),
-                    int(rag_enabled),
                     now,
                     now,
                 ),
@@ -514,7 +449,6 @@ class ChatRepository:
             model_profile=conversation.model_profile,
             thinking_enabled=conversation.thinking_enabled,
             memory_enabled=conversation.memory_enabled,
-            rag_enabled=conversation.rag_enabled,
             title_chars=len(conversation.title),
         )
         return conversation
@@ -524,7 +458,7 @@ class ChatRepository:
             row = connection.execute(
                 """
                 SELECT id, project_id, title, model_profile, thinking_enabled, memory_enabled,
-                       rag_enabled, created_at, updated_at
+                       created_at, updated_at
                 FROM conversations
                 WHERE id = ?
                 """,
@@ -537,7 +471,7 @@ class ChatRepository:
             rows = connection.execute(
                 """
                 SELECT id, project_id, title, model_profile, thinking_enabled, memory_enabled,
-                       rag_enabled, created_at, updated_at
+                       created_at, updated_at
                 FROM conversations
                 WHERE project_id = ?
                 ORDER BY updated_at DESC, created_at DESC
@@ -643,28 +577,6 @@ class ChatRepository:
             "database.conversation.memory_changed",
             conversation_id=conversation_id,
             memory_enabled=enabled,
-            updated=updated,
-        )
-        return updated
-
-    def set_rag_enabled(self, conversation_id: str, enabled: bool) -> bool:
-        now = _timestamp()
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE conversations
-                SET rag_enabled = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (int(enabled), now, conversation_id),
-            )
-        updated = cursor.rowcount == 1
-        log_event(
-            logger,
-            logging.INFO,
-            "database.conversation.rag_changed",
-            conversation_id=conversation_id,
-            rag_enabled=enabled,
             updated=updated,
         )
         return updated
@@ -935,89 +847,24 @@ class ChatRepository:
             summary_chars=len(summary),
         )
 
-    def add_message_adaptive_rag_run(
-        self,
-        assistant_message_id: int,
-        run: AdaptiveRAGRunInput,
-    ) -> None:
-        rounds_json = json.dumps(
-            [
-                {
-                    "query": item.query,
-                    "result_count": item.result_count,
-                    "new_result_count": item.new_result_count,
-                    "evidence_sufficient": item.evidence_sufficient,
-                    "assessment_reason": item.assessment_reason,
-                    "missing_information": item.missing_information,
-                }
-                for item in run.rounds
-            ],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        fallback_reasons_json = json.dumps(
-            list(run.fallback_reasons),
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        created_at = _timestamp()
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO message_adaptive_rag_runs (
-                    assistant_message_id, retrieval_needed, judge_reason, rounds_json,
-                    evidence_sufficient, summary, fallback_reasons_json, duration_ms, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    assistant_message_id,
-                    int(run.retrieval_needed),
-                    run.judge_reason,
-                    rounds_json,
-                    int(run.evidence_sufficient),
-                    run.summary,
-                    fallback_reasons_json,
-                    run.duration_ms,
-                    created_at,
-                ),
-            )
-        log_event(
-            logger,
-            logging.INFO,
-            "database.message_adaptive_rag_run.created",
-            assistant_message_id=assistant_message_id,
-            retrieval_needed=run.retrieval_needed,
-            round_count=len(run.rounds),
-            evidence_sufficient=run.evidence_sufficient,
-            summary_chars=len(run.summary or ""),
-            fallback_count=len(run.fallback_reasons),
-            duration_ms=run.duration_ms,
-        )
-
-    def get_message_adaptive_rag_run(
-        self,
-        assistant_message_id: int,
-    ) -> MessageAdaptiveRAGRun | None:
-        with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT assistant_message_id, retrieval_needed, judge_reason, rounds_json,
-                       evidence_sufficient, summary, fallback_reasons_json, duration_ms, created_at
-                FROM message_adaptive_rag_runs
-                WHERE assistant_message_id = ?
-                """,
-                (assistant_message_id,),
-            ).fetchone()
-        return _message_adaptive_rag_run_from_row(row) if row else None
-
     def _connect(self) -> sqlite3.Connection:
         return connect_database(self.database_path)
 
 
 def connect_database(database_path: Path) -> sqlite3.Connection:
-    """Open one consistently configured SQLite connection for repository services."""
+    """Open one consistently configured SQLite connection for repository services.
+
+    Loads the sqlite-vec extension on every connection -- it's the one
+    shared factory used by ChatRepository, DocumentStore, and
+    ProjectMemoryStore, so this is the one place that guarantees
+    document_chunks_vec (see documents.py) is queryable regardless of which
+    of those opens the connection.
+    """
     connection = sqlite3.connect(database_path, timeout=5.0)
     connection.row_factory = sqlite3.Row
+    connection.enable_load_extension(True)
+    sqlite_vec.load(connection)
+    connection.enable_load_extension(False)
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 5000")
     return connection
@@ -1196,7 +1043,6 @@ def _conversation_from_row(row: sqlite3.Row) -> Conversation:
         model_profile=row["model_profile"],
         thinking_enabled=bool(row["thinking_enabled"]),
         memory_enabled=bool(row["memory_enabled"]),
-        rag_enabled=bool(row["rag_enabled"]),
         created_at=_parse_datetime(row["created_at"]),
         updated_at=_parse_datetime(row["updated_at"]),
     )
@@ -1244,32 +1090,6 @@ def _message_context_run_from_row(row: sqlite3.Row) -> MessageContextRun:
         real_completion_tokens=row["real_completion_tokens"],
         real_peak_total_tokens=row["real_peak_total_tokens"],
         created_at=datetime.fromisoformat(row["created_at"]),
-    )
-
-
-def _message_adaptive_rag_run_from_row(row: sqlite3.Row) -> MessageAdaptiveRAGRun:
-    round_payloads = json.loads(row["rounds_json"])
-    fallback_payloads = json.loads(row["fallback_reasons_json"])
-    return MessageAdaptiveRAGRun(
-        assistant_message_id=row["assistant_message_id"],
-        retrieval_needed=bool(row["retrieval_needed"]),
-        judge_reason=row["judge_reason"],
-        rounds=tuple(
-            AdaptiveRAGRoundRecord(
-                query=str(item["query"]),
-                result_count=int(item["result_count"]),
-                new_result_count=int(item["new_result_count"]),
-                evidence_sufficient=bool(item["evidence_sufficient"]),
-                assessment_reason=str(item["assessment_reason"]),
-                missing_information=str(item["missing_information"]),
-            )
-            for item in round_payloads
-        ),
-        evidence_sufficient=bool(row["evidence_sufficient"]),
-        summary=row["summary"],
-        fallback_reasons=tuple(str(value) for value in fallback_payloads),
-        duration_ms=float(row["duration_ms"]),
-        created_at=_parse_datetime(row["created_at"]),
     )
 
 

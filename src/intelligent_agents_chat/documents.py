@@ -2,28 +2,22 @@
 
 from __future__ import annotations
 
-import csv
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import datetime, timezone
 import hashlib
-from io import BytesIO, StringIO
-import json
+from io import BytesIO
 import logging
-import math
 from pathlib import Path
 import re
 import sqlite3
-from typing import Callable, Iterable, Literal, Sequence
+from typing import Literal, Sequence
 from uuid import uuid4
-from zipfile import BadZipFile, ZipFile
 
-from docx import Document as WordDocument
-from docx.table import Table
-from docx.text.paragraph import Paragraph
-from openpyxl import load_workbook
+import sqlite_vec
 from pypdf import PdfReader
 
 from intelligent_agents_chat.database import PROJECT_ROOT, connect_database
+from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION
 from intelligent_agents_chat.logging_config import log_event
 
 
@@ -32,65 +26,17 @@ MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 MAX_DOCUMENTS_PER_PROJECT = 100
 DEFAULT_CHUNK_CHARS = 1_200
 DEFAULT_CHUNK_OVERLAP_CHARS = 180
-MAX_QUERY_TERMS = 12
 MAX_RETRIEVED_CHARS = 4_000
-MAX_ARCHIVE_ENTRIES = 5_000
-MAX_ARCHIVE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
-MAX_TABULAR_ROWS = 20_000
-MAX_TABULAR_COLUMNS = 256
-MAX_WORKBOOK_SHEETS = 50
-SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf", ".docx", ".csv", ".xlsx"}
+SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf"}
 GENERIC_MEDIA_TYPES = {"application/octet-stream", ""}
 SUPPORTED_MEDIA_TYPES_BY_EXTENSION = {
     ".txt": {"text/plain"},
     ".md": {"text/markdown", "text/x-markdown", "text/plain"},
     ".markdown": {"text/markdown", "text/x-markdown", "text/plain"},
     ".pdf": {"application/pdf", "application/x-pdf"},
-    ".docx": {
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/msword",
-        "application/zip",
-    },
-    ".csv": {
-        "text/csv",
-        "text/comma-separated-values",
-        "application/csv",
-        "application/vnd.ms-excel",
-        "text/plain",
-    },
-    ".xlsx": {
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "application/vnd.ms-excel",
-        "application/zip",
-    },
 }
-SUPPORTED_MEDIA_TYPES = GENERIC_MEDIA_TYPES.union(
-    *(media_types for media_types in SUPPORTED_MEDIA_TYPES_BY_EXTENSION.values())
-)
 DocumentStatus = Literal["processing", "indexed", "failed"]
 logger = logging.getLogger(__name__)
-
-_STOP_WORDS = {
-    "aber",
-    "auch",
-    "das",
-    "der",
-    "die",
-    "ein",
-    "eine",
-    "einer",
-    "für",
-    "ist",
-    "mit",
-    "oder",
-    "the",
-    "und",
-    "von",
-    "was",
-    "wie",
-    "wir",
-    "zu",
-}
 
 
 class DocumentError(RuntimeError):
@@ -151,8 +97,6 @@ class DocumentChunk:
     locator: str
     page_number: int | None
     section: str | None
-    embedding: tuple[float, ...] | None
-    embedding_model: str | None
 
 
 class BlobStore:
@@ -208,12 +152,6 @@ class DocumentParser:
         extension = validate_document_input(display_name, media_type, len(data))
         if extension == ".pdf":
             return self._parse_pdf(data)
-        if extension == ".docx":
-            return self._parse_docx(data)
-        if extension == ".csv":
-            return self._parse_csv(data)
-        if extension == ".xlsx":
-            return self._parse_xlsx(data)
         return self._parse_text(data, markdown=extension in {".md", ".markdown"})
 
     def _parse_text(self, data: bytes, *, markdown: bool) -> list[ParsedSegment]:
@@ -285,152 +223,6 @@ class DocumentParser:
             )
         return segments
 
-    def _parse_docx(self, data: bytes) -> list[ParsedSegment]:
-        _validate_office_archive(data, extension=".docx", required_member="word/document.xml")
-        try:
-            document = WordDocument(BytesIO(data))
-            segments: list[ParsedSegment] = []
-            paragraph_lines: list[str] = []
-            current_section = "Document"
-            table_index = 0
-            tabular_rows = 0
-
-            def flush_paragraphs() -> None:
-                if not paragraph_lines:
-                    return
-                text = _normalize_document_text("\n\n".join(paragraph_lines))
-                paragraph_lines.clear()
-                if not text:
-                    return
-                segments.append(
-                    ParsedSegment(
-                        text=text,
-                        locator=(
-                            "document"
-                            if current_section == "Document"
-                            else f"section: {current_section}"
-                        ),
-                        section=None if current_section == "Document" else current_section,
-                    )
-                )
-
-            for block in document.iter_inner_content():
-                if isinstance(block, Paragraph):
-                    text = _normalize_document_text(block.text)
-                    if not text:
-                        continue
-                    style_name = getattr(getattr(block, "style", None), "name", "") or ""
-                    if style_name.casefold().startswith("heading"):
-                        flush_paragraphs()
-                        current_section = text[:200]
-                    paragraph_lines.append(text)
-                    continue
-                if not isinstance(block, Table):
-                    continue
-
-                flush_paragraphs()
-                table_index += 1
-                table_prefix = (
-                    f"table {table_index}"
-                    if current_section == "Document"
-                    else f"section: {current_section}, table {table_index}"
-                )
-                table_segments, row_count = _tabular_segments(
-                    (
-                        (row_index, [cell.text for cell in row.cells])
-                        for row_index, row in enumerate(block.rows, start=1)
-                    ),
-                    locator_for_row=lambda row_index, prefix=table_prefix: (
-                        f"{prefix}, row {row_index}"
-                    ),
-                    section=None if current_section == "Document" else current_section,
-                    max_data_rows=MAX_TABULAR_ROWS - tabular_rows,
-                )
-                tabular_rows += row_count
-                segments.extend(table_segments)
-
-            flush_paragraphs()
-        except DocumentValidationError:
-            raise
-        except Exception as error:
-            raise DocumentValidationError("DOCX could not be parsed safely") from error
-        if not segments:
-            raise DocumentValidationError("DOCX contains no extractable text")
-        return segments
-
-    def _parse_csv(self, data: bytes) -> list[ParsedSegment]:
-        text = _decode_utf8(data, format_name="CSV")
-        try:
-            sample = text[:8192]
-            try:
-                dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-            except csv.Error:
-                dialect = csv.excel
-            reader = csv.reader(StringIO(text, newline=""), dialect)
-
-            def rows() -> Iterable[tuple[int, Sequence[object]]]:
-                for row in reader:
-                    yield reader.line_num, row
-
-            segments, _ = _tabular_segments(
-                rows(),
-                locator_for_row=lambda row_number: f"row {row_number}",
-                section="CSV",
-                max_data_rows=MAX_TABULAR_ROWS,
-            )
-        except DocumentValidationError:
-            raise
-        except csv.Error as error:
-            raise DocumentValidationError("CSV could not be parsed safely") from error
-        if not segments:
-            raise DocumentValidationError("CSV contains no extractable rows")
-        return segments
-
-    def _parse_xlsx(self, data: bytes) -> list[ParsedSegment]:
-        _validate_office_archive(data, extension=".xlsx", required_member="xl/workbook.xml")
-        workbook = None
-        try:
-            workbook = load_workbook(
-                BytesIO(data),
-                read_only=True,
-                data_only=True,
-                keep_links=False,
-            )
-            if len(workbook.worksheets) > MAX_WORKBOOK_SHEETS:
-                raise DocumentValidationError(
-                    f"XLSX exceeds the {MAX_WORKBOOK_SHEETS}-worksheet limit"
-                )
-
-            segments: list[ParsedSegment] = []
-            total_rows = 0
-            for worksheet in workbook.worksheets:
-                if worksheet.max_column > MAX_TABULAR_COLUMNS:
-                    raise DocumentValidationError(
-                        f'Worksheet "{worksheet.title}" exceeds the '
-                        f"{MAX_TABULAR_COLUMNS}-column limit"
-                    )
-                section = _normalize_cell_text(worksheet.title)[:200] or "Worksheet"
-                sheet_segments, row_count = _tabular_segments(
-                    enumerate(worksheet.iter_rows(values_only=True), start=1),
-                    locator_for_row=lambda row_number, title=section: (
-                        f'sheet "{title}", row {row_number}'
-                    ),
-                    section=section,
-                    max_data_rows=MAX_TABULAR_ROWS - total_rows,
-                )
-                total_rows += row_count
-                segments.extend(sheet_segments)
-        except DocumentValidationError:
-            raise
-        except Exception as error:
-            raise DocumentValidationError("XLSX could not be parsed safely") from error
-        finally:
-            if workbook is not None:
-                workbook.close()
-        if not segments:
-            raise DocumentValidationError("XLSX contains no extractable cells")
-        return segments
-
 
 class Chunker:
     """Create deterministic, overlapping chunks without crossing source locators."""
@@ -477,7 +269,7 @@ class Chunker:
 
 
 class DocumentStore:
-    """Document metadata, chunks, lexical index, and optional vectors in SQLite."""
+    """Document metadata, chunks, and their vector embeddings in SQLite."""
 
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
@@ -485,7 +277,7 @@ class DocumentStore:
     def initialize(self) -> None:
         with self._connect() as connection:
             connection.executescript(
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS documents (
                     id TEXT PRIMARY KEY,
                     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -522,8 +314,6 @@ class DocumentStore:
                     locator TEXT NOT NULL,
                     page_number INTEGER,
                     section TEXT,
-                    embedding_json TEXT,
-                    embedding_model TEXT,
                     created_at TEXT NOT NULL,
                     UNIQUE(document_id, ordinal)
                 );
@@ -533,33 +323,44 @@ class DocumentStore:
                 CREATE INDEX IF NOT EXISTS document_chunks_project_idx
                     ON document_chunks(project_id, document_id);
 
-                CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_fts USING fts5(
-                    content,
-                    content='document_chunks',
-                    content_rowid='row_id',
-                    tokenize='unicode61 remove_diacritics 2'
+                -- `row_id` deliberately shares values with document_chunks.row_id
+                -- above (kept in sync by hand in replace_chunks) so a plain JOIN
+                -- recovers chunk content/locator/etc. after a vector search --
+                -- vec0 has no foreign keys or content_rowid-style linkage of its
+                -- own. The dimension below must match embeddings.py's pinned
+                -- model; changing the model means migrating this column too.
+                CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_vec USING vec0(
+                    row_id INTEGER PRIMARY KEY,
+                    project_id TEXT PARTITION KEY,
+                    embedding FLOAT[{EMBEDDING_DIMENSION}] DISTANCE_METRIC=COSINE
                 );
-
-                CREATE TRIGGER IF NOT EXISTS document_chunks_after_insert
-                AFTER INSERT ON document_chunks BEGIN
-                    INSERT INTO document_chunks_fts(rowid, content)
-                    VALUES (new.row_id, new.content);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS document_chunks_after_delete
-                AFTER DELETE ON document_chunks BEGIN
-                    INSERT INTO document_chunks_fts(document_chunks_fts, rowid, content)
-                    VALUES ('delete', old.row_id, old.content);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS document_chunks_after_update
-                AFTER UPDATE OF content ON document_chunks BEGIN
-                    INSERT INTO document_chunks_fts(document_chunks_fts, rowid, content)
-                    VALUES ('delete', old.row_id, old.content);
-                    INSERT INTO document_chunks_fts(rowid, content)
-                    VALUES (new.row_id, new.content);
-                END;
                 """
+            )
+            # document_chunks_vec is created fresh (just above) on any
+            # database that predates it -- its own embedding pipeline (an
+            # optional remote endpoint, or none at all) is gone, so a
+            # document already marked 'indexed' from back then has chunks
+            # but no matching vec rows, and would otherwise silently return
+            # nothing from every search forever. Flag it for reindexing
+            # instead (the original file is untouched in BlobStore, so
+            # reindexing recovers it) -- a no-op once everything's been
+            # reindexed under the current pipeline, so safe to run on every
+            # startup.
+            connection.execute(
+                """
+                UPDATE documents
+                SET status = 'failed',
+                    error_message = 'Needs reindexing (embedding backend changed)',
+                    chunk_count = 0,
+                    updated_at = ?
+                WHERE status = 'indexed'
+                  AND id NOT IN (
+                    SELECT DISTINCT dc.document_id
+                    FROM document_chunks AS dc
+                    JOIN document_chunks_vec AS v ON v.row_id = dc.row_id
+                  )
+                """,
+                (_timestamp(),),
             )
         log_event(
             logger,
@@ -699,17 +500,15 @@ class DocumentStore:
         document_id: str,
         chunks: Sequence[ChunkDraft],
         *,
-        embeddings: Sequence[Sequence[float]] | None,
-        embedding_model: str | None,
+        embeddings: Sequence[Sequence[float]],
+        embedding_model: str,
     ) -> Document:
-        if embeddings is not None and len(embeddings) != len(chunks):
+        if len(embeddings) != len(chunks):
             raise ValueError("Embedding count must match chunk count")
-        embedding_dimension = None
         if embeddings:
             dimensions = {len(vector) for vector in embeddings}
             if len(dimensions) != 1 or 0 in dimensions:
                 raise ValueError("All embeddings must have one non-zero dimension")
-            embedding_dimension = dimensions.pop()
         now = _timestamp()
         with self._connect() as connection:
             document = connection.execute(
@@ -718,32 +517,55 @@ class DocumentStore:
             ).fetchone()
             if document is None:
                 raise DocumentError("Document no longer exists")
+            project_id = document["project_id"]
+            # document_chunks_vec has no foreign key of its own -- clear its
+            # rows for this document's old chunks by hand before the old
+            # document_chunks rows (and their row_ids) disappear.
+            old_row_ids = [
+                row["row_id"]
+                for row in connection.execute(
+                    "SELECT row_id FROM document_chunks WHERE document_id = ?",
+                    (document_id,),
+                )
+            ]
+            if old_row_ids:
+                connection.executemany(
+                    "DELETE FROM document_chunks_vec WHERE row_id = ?",
+                    [(row_id,) for row_id in old_row_ids],
+                )
             connection.execute("DELETE FROM document_chunks WHERE document_id = ?", (document_id,))
-            connection.executemany(
-                """
-                INSERT INTO document_chunks (
-                    id, document_id, project_id, ordinal, content, content_hash,
-                    locator, page_number, section, embedding_json, embedding_model, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
+            for index, chunk in enumerate(chunks):
+                cursor = connection.execute(
+                    """
+                    INSERT INTO document_chunks (
+                        id, document_id, project_id, ordinal, content, content_hash,
+                        locator, page_number, section, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
                     (
                         chunk.id,
                         document_id,
-                        document["project_id"],
+                        project_id,
                         chunk.ordinal,
                         chunk.content,
                         chunk.content_hash,
                         chunk.locator,
                         chunk.page_number,
                         chunk.section,
-                        _serialize_vector(embeddings[index]) if embeddings is not None else None,
-                        embedding_model if embeddings is not None else None,
                         now,
-                    )
-                    for index, chunk in enumerate(chunks)
-                ],
-            )
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO document_chunks_vec (row_id, project_id, embedding)
+                    VALUES (?, ?, ?)
+                    """,
+                    (
+                        cursor.lastrowid,
+                        project_id,
+                        sqlite_vec.serialize_float32(embeddings[index]),
+                    ),
+                )
             connection.execute(
                 """
                 UPDATE documents
@@ -753,8 +575,8 @@ class DocumentStore:
                 """,
                 (
                     len(chunks),
-                    embedding_model if embeddings is not None else None,
-                    embedding_dimension,
+                    embedding_model,
+                    EMBEDDING_DIMENSION,
                     now,
                     now,
                     document_id,
@@ -794,7 +616,7 @@ class DocumentStore:
             rows = connection.execute(
                 """
                 SELECT id, document_id, project_id, ordinal, content, content_hash,
-                       locator, page_number, section, embedding_json, embedding_model
+                       locator, page_number, section
                 FROM document_chunks
                 WHERE document_id = ?
                 ORDER BY ordinal
@@ -803,52 +625,37 @@ class DocumentStore:
             ).fetchall()
         return [_chunk_from_row(row) for row in rows]
 
-    def lexical_search(
-        self, project_id: str, text: str, limit: int
+    def vector_search(
+        self, project_id: str, query_vector: Sequence[float], limit: int
     ) -> list[tuple[DocumentChunk, float, str]]:
-        fts_query = build_fts_query(text)
-        if not fts_query or limit <= 0:
+        """The `limit` nearest chunks to `query_vector`, scoped to one
+        project via vec0's partition key (see initialize) so this never
+        scans another project's vectors. `distance` is cosine distance
+        (smaller = more similar); `document.status = 'indexed'` is a
+        belt-and-braces filter -- a document whose *reindex* failed keeps
+        its previous chunks/vectors in place with status='failed' rather
+        than being cleaned up, so this keeps searches from surfacing them.
+        """
+        if limit <= 0:
             return []
         with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT dc.id, dc.document_id, dc.project_id, dc.ordinal, dc.content,
                        dc.content_hash, dc.locator, dc.page_number, dc.section,
-                       dc.embedding_json, dc.embedding_model, document.display_name,
-                       bm25(document_chunks_fts) AS relevance
-                FROM document_chunks_fts
-                JOIN document_chunks AS dc ON dc.row_id = document_chunks_fts.rowid
+                       document.display_name, v.distance AS distance
+                FROM document_chunks_vec AS v
+                JOIN document_chunks AS dc ON dc.row_id = v.row_id
                 JOIN documents AS document ON document.id = dc.document_id
-                WHERE document_chunks_fts MATCH ?
-                  AND dc.project_id = ?
+                WHERE v.embedding MATCH ?
+                  AND v.k = ?
+                  AND v.project_id = ?
                   AND document.status = 'indexed'
-                ORDER BY relevance ASC, dc.document_id, dc.ordinal
-                LIMIT ?
+                ORDER BY v.distance
                 """,
-                (fts_query, project_id, limit),
+                (sqlite_vec.serialize_float32(list(query_vector)), limit, project_id),
             ).fetchall()
-        return [
-            (_chunk_from_row(row), max(0.0, -float(row["relevance"])), row["display_name"])
-            for row in rows
-        ]
-
-    def vector_rows(self, project_id: str) -> list[tuple[DocumentChunk, str]]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT dc.id, dc.document_id, dc.project_id, dc.ordinal, dc.content,
-                       dc.content_hash, dc.locator, dc.page_number, dc.section,
-                       dc.embedding_json, dc.embedding_model, document.display_name
-                FROM document_chunks AS dc
-                JOIN documents AS document ON document.id = dc.document_id
-                WHERE dc.project_id = ?
-                  AND document.status = 'indexed'
-                  AND dc.embedding_json IS NOT NULL
-                ORDER BY dc.document_id, dc.ordinal
-                """,
-                (project_id,),
-            ).fetchall()
-        return [(_chunk_from_row(row), row["display_name"]) for row in rows]
+        return [(_chunk_from_row(row), float(row["distance"]), row["display_name"]) for row in rows]
 
     def _connect(self) -> sqlite3.Connection:
         return connect_database(self.database_path)
@@ -860,9 +667,7 @@ def validate_document_input(display_name: str, media_type: str, byte_size: int) 
         raise DocumentValidationError("Document filename cannot be empty")
     extension = _normalized_extension(Path(clean_name).suffix)
     if extension not in SUPPORTED_EXTENSIONS:
-        raise DocumentValidationError(
-            "Supported document types are TXT, Markdown, PDF, DOCX, CSV, and XLSX"
-        )
+        raise DocumentValidationError("Supported document types are TXT, Markdown, and PDF")
     normalized_media_type = media_type.split(";", 1)[0].strip().lower()
     allowed_media_types = GENERIC_MEDIA_TYPES | SUPPORTED_MEDIA_TYPES_BY_EXTENSION[extension]
     if normalized_media_type not in allowed_media_types:
@@ -877,30 +682,6 @@ def validate_document_input(display_name: str, media_type: str, byte_size: int) 
             f"Document exceeds the {MAX_DOCUMENT_BYTES // (1024 * 1024)} MiB limit"
         )
     return extension
-
-
-def build_fts_query(text: str) -> str:
-    terms: list[str] = []
-    seen: set[str] = set()
-    for term in re.findall(r"[^\W_]+", text.casefold(), flags=re.UNICODE):
-        if len(term) < 2 or term in _STOP_WORDS or term in seen:
-            continue
-        seen.add(term)
-        terms.append(term)
-        if len(terms) >= MAX_QUERY_TERMS:
-            break
-    return " OR ".join(f'"{term}"' for term in terms)
-
-
-def cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
-    if len(left) != len(right) or not left:
-        return 0.0
-    numerator = sum(a * b for a, b in zip(left, right, strict=True))
-    left_norm = math.sqrt(sum(value * value for value in left))
-    right_norm = math.sqrt(sum(value * value for value in right))
-    if left_norm == 0 or right_norm == 0:
-        return 0.0
-    return numerator / (left_norm * right_norm)
 
 
 def bounded_chunk_text(value: str) -> str:
@@ -945,118 +726,6 @@ def _normalize_document_text(value: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _decode_utf8(data: bytes, *, format_name: str) -> str:
-    try:
-        text = data.decode("utf-8-sig")
-    except UnicodeDecodeError as error:
-        raise DocumentValidationError(f"{format_name} files must use UTF-8") from error
-    if "\x00" in text:
-        raise DocumentValidationError(f"{format_name} file contains binary null bytes")
-    return text
-
-
-def _validate_office_archive(data: bytes, *, extension: str, required_member: str) -> None:
-    format_name = extension.removeprefix(".").upper()
-    try:
-        with ZipFile(BytesIO(data)) as archive:
-            members = archive.infolist()
-            names = {member.filename for member in members}
-            if required_member not in names:
-                raise DocumentValidationError(f"File is not a valid {format_name} document")
-            if len(members) > MAX_ARCHIVE_ENTRIES:
-                raise DocumentValidationError(
-                    f"{format_name} archive exceeds the {MAX_ARCHIVE_ENTRIES}-entry limit"
-                )
-            if any(member.flag_bits & 0x1 for member in members):
-                raise DocumentValidationError(f"Encrypted {format_name} files are not supported")
-            uncompressed_bytes = sum(member.file_size for member in members)
-            if uncompressed_bytes > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
-                raise DocumentValidationError(
-                    f"{format_name} expands beyond the "
-                    f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)} MiB safety limit"
-                )
-    except DocumentValidationError:
-        raise
-    except (BadZipFile, OSError) as error:
-        raise DocumentValidationError(f"File is not a valid {format_name} document") from error
-
-
-def _tabular_segments(
-    rows: Iterable[tuple[int, Sequence[object]]],
-    *,
-    locator_for_row: Callable[[int], str],
-    section: str | None,
-    max_data_rows: int,
-) -> tuple[list[ParsedSegment], int]:
-    headers: list[str] | None = None
-    header_row_number: int | None = None
-    segments: list[ParsedSegment] = []
-    data_row_count = 0
-
-    for row_number, raw_values in rows:
-        values = [_normalize_cell_text(value) for value in raw_values]
-        if len(values) > MAX_TABULAR_COLUMNS:
-            raise DocumentValidationError(
-                f"Structured document exceeds the {MAX_TABULAR_COLUMNS}-column limit"
-            )
-        if not any(values):
-            continue
-        if headers is None:
-            headers = _unique_headers(values)
-            header_row_number = row_number
-            continue
-        if data_row_count >= max_data_rows:
-            raise DocumentValidationError(
-                f"Structured document exceeds the {MAX_TABULAR_ROWS}-data-row limit"
-            )
-        while len(headers) < len(values):
-            headers.append(f"Column {len(headers) + 1}")
-        fields = [
-            f"{headers[index]}: {value}"
-            for index, value in enumerate(values)
-            if value
-        ]
-        if not fields:
-            continue
-        data_row_count += 1
-        segments.append(
-            ParsedSegment(
-                text=" | ".join(fields),
-                locator=locator_for_row(row_number),
-                section=section,
-            )
-        )
-
-    if headers is not None and not segments and header_row_number is not None:
-        segments.append(
-            ParsedSegment(
-                text="Columns: " + ", ".join(headers),
-                locator=locator_for_row(header_row_number),
-                section=section,
-            )
-        )
-    return segments, data_row_count
-
-
-def _unique_headers(values: Sequence[str]) -> list[str]:
-    headers: list[str] = []
-    counts: dict[str, int] = {}
-    for index, value in enumerate(values, start=1):
-        base = value or f"Column {index}"
-        occurrence = counts.get(base, 0) + 1
-        counts[base] = occurrence
-        headers.append(base if occurrence == 1 else f"{base} ({occurrence})")
-    return headers
-
-
-def _normalize_cell_text(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, (datetime, date, time)):
-        return value.isoformat()
-    return re.sub(r"\s+", " ", str(value)).strip()
-
-
 def _normalized_extension(value: str) -> str:
     extension = value.casefold()
     if extension and not extension.startswith("."):
@@ -1069,22 +738,6 @@ def _normalized_extension(value: str) -> str:
 def _validate_storage_component(value: str) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", value):
         raise DocumentValidationError("Generated storage identifier is invalid")
-
-
-def _serialize_vector(values: Sequence[float]) -> str:
-    vector = [float(value) for value in values]
-    if not vector or not all(math.isfinite(value) for value in vector):
-        raise ValueError("Embedding vectors must contain finite numbers")
-    return json.dumps(vector, separators=(",", ":"))
-
-
-def _deserialize_vector(value: str | None) -> tuple[float, ...] | None:
-    if value is None:
-        return None
-    parsed = json.loads(value)
-    if not isinstance(parsed, list) or not parsed:
-        return None
-    return tuple(float(item) for item in parsed)
 
 
 def _document_from_row(row: sqlite3.Row) -> Document:
@@ -1119,8 +772,6 @@ def _chunk_from_row(row: sqlite3.Row) -> DocumentChunk:
         locator=row["locator"],
         page_number=row["page_number"],
         section=row["section"],
-        embedding=_deserialize_vector(row["embedding_json"]),
-        embedding_model=row["embedding_model"],
     )
 
 

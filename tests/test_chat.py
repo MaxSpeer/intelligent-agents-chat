@@ -57,10 +57,10 @@ class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(tool.schema["function"]["name"], tool.name)
 
     async def test_dispatch_reaches_the_real_tool(self) -> None:
-        self.assertEqual(await _execute_tool("calculator", {"expression": "1+1"}), "2")
+        self.assertEqual(await _execute_tool("calculator", {"expression": "1+1"}, TOOLS), "2")
 
     async def test_unknown_tool_name_is_a_reported_error_not_a_crash(self) -> None:
-        result = await _execute_tool("no-such-tool", {})
+        result = await _execute_tool("no-such-tool", {}, TOOLS)
         self.assertEqual(result, "Error: unknown tool 'no-such-tool'")
 
     async def test_a_tool_that_raises_is_caught_not_left_to_crash_the_agent_loop(self) -> None:
@@ -69,8 +69,7 @@ class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
             schema={"type": "function", "function": {"name": "broken"}},
             run=mock.AsyncMock(side_effect=RuntimeError("boom")),
         )
-        with mock.patch.dict(chat.TOOLS, {"broken": broken_tool}):
-            result = await _execute_tool("broken", {})
+        result = await _execute_tool("broken", {}, {"broken": broken_tool})
 
         self.assertTrue(result.startswith("Error:"))
         self.assertIn("boom", result)
@@ -100,7 +99,9 @@ class StreamReplyReasoningFallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_reasoning_only_round_is_used_as_the_final_answer(self) -> None:
         gateway = _fake_gateway([ContentDelta("This is actually the answer.", is_reasoning=True)])
         with mock.patch.object(chat, "gateway", gateway):
-            events = [event async for event in stream_reply(self.PROFILE, [])]
+            events = [
+                event async for event in stream_reply(self.PROFILE, [], project_id="test-project")
+            ]
 
         final_answer = "".join(
             e.text for e in events if isinstance(e, TextChunk) and not e.is_reasoning
@@ -112,7 +113,9 @@ class StreamReplyReasoningFallbackTests(unittest.IsolatedAsyncioTestCase):
             [ContentDelta("thinking...", is_reasoning=True), ContentDelta("Real answer.")]
         )
         with mock.patch.object(chat, "gateway", gateway):
-            events = [event async for event in stream_reply(self.PROFILE, [])]
+            events = [
+                event async for event in stream_reply(self.PROFILE, [], project_id="test-project")
+            ]
 
         final_answer = "".join(
             e.text for e in events if isinstance(e, TextChunk) and not e.is_reasoning
@@ -145,7 +148,7 @@ class StreamReplyReasoningFallbackTests(unittest.IsolatedAsyncioTestCase):
                 yield delta
 
         with mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)):
-            events = [event async for event in stream_reply(profile, [])]
+            events = [event async for event in stream_reply(profile, [], project_id="test-project")]
 
         text_events_before_tool_call = []
         for event in events:
@@ -193,7 +196,9 @@ class UsageEventTests(unittest.IsolatedAsyncioTestCase):
                 yield delta
 
         with mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)):
-            events = [event async for event in stream_reply(self.PROFILE, [])]
+            events = [
+                event async for event in stream_reply(self.PROFILE, [], project_id="test-project")
+            ]
 
         usage_events = [event for event in events if isinstance(event, UsageEvent)]
         self.assertEqual(len(usage_events), 1)
@@ -206,7 +211,9 @@ class UsageEventTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_usage_event_when_the_server_never_reports_usage(self) -> None:
         gateway = _fake_gateway([ContentDelta("Hello")])
         with mock.patch.object(chat, "gateway", gateway):
-            events = [event async for event in stream_reply(self.PROFILE, [])]
+            events = [
+                event async for event in stream_reply(self.PROFILE, [], project_id="test-project")
+            ]
 
         self.assertFalse(any(isinstance(event, UsageEvent) for event in events))
 
@@ -249,7 +256,12 @@ class ToolRoundBudgetTests(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)),
             mock.patch.object(chat, "MAX_TOOL_ROUNDS", 3),
         ):
-            [event async for event in stream_reply(profile, [{"role": "user", "content": "hi"}])]
+            [
+                event
+                async for event in stream_reply(
+                    profile, [{"role": "user", "content": "hi"}], project_id="test-project"
+                )
+            ]
 
         self.assertEqual(len(calls_seen), 3)
         self.assertFalse(has_warning(calls_seen[0]))  # 3 rounds left, > TOOL_ROUNDS_WARNING_AT

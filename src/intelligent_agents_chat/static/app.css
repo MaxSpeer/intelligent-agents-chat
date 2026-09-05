@@ -232,8 +232,7 @@ body {
 }
 
 .thinking-toggle,
-.memory-toggle,
-.rag-toggle {
+.memory-toggle {
     flex: 0 0 auto;
     padding: .15rem .5rem;
     border: 1px solid var(--line);
@@ -618,51 +617,6 @@ body {
     white-space: pre-wrap;
 }
 
-.adaptive-rag-trace .q-expansion-item__content {
-    display: flex;
-    flex-direction: column;
-    gap: .65rem;
-}
-
-.adaptive-rag-round {
-    width: 100%;
-    gap: .2rem;
-    padding: .55rem .65rem;
-    border-left: 2px solid rgba(99, 91, 255, .35);
-    background: rgba(255, 255, 255, .62);
-}
-
-.adaptive-rag-round-title {
-    color: var(--ink);
-    font-size: .75rem;
-    font-weight: 700;
-}
-
-.adaptive-rag-query {
-    color: var(--primary);
-    font-size: .72rem;
-    font-weight: 600;
-    white-space: pre-wrap;
-}
-
-.adaptive-rag-reason,
-.adaptive-rag-summary,
-.adaptive-rag-missing,
-.adaptive-rag-fallback {
-    color: var(--muted);
-    font-size: .72rem;
-    line-height: 1.45;
-    white-space: pre-wrap;
-}
-
-.adaptive-rag-missing {
-    color: #8d6617;
-}
-
-.adaptive-rag-fallback {
-    color: #a13b51;
-}
-
 .memory-dialog {
     width: min(48rem, 94vw);
     max-height: 86vh;
@@ -942,8 +896,7 @@ body {
     }
 
     .thinking-toggle,
-    .memory-toggle,
-    .rag-toggle {
+    .memory-toggle {
         min-width: 0;
         width: 100%;
         justify-content: center;
