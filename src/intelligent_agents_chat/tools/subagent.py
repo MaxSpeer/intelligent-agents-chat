@@ -30,19 +30,26 @@ _SCHEMA: dict = {
     "function": {
         "name": "delegate_task",
         "description": (
-            "Delegate a focused, self-contained task to a separate sub-agent and "
-            "return its answer. Use this to offload a well-defined sub-task (e.g. "
-            "drafting a summary, answering a narrow factual question) without "
-            "cluttering your own reasoning with the details. The sub-agent has no "
-            "memory of this conversation -- include everything it needs to know "
-            "directly in the task text."
+            "Delegate a self-contained sub-task to a separate sub-agent and get back "
+            "only its finished result. Reach for this whenever a sub-task would "
+            "itself take several steps to resolve (e.g. researching several facts, "
+            "drafting and revising a piece of text) -- rather than carrying out "
+            "every one of those steps yourself, hand the whole sub-task off and "
+            "receive one clean answer. The sub-agent has no memory of this "
+            "conversation and cannot delegate further itself -- include everything "
+            "it needs directly in the task text, and tell it exactly what shape the "
+            "answer should take."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "task": {
                     "type": "string",
-                    "description": "A complete, self-contained description of the task.",
+                    "description": (
+                        "A complete, self-contained description of the task, including "
+                        "any facts, constraints, or context the sub-agent needs -- it "
+                        "cannot ask you anything back."
+                    ),
                 },
             },
             "required": ["task"],

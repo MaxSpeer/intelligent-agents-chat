@@ -55,7 +55,7 @@ TOOLS: dict[str, Tool] = {
     )
 }
 
-MAX_TOOL_ROUNDS = 10
+MAX_TOOL_ROUNDS = 20
 MAX_TOOL_CALLS_PER_ROUND = 5
 # Once this few tool call rounds are left warn the model to wrap up
 TOOL_ROUNDS_WARNING_AT = 2

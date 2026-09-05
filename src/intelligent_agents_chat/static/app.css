@@ -157,13 +157,6 @@ body {
     background: rgba(255, 255, 255, .42) !important;
 }
 
-.sidebar-footer {
-    padding: .9rem;
-    border: 1px solid var(--line);
-    border-radius: .9rem;
-    background: rgba(255, 255, 255, .58);
-}
-
 .main-panel {
     min-width: 0;
     height: 100vh;
@@ -791,6 +784,12 @@ body {
     border: 0 !important;
 }
 
+.composer-input textarea {
+    max-height: 40vh;
+    overflow-y: auto;
+    padding-top: .55rem;
+}
+
 .send-button {
     color: white !important;
     background: var(--primary) !important;
@@ -829,10 +828,6 @@ body {
     .conversation-item {
         width: 13rem;
         min-width: 13rem;
-    }
-
-    .sidebar-footer {
-        display: none;
     }
 
     .memory-manage-button {
