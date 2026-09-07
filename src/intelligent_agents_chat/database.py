@@ -314,6 +314,71 @@ class ChatRepository:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS documents (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    display_name TEXT NOT NULL,
+                    storage_key TEXT NOT NULL UNIQUE,
+                    media_type TEXT NOT NULL,
+                    extension TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    byte_size INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    error_message TEXT,
+                    chunk_count INTEGER NOT NULL DEFAULT 0,
+                    embedding_model TEXT,
+                    embedding_dimension INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    indexed_at TEXT,
+                    UNIQUE(project_id, sha256)
+                );
+
+                CREATE INDEX IF NOT EXISTS documents_project_updated_idx
+                    ON documents(project_id, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS documents_project_status_idx
+                    ON documents(project_id, status);
+
+                CREATE TABLE IF NOT EXISTS document_chunks (
+                    row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    ordinal INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    locator TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(document_id, ordinal)
+                );
+
+                CREATE INDEX IF NOT EXISTS document_chunks_document_idx
+                    ON document_chunks(document_id, ordinal);
+                CREATE INDEX IF NOT EXISTS document_chunks_project_idx
+                    ON document_chunks(project_id, document_id);
+                """
+            )
+            # Separate from the script above because the vector column's width
+            # has to be interpolated: `vec0` takes it as literal DDL, not as a
+            # parameter. `row_id` deliberately shares values with
+            # document_chunks.row_id (kept in sync by hand in
+            # DocumentStore.replace_chunks) so a plain JOIN recovers a chunk's
+            # content/locator after a vector search -- vec0 has no foreign keys
+            # or content_rowid-style linkage of its own.
+            #
+            # Imported here rather than at module level: embeddings.py imports
+            # PROJECT_ROOT from this module, so importing it back at module
+            # level would be a cycle. The constant lives there because the
+            # pinned model decides the width -- changing the model means
+            # migrating this column.
+            from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION
+
+            connection.execute(
+                f"""
+                CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_vec USING vec0(
+                    row_id INTEGER PRIMARY KEY,
+                    project_id TEXT PARTITION KEY,
+                    embedding FLOAT[{EMBEDDING_DIMENSION}] DISTANCE_METRIC=COSINE
+                )
                 """
             )
             _migrate_context_run_schema(connection)
@@ -1067,3 +1132,14 @@ def _conversation_compaction_from_row(row: sqlite3.Row) -> ConversationCompactio
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
+
+
+#
+# The one repository the whole app shares
+#
+
+# Constructed here, initialized nowhere near here: building it only stores a
+# path, so importing this module still does nothing at all. Creating and
+# migrating the schema is an application-startup step -- see bootstrap.py,
+# which main() calls once before the server starts serving.
+repository = ChatRepository()

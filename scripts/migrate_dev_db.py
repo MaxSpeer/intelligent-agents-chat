@@ -22,9 +22,9 @@ entries are derived data the app rebuilds automatically on startup, then
 rebuilding `document_chunks` without its own unused id/content_hash/
 page_number/section columns, and finally rebuilding
 `message_context_sources` without the five columns nothing ever read back).
-If database.py's or documents.py's schema changes again later, extend or
-replace the migration below to match -- it's a one-off dev tool, not a
-general migration framework.
+If database.py's schema changes again later, extend or replace the
+migration below to match -- it's a one-off dev tool, not a general
+migration framework.
 """
 
 from __future__ import annotations

@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import sqlite3
 
-from intelligent_agents_chat.database import connect_database
+from intelligent_agents_chat.database import DEFAULT_DATABASE_PATH, connect_database
 from intelligent_agents_chat.logging_config import log_event
 
 
@@ -399,3 +399,6 @@ def _memory_entry_from_row(row: sqlite3.Row) -> MemoryEntry:
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
+
+
+memory_store = ProjectMemoryStore(DEFAULT_DATABASE_PATH)

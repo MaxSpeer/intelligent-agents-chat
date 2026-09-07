@@ -67,7 +67,6 @@ class DocumentRAGTests(unittest.IsolatedAsyncioTestCase):
         self.repository = ChatRepository(self.database_path)
         self.repository.initialize()
         self.store = DocumentStore(self.database_path)
-        self.store.initialize()
         self.blob_store = BlobStore(root / "documents")
         self.embedding_gateway = SemanticFakeEmbeddingGateway()
         self.service = DocumentService(

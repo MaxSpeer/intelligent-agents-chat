@@ -1,6 +1,5 @@
 """Everything about building one request's context: the token-aware
-ContextAssembler itself, the storage/memory bootstrap it and the rest of the
-app share (repository, memory_store), and the pipeline that turns a
+ContextAssembler itself and the pipeline that turns a
 conversation's stored messages into what actually gets sent to the model
 (completion_messages, context compaction, project-memory retrieval), wired
 together in prepare_conversation_context -- the one function app.py calls
@@ -21,14 +20,14 @@ import json
 import logging
 import math
 
-from intelligent_agents_chat.database import ChatRepository, Conversation, Message
+from intelligent_agents_chat.database import Conversation, Message, repository
 from intelligent_agents_chat.llm import (
     MAX_TOKENS,
     THINKING_MAX_TOKENS,
     system_prompt_for_today,
 )
-from intelligent_agents_chat.logging_config import configure_logging, log_event
-from intelligent_agents_chat.memory import MemoryCandidate, ProjectMemoryStore
+from intelligent_agents_chat.logging_config import log_event
+from intelligent_agents_chat.memory import MemoryCandidate, memory_store
 from intelligent_agents_chat.models import ModelProfile
 from intelligent_agents_chat.tools import subagent
 
@@ -260,52 +259,16 @@ def _retrieval_message(blocks: Sequence[str]) -> MessagePayload:
 
 
 #
-# Storage & Memory Bootstrap
+# The assembler the whole app shares
 #
-# This is the one place repository/memory_store/context_assembler get built --
-# chat.py's agent loop and app.py's UI both import them from here.
+# The database and project memory are *not* built here any more: repository
+# lives in database.py, memory_store in memory.py, and starting them up is
+# bootstrap.py's job. This module only reads them.
 
 
-configure_logging()
 logger = logging.getLogger(__name__)
 
-repository = ChatRepository()
-try:
-    repository.initialize()
-except Exception:
-    logger.exception(
-        "application.database_initialization_failed",
-        extra={
-            "event": "application.database_initialization_failed",
-            "database_path": str(repository.database_path),
-        },
-    )
-    raise
-
-memory_store = ProjectMemoryStore(repository.database_path)
 context_assembler = ContextAssembler(system_prompt_for_today)
-
-try:
-    rebuilt_entry_count = sum(
-        memory_store.rebuild_project(project.id) for project in repository.list_projects()
-    )
-except Exception:
-    logger.exception(
-        "application.memory_backfill_failed",
-        extra={
-            "event": "application.memory_backfill_failed",
-            "database_path": str(repository.database_path),
-        },
-    )
-else:
-    log_event(
-        logger,
-        logging.INFO,
-        "application.memory_backfill_completed",
-        entry_count=rebuilt_entry_count,
-    )
-
-log_event(logger, logging.INFO, "application.initialized")
 
 
 #

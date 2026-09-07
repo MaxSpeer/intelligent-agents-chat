@@ -29,12 +29,11 @@ from intelligent_agents_chat.chat import (
 from intelligent_agents_chat.context import (
     ContextOverflowError,
     ContextPlan,
-    memory_store,
     prepare_conversation_context,
     rebuild_conversation_memory,
-    repository,
 )
 from intelligent_agents_chat.documents import document_service, document_store
+from intelligent_agents_chat.memory import memory_store
 from intelligent_agents_chat.database import (
     AppSettings,
     ContextRunInput,
@@ -44,6 +43,7 @@ from intelligent_agents_chat.database import (
     Conversation,
     Message,
     Project,
+    repository,
 )
 from intelligent_agents_chat.llm import (
     LLMError,

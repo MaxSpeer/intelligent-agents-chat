@@ -1,14 +1,13 @@
-"""Project-scoped documents end to end: parsing, chunking, SQLite persistence,
-embedding-vector storage, and the retrieval the search_documents tool runs.
+"""Everything a project's uploaded documents do: parsing, chunking, reading
+and writing them in SQLite, and the retrieval the search_documents tool
+runs -- the same way memory.py holds all of project memory. Their *schema*
+lives in database.py with every other table, likewise as memory's does.
 
-Everything about a project's uploaded documents lives here, in one place --
-the same way memory.py holds all of project memory (store, rebuild, and
-retrieval together). Reading top to bottom: the storage primitives
-(BlobStore for the original files, DocumentParser, Chunker, DocumentStore
-for SQLite and sqlite-vec), then DocumentService, which is what the UI
-actually calls to upload/reindex/delete, and finally ProjectRAGRetriever,
-which turns a query into ranked, citable passages for
-tools/search_documents.py.
+Reading top to bottom: the storage primitives (BlobStore for the original
+files, DocumentParser, Chunker, DocumentStore for the SQLite and sqlite-vec
+queries), then DocumentService, which is what the UI actually calls to
+upload/reindex/delete, and finally ProjectRAGRetriever, which turns a query
+into ranked, citable passages for tools/search_documents.py.
 """
 
 from __future__ import annotations
@@ -280,71 +279,6 @@ class DocumentStore:
 
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
-
-    def initialize(self) -> None:
-        with self._connect() as connection:
-            connection.executescript(
-                f"""
-                CREATE TABLE IF NOT EXISTS documents (
-                    id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-                    display_name TEXT NOT NULL,
-                    storage_key TEXT NOT NULL UNIQUE,
-                    media_type TEXT NOT NULL,
-                    extension TEXT NOT NULL,
-                    sha256 TEXT NOT NULL,
-                    byte_size INTEGER NOT NULL,
-                    status TEXT NOT NULL,
-                    error_message TEXT,
-                    chunk_count INTEGER NOT NULL DEFAULT 0,
-                    embedding_model TEXT,
-                    embedding_dimension INTEGER,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    indexed_at TEXT,
-                    UNIQUE(project_id, sha256)
-                );
-
-                CREATE INDEX IF NOT EXISTS documents_project_updated_idx
-                    ON documents(project_id, updated_at DESC);
-                CREATE INDEX IF NOT EXISTS documents_project_status_idx
-                    ON documents(project_id, status);
-
-                CREATE TABLE IF NOT EXISTS document_chunks (
-                    row_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-                    ordinal INTEGER NOT NULL,
-                    content TEXT NOT NULL,
-                    locator TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    UNIQUE(document_id, ordinal)
-                );
-
-                CREATE INDEX IF NOT EXISTS document_chunks_document_idx
-                    ON document_chunks(document_id, ordinal);
-                CREATE INDEX IF NOT EXISTS document_chunks_project_idx
-                    ON document_chunks(project_id, document_id);
-
-                -- `row_id` deliberately shares values with document_chunks.row_id
-                -- above (kept in sync by hand in replace_chunks) so a plain JOIN
-                -- recovers chunk content/locator/etc. after a vector search --
-                -- vec0 has no foreign keys or content_rowid-style linkage of its
-                -- own. The dimension below must match embeddings.py's pinned
-                -- model; changing the model means migrating this column too.
-                CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_vec USING vec0(
-                    row_id INTEGER PRIMARY KEY,
-                    project_id TEXT PARTITION KEY,
-                    embedding FLOAT[{EMBEDDING_DIMENSION}] DISTANCE_METRIC=COSINE
-                );
-                """
-            )
-        log_event(
-            logger,
-            logging.INFO,
-            "documents.store.initialized",
-            database_path=str(self.database_path),
-        )
 
     def create_pending(
         self,
@@ -950,7 +884,6 @@ def _timestamp() -> str:
 #
 
 document_store = DocumentStore(DEFAULT_DATABASE_PATH)
-document_store.initialize()
 _document_root = Path(os.environ.get("RAG_DOCUMENT_ROOT", str(DEFAULT_DOCUMENT_ROOT)))
 _embedding_gateway = create_embedding_gateway()
 document_service = DocumentService(
