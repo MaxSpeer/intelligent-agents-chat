@@ -22,21 +22,12 @@ from intelligent_agents_chat.context import (
 )
 from intelligent_agents_chat.database import ChatRepository, Conversation, Message
 from intelligent_agents_chat.llm import SYSTEM_PROMPT
+from intelligent_agents_chat.memory import MemoryCandidate
 from intelligent_agents_chat.models import ModelProfile
-from intelligent_agents_chat.retrieval import ContextCandidate
 
 
-def candidate(source_id: str = "1", *, text: str = "The decision was SQLite.") -> ContextCandidate:
-    return ContextCandidate(
-        source_kind="project_memory",
-        source_id=source_id,
-        project_id="project-a",
-        source_conversation_id="source-chat",
-        text=text,
-        title="Architecture",
-        locator="messages 1-2",
-        score=0.5,
-    )
+def candidate(*, text: str = "The decision was SQLite.") -> MemoryCandidate:
+    return MemoryCandidate(text=text, title="Architecture", locator="messages 1-2")
 
 
 def _message(
@@ -79,7 +70,9 @@ class ContextAssemblerTests(unittest.TestCase):
         self.assertIn(RETRIEVAL_GUARD, plan.messages[0]["content"])
         self.assertEqual(plan.messages[1]["role"], "user")
         self.assertIn("<retrieved-context>", plan.messages[1]["content"])
-        self.assertIn("[project_memory:1]", plan.messages[1]["content"])
+        # Title and locator are the citation the model sees -- see the
+        # retrieval block ContextAssembler builds.
+        self.assertIn('From "Architecture" (messages 1-2)', plan.messages[1]["content"])
         self.assertEqual(plan.messages[-1]["content"], "What database did we choose?")
         self.assertLessEqual(plan.estimated_input_tokens, plan.input_budget_tokens)
 

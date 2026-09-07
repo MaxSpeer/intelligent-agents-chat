@@ -1,7 +1,7 @@
 """A tool that searches the current project's uploaded documents (see
-context.py's document_service/rag_retriever, and app.py's "Manage project
-documents" dialog for how they get there) and returns the most relevant
-passages, with citations.
+documents.py's rag_retriever, and app.py's "Manage project documents"
+dialog for how they get there) and returns the most relevant passages, with
+citations.
 
 Unlike every other tool in this package, this one needs to know which
 project the calling conversation belongs to -- and that has to come from the
@@ -20,7 +20,6 @@ the query) within the normal tool-call loop -- see chat.py's stream_reply.
 
 from __future__ import annotations
 
-from intelligent_agents_chat.retrieval import RetrievalQuery
 from intelligent_agents_chat.tools import Tool
 
 DEFAULT_TOP_K = 5
@@ -80,15 +79,16 @@ def build_tool(project_id: str) -> Tool:
         except (TypeError, ValueError):
             limit = DEFAULT_TOP_K
 
-        # Imported here, not at module level: context.py builds rag_retriever
-        # at import time from the real repository/embedding gateway, and this
-        # avoids importing that whole bootstrap just to read one name at
-        # import time, before it may be ready.
-        from intelligent_agents_chat.context import rag_retriever
+        # Imported here, not at module level: documents.py opens and
+        # initializes the document tables as soon as it's imported, and
+        # chat.py pulls this module in just to read the tool schema. Keeping
+        # the import inside the call means nothing touches the database until
+        # the model actually searches.
+        from intelligent_agents_chat.documents import rag_retriever
 
         try:
             results = await rag_retriever.retrieve(
-                RetrievalQuery(project_id=project_id, text=query, limit=limit)
+                project_id=project_id, text=query, limit=limit
             )
         except Exception as error:
             return f"Error: document search failed: {error}"

@@ -29,13 +29,12 @@ from intelligent_agents_chat.chat import (
 from intelligent_agents_chat.context import (
     ContextOverflowError,
     ContextPlan,
-    document_service,
-    document_store,
     memory_store,
     prepare_conversation_context,
     rebuild_conversation_memory,
     repository,
 )
+from intelligent_agents_chat.documents import document_service, document_store
 from intelligent_agents_chat.database import (
     AppSettings,
     ContextRunInput,
@@ -248,16 +247,13 @@ def _add_memory_trace_step(timeline, sources: list) -> None:
     (see _chat_plain_text): titles/excerpts come from arbitrary chat
     history, not Markdown authored for display.
 
-    Memory only -- never document passages. Those share the same
-    MessageContextSource shape (source_kind="project_document", see
-    database.py) since search_documents' retrieval reuses the same
-    provenance machinery, but its results go straight into that tool's own
-    output/trace step (see chat.py's format_tool_result_entry), not here:
-    `sources` only ever comes from context_plan.included_sources (see
-    send_message and context.py's prepare_conversation_context), which is
-    populated solely by retrieve_project_memory -- documents are never
-    fetched automatically into a turn's context, only on the model's own
-    tool call.
+    Memory only -- never document passages, which is why nothing here has
+    to say which kind of source a row is. `sources` comes solely from
+    context_plan.included_sources (see send_message and context.py's
+    prepare_conversation_context), and that is filled solely by
+    retrieve_project_memory. A document only ever reaches the model when it
+    calls search_documents, and then it shows up in that tool's own trace
+    step instead (see chat.py's format_tool_result_entry).
     """
     title = f"Project memory · {len(sources)} source" + ("s" if len(sources) != 1 else "")
     with timeline, ui.row().classes("trace-step"):
@@ -1685,17 +1681,10 @@ def index() -> None:
                             final_message.id,
                             [
                                 ContextSourceInput(
-                                    source_kind=source.candidate.source_kind,
-                                    source_id=source.candidate.source_id,
-                                    source_project_id=source.candidate.project_id,
-                                    source_conversation_id=(
-                                        source.candidate.source_conversation_id
-                                    ),
                                     source_title=source.candidate.title,
                                     source_locator=source.candidate.locator,
                                     source_excerpt=source.candidate.text,
                                     rank=source.rank,
-                                    score=source.candidate.score,
                                     token_estimate=source.token_estimate,
                                 )
                                 for source in context_plan.included_sources

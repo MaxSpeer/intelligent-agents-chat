@@ -62,17 +62,15 @@ class Message:
 
 @dataclass(frozen=True, slots=True)
 class ContextSourceInput:
-    """One retrieval source supplied while generating an assistant message."""
+    """One retrieval source supplied while generating an assistant message --
+    exactly what the answer's trace step later shows about it (see app.py's
+    _add_memory_trace_step), and nothing beyond that.
+    """
 
-    source_kind: str
-    source_id: str
-    source_project_id: str
-    source_conversation_id: str | None
     source_title: str
     source_locator: str
     source_excerpt: str
     rank: int
-    score: float
     token_estimate: int
 
 
@@ -82,15 +80,10 @@ class MessageContextSource:
 
     id: int
     assistant_message_id: int
-    source_kind: str
-    source_id: str
-    source_project_id: str
-    source_conversation_id: str | None
     source_title: str
     source_locator: str
     source_excerpt: str
     rank: int
-    score: float
     token_estimate: int
 
 
@@ -290,15 +283,10 @@ class ChatRepository:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     assistant_message_id INTEGER NOT NULL
                         REFERENCES messages(id) ON DELETE CASCADE,
-                    source_kind TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    source_project_id TEXT NOT NULL,
-                    source_conversation_id TEXT,
                     source_title TEXT NOT NULL,
                     source_locator TEXT NOT NULL,
                     source_excerpt TEXT NOT NULL DEFAULT '',
                     rank INTEGER NOT NULL,
-                    score REAL NOT NULL,
                     token_estimate INTEGER NOT NULL,
                     UNIQUE (assistant_message_id, rank)
                 );
@@ -692,23 +680,17 @@ class ChatRepository:
             connection.executemany(
                 """
                 INSERT INTO message_context_sources (
-                    assistant_message_id, source_kind, source_id, source_project_id,
-                    source_conversation_id, source_title, source_locator, source_excerpt,
-                    rank, score, token_estimate
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    assistant_message_id, source_title, source_locator, source_excerpt,
+                    rank, token_estimate
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
                         assistant_message_id,
-                        source.source_kind,
-                        source.source_id,
-                        source.source_project_id,
-                        source.source_conversation_id,
                         source.source_title,
                         source.source_locator,
                         source.source_excerpt,
                         source.rank,
-                        source.score,
                         source.token_estimate,
                     )
                     for source in sources
@@ -720,16 +702,14 @@ class ChatRepository:
             "database.message_context_sources.created",
             assistant_message_id=assistant_message_id,
             source_count=len(sources),
-            source_kinds=sorted({source.source_kind for source in sources}),
         )
 
     def list_message_context_sources(self, assistant_message_id: int) -> list[MessageContextSource]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, assistant_message_id, source_kind, source_id, source_project_id,
-                       source_conversation_id, source_title, source_locator, rank, score,
-                       source_excerpt, token_estimate
+                SELECT id, assistant_message_id, source_title, source_locator,
+                       source_excerpt, rank, token_estimate
                 FROM message_context_sources
                 WHERE assistant_message_id = ?
                 ORDER BY rank ASC
@@ -1058,15 +1038,10 @@ def _message_context_source_from_row(row: sqlite3.Row) -> MessageContextSource:
     return MessageContextSource(
         id=row["id"],
         assistant_message_id=row["assistant_message_id"],
-        source_kind=row["source_kind"],
-        source_id=row["source_id"],
-        source_project_id=row["source_project_id"],
-        source_conversation_id=row["source_conversation_id"],
         source_title=row["source_title"],
         source_locator=row["source_locator"],
         source_excerpt=row["source_excerpt"],
         rank=row["rank"],
-        score=row["score"],
         token_estimate=row["token_estimate"],
     )
 

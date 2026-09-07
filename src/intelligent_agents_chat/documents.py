@@ -7,7 +7,8 @@ retrieval together). Reading top to bottom: the storage primitives
 (BlobStore for the original files, DocumentParser, Chunker, DocumentStore
 for SQLite and sqlite-vec), then DocumentService, which is what the UI
 actually calls to upload/reindex/delete, and finally ProjectRAGRetriever,
-which turns a query into ranked ContextCandidates for tools/search_documents.py.
+which turns a query into ranked, citable passages for
+tools/search_documents.py.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from datetime import datetime, timezone
 import hashlib
 from io import BytesIO
 import logging
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -27,14 +29,18 @@ from uuid import uuid4
 import sqlite_vec
 from pypdf import PdfReader
 
-from intelligent_agents_chat.database import PROJECT_ROOT, connect_database
+from intelligent_agents_chat.database import (
+    DEFAULT_DATABASE_PATH,
+    PROJECT_ROOT,
+    connect_database,
+)
 from intelligent_agents_chat.embeddings import (
     EMBEDDING_DIMENSION,
     EmbeddingError,
     EmbeddingGateway,
+    create_embedding_gateway,
 )
 from intelligent_agents_chat.logging_config import log_event
-from intelligent_agents_chat.retrieval import ContextCandidate, RetrievalQuery
 
 
 DEFAULT_DOCUMENT_ROOT = PROJECT_ROOT / ".data" / "documents"
@@ -109,6 +115,20 @@ class DocumentChunk:
     project_id: str
     ordinal: int
     content: str
+    locator: str
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentPassage:
+    """One retrieved passage, as search_documents shows it to the model:
+    the text plus what to cite it as. Nothing more -- unlike project memory
+    (see memory.py's MemoryCandidate), a passage never enters the assembled
+    context and is never persisted as provenance, so there is nothing here
+    to carry a score, an id, or a project through.
+    """
+
+    text: str
+    title: str
     locator: str
 
 
@@ -759,65 +779,57 @@ class ProjectRAGRetriever:
     """Turn a query into ranked, citable passages from one project's
     documents: embed the query with the same model the chunks were embedded
     with, then let sqlite-vec find the nearest ones (see
-    DocumentStore.vector_search). Implements the same Retriever seam as
-    memory.py's ProjectMemoryStore, but is only ever reached through the
+    DocumentStore.vector_search). Only ever reached through the
     search_documents tool -- documents are never pulled into a turn's
-    context automatically (see tools/search_documents.py).
+    context automatically (see tools/search_documents.py), which is why a
+    passage carries nothing but what the model needs to read and cite it.
     """
 
     def __init__(self, store: DocumentStore, embedding_gateway: EmbeddingGateway) -> None:
         self.store = store
         self.embedding_gateway = embedding_gateway
 
-    async def retrieve(self, query: RetrievalQuery) -> list[ContextCandidate]:
-        if not query.project_id.strip():
+    async def retrieve(
+        self, *, project_id: str, text: str, limit: int
+    ) -> list[DocumentPassage]:
+        if not project_id.strip():
             raise ValueError("Project-scoped retrieval requires a project ID")
-        if query.limit <= 0 or not query.text.strip():
+        if limit <= 0 or not text.strip():
             return []
 
         try:
-            query_vectors = await self.embedding_gateway.embed([query.text])
+            query_vectors = await self.embedding_gateway.embed([text])
         except EmbeddingError as error:
             log_event(
                 logger,
                 logging.WARNING,
                 "documents.retrieve.query_embedding_failed",
-                project_id=query.project_id,
-                query_chars=len(query.text),
+                project_id=project_id,
+                query_chars=len(text),
                 error_type=type(error).__name__,
             )
             return []
 
-        matches = self.store.vector_search(query.project_id, query_vectors[0], query.limit)
-        candidates = [
-            ContextCandidate(
-                source_kind="project_document",
-                # (document, position) identifies a chunk uniquely -- see
-                # document_chunks' UNIQUE(document_id, ordinal) in documents.py.
-                source_id=f"{chunk.document_id}:{chunk.ordinal}",
-                project_id=query.project_id,
-                source_conversation_id=None,
+        matches = self.store.vector_search(project_id, query_vectors[0], limit)
+        passages = [
+            DocumentPassage(
                 text=bounded_chunk_text(chunk.content),
                 title=title,
                 locator=chunk.locator,
-                # Cosine distance, inverted so higher means "more similar" --
-                # matches the convention of every other candidate's score
-                # (see memory.py), even though it isn't a strict [0, 1] bound.
-                score=1.0 - distance,
             )
-            for chunk, distance, title in matches
+            for chunk, _distance, title in matches
         ]
         log_event(
             logger,
             logging.INFO,
             "documents.retrieve.completed",
-            project_id=query.project_id,
-            query_chars=len(query.text),
-            requested_limit=query.limit,
-            result_count=len(candidates),
+            project_id=project_id,
+            query_chars=len(text),
+            requested_limit=limit,
+            result_count=len(passages),
             embedding_model=self.embedding_gateway.model_name,
         )
-        return candidates
+        return passages
 
 def validate_document_input(display_name: str, media_type: str, byte_size: int) -> str:
     clean_name = Path(display_name).name.strip()
@@ -931,3 +943,21 @@ def _chunk_from_row(row: sqlite3.Row) -> DocumentChunk:
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+#
+# The one document stack the whole app shares
+#
+
+document_store = DocumentStore(DEFAULT_DATABASE_PATH)
+document_store.initialize()
+_document_root = Path(os.environ.get("RAG_DOCUMENT_ROOT", str(DEFAULT_DOCUMENT_ROOT)))
+_embedding_gateway = create_embedding_gateway()
+document_service = DocumentService(
+    document_store,
+    BlobStore(_document_root),
+    DocumentParser(),
+    Chunker(),
+    _embedding_gateway,
+)
+rag_retriever = ProjectRAGRetriever(document_store, _embedding_gateway)

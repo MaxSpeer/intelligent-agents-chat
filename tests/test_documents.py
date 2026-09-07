@@ -19,7 +19,6 @@ from intelligent_agents_chat.documents import (
     ProjectRAGRetriever,
 )
 from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION, EmbeddingError
-from intelligent_agents_chat.retrieval import RetrievalQuery
 
 
 class SemanticFakeEmbeddingGateway:
@@ -118,7 +117,7 @@ class DocumentRAGTests(unittest.IsolatedAsyncioTestCase):
     async def test_retrieval_never_crosses_project_boundaries_and_has_citations(self) -> None:
         public = self.repository.create_project("Public")
         private = self.repository.create_project("Private")
-        public_upload = await self.service.upload(
+        await self.service.upload(
             project_id=public.id,
             display_name="orchids.txt",
             media_type="text/plain",
@@ -132,24 +131,23 @@ class DocumentRAGTests(unittest.IsolatedAsyncioTestCase):
         )
 
         retriever = ProjectRAGRetriever(self.store, self.embedding_gateway)
-        results = await retriever.retrieve(
-            RetrievalQuery(project_id=public.id, text="What is the flower launch code?")
-        )
+        question = "What is the flower launch code?"
+        results = await retriever.retrieve(project_id=public.id, text=question, limit=5)
 
+        # Both projects hold an equally good match for this query, so the
+        # only thing keeping them apart is the project scope itself.
         self.assertGreaterEqual(len(results), 1)
-        self.assertTrue(all(result.project_id == public.id for result in results))
         self.assertTrue(all("violet" not in result.text for result in results))
-        self.assertEqual(results[0].source_kind, "project_document")
+        self.assertIn("amber", results[0].text)
         self.assertEqual(results[0].title, "orchids.txt")
         self.assertEqual(results[0].locator, "document")
-        self.assertEqual(results[0].source_conversation_id, None)
-        self.assertIn(
-            results[0].source_id,
-            {
-                f"{chunk.document_id}:{chunk.ordinal}"
-                for chunk in self.store.list_chunks(public_upload.document.id)
-            },
-        )
+
+        # ... and the other way round, so this can't pass just because the
+        # private document was never indexed in the first place.
+        private_results = await retriever.retrieve(project_id=private.id, text=question, limit=5)
+        self.assertTrue(all("amber" not in result.text for result in private_results))
+        self.assertIn("violet", private_results[0].text)
+        self.assertEqual(private_results[0].title, "secret.txt")
 
     async def test_failed_embedding_is_visible_and_retryable(self) -> None:
         project = self.repository.create_project("Retries")

@@ -18,11 +18,13 @@ unused `source_kind`/`content_hash` columns -- source_kind was always the
 same hardcoded literal and content_hash was never actually read back
 anywhere (rebuild_conversation's upsert guard compares `content` itself),
 so both were dead weight from the start; safe to drop outright since memory
-entries are derived data the app rebuilds automatically on startup, and
-finally rebuilding `document_chunks` without its own unused id/content_hash/
-page_number/section columns). If database.py's or documents.py's schema
-changes again later, extend or replace the migration below to match -- it's
-a one-off dev tool, not a general migration framework.
+entries are derived data the app rebuilds automatically on startup, then
+rebuilding `document_chunks` without its own unused id/content_hash/
+page_number/section columns, and finally rebuilding
+`message_context_sources` without the five columns nothing ever read back).
+If database.py's or documents.py's schema changes again later, extend or
+replace the migration below to match -- it's a one-off dev tool, not a
+general migration framework.
 """
 
 from __future__ import annotations
@@ -235,6 +237,58 @@ def migrate(database_path: Path) -> None:
                     ON document_chunks(document_id, ordinal);
                 CREATE INDEX IF NOT EXISTS document_chunks_project_idx
                     ON document_chunks(project_id, document_id);
+                """
+            )
+
+        # message_context_sources kept five columns nothing ever read back:
+        # source_kind (always 'project_memory' since documents became a tool),
+        # source_id/source_project_id/source_conversation_id, and score. What
+        # remains is exactly what the answer's trace step shows. Rebuilt
+        # rather than dropped column by column, since UNIQUE/index have to be
+        # recreated anyway -- the rows themselves are carried over.
+        context_source_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(message_context_sources)")
+        }
+        if context_source_columns & {
+            "source_kind",
+            "source_id",
+            "source_project_id",
+            "source_conversation_id",
+            "score",
+        }:
+            print(
+                "Rebuilding message_context_sources without the write-only "
+                "source_kind/source_id/source_project_id/source_conversation_id/score "
+                "columns (existing provenance rows are kept) ..."
+            )
+            connection.executescript(
+                """
+                ALTER TABLE message_context_sources RENAME TO message_context_sources_old;
+
+                CREATE TABLE message_context_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    assistant_message_id INTEGER NOT NULL
+                        REFERENCES messages(id) ON DELETE CASCADE,
+                    source_title TEXT NOT NULL,
+                    source_locator TEXT NOT NULL,
+                    source_excerpt TEXT NOT NULL DEFAULT '',
+                    rank INTEGER NOT NULL,
+                    token_estimate INTEGER NOT NULL,
+                    UNIQUE (assistant_message_id, rank)
+                );
+
+                INSERT INTO message_context_sources (
+                    id, assistant_message_id, source_title, source_locator,
+                    source_excerpt, rank, token_estimate
+                )
+                SELECT id, assistant_message_id, source_title, source_locator,
+                       source_excerpt, rank, token_estimate
+                FROM message_context_sources_old;
+
+                DROP TABLE message_context_sources_old;
+
+                CREATE INDEX IF NOT EXISTS message_context_sources_message_idx
+                    ON message_context_sources(assistant_message_id, rank);
                 """
             )
 

@@ -6,6 +6,11 @@ conversation's stored messages into what actually gets sent to the model
 together in prepare_conversation_context -- the one function app.py calls
 per turn. chat.py's agent loop (stream_reply) consumes whatever this
 produces; it doesn't need to import anything from here to do that.
+
+Project documents are deliberately absent: nothing here retrieves them, and
+nothing here knows they exist. They reach the model only when it calls the
+search_documents tool, which makes them ordinary tool output like a fetched
+web page -- so they're owned end to end by documents.py instead.
 """
 
 from __future__ import annotations
@@ -15,29 +20,16 @@ from dataclasses import dataclass
 import json
 import logging
 import math
-import os
-from pathlib import Path
 
 from intelligent_agents_chat.database import ChatRepository, Conversation, Message
-from intelligent_agents_chat.documents import (
-    DEFAULT_DOCUMENT_ROOT,
-    BlobStore,
-    Chunker,
-    DocumentParser,
-    DocumentService,
-    DocumentStore,
-    ProjectRAGRetriever,
-)
-from intelligent_agents_chat.embeddings import create_embedding_gateway
 from intelligent_agents_chat.llm import (
     MAX_TOKENS,
     THINKING_MAX_TOKENS,
     system_prompt_for_today,
 )
 from intelligent_agents_chat.logging_config import configure_logging, log_event
-from intelligent_agents_chat.memory import ProjectMemoryStore
+from intelligent_agents_chat.memory import MemoryCandidate, ProjectMemoryStore
 from intelligent_agents_chat.models import ModelProfile
-from intelligent_agents_chat.retrieval import ContextCandidate, RetrievalQuery
 from intelligent_agents_chat.tools import subagent
 
 
@@ -68,14 +60,14 @@ class ContextOverflowError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class IncludedContextSource:
-    candidate: ContextCandidate
+    candidate: MemoryCandidate
     rank: int
     token_estimate: int
 
 
 @dataclass(frozen=True, slots=True)
 class ExcludedContextSource:
-    candidate: ContextCandidate
+    candidate: MemoryCandidate
     token_estimate: int
     reason: str
 
@@ -135,7 +127,7 @@ class ContextAssembler:
     def assemble(
         self,
         history: Sequence[MessagePayload],
-        candidates: Sequence[ContextCandidate],
+        candidates: Sequence[MemoryCandidate],
         *,
         context_window_tokens: int,
         output_reserve_tokens: int,
@@ -184,8 +176,12 @@ class ContextAssembler:
         )
         retrieval_context_tokens = 0
         for candidate in candidates:
-            marker = f"[{candidate.source_kind}:{candidate.source_id}]"
-            block = f'{marker} From "{candidate.title}" ({candidate.locator})\n{candidate.text}'
+            # Title and locator are the whole citation: they name a real
+            # conversation and a real range of messages in it, which is what
+            # the model can meaningfully refer to. No opaque id in front --
+            # nothing ever parsed one back out of an answer, and a model
+            # that echoed it would only put noise in front of the user.
+            block = f'From "{candidate.title}" ({candidate.locator})\n{candidate.text}'
             tokens = estimate_tokens(block)
             prospective_blocks = [*blocks, block]
             prospective_retrieval_message = _retrieval_message(prospective_blocks)
@@ -287,18 +283,6 @@ except Exception:
     raise
 
 memory_store = ProjectMemoryStore(repository.database_path)
-document_store = DocumentStore(repository.database_path)
-document_store.initialize()
-document_root = Path(os.environ.get("RAG_DOCUMENT_ROOT", str(DEFAULT_DOCUMENT_ROOT)))
-embedding_gateway = create_embedding_gateway()
-document_service = DocumentService(
-    document_store,
-    BlobStore(document_root),
-    DocumentParser(),
-    Chunker(),
-    embedding_gateway,
-)
-rag_retriever = ProjectRAGRetriever(document_store, embedding_gateway)
 context_assembler = ContextAssembler(system_prompt_for_today)
 
 try:
@@ -423,7 +407,6 @@ async def prepare_conversation_context(
         included_source_count=len(plan.included_sources),
         excluded_source_count=len(plan.excluded_sources),
         excluded_reasons=sorted({source.reason for source in plan.excluded_sources}),
-        source_kinds=sorted({source.candidate.source_kind for source in plan.included_sources}),
     )
     return plan
 
@@ -716,12 +699,10 @@ def retrieve_project_memory(
     project_id: str,
     conversation_id: str,
     query_text: str,
-) -> list[ContextCandidate]:
+) -> list[MemoryCandidate]:
     """Retrieve relevant turns from other chats in the same project."""
     return memory_store.retrieve(
-        RetrievalQuery(
-            project_id=project_id,
-            text=query_text,
-            exclude_conversation_id=conversation_id,
-        )
+        project_id=project_id,
+        text=query_text,
+        exclude_conversation_id=conversation_id,
     )
