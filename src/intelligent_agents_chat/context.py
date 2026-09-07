@@ -404,6 +404,13 @@ def completion_messages(messages: list[Message]) -> list[dict]:
     its user message, a bracketed note (see not_from_user_note) with a
     compact trace line per tool call (name, arguments, ok/error -- never the
     tool's full result), and its final answer as a plain assistant message.
+    A successful call's trace line is tagged with its stored message id
+    (`[tool#<id>: ...]`) so the model can ask for that exact result back in
+    full via the recall_tool_output tool (see tools/recall_tool_output.py)
+    if the summarized outcome isn't enough -- but only for turns still
+    collapsed like this; once a turn has aged past that into a compaction
+    summary (see _compact_conversation_history), its ids no longer appear
+    anywhere the model can see, so there's nothing left to ask for by id.
     The trace deliberately isn't part of the assistant message: a chat-tuned
     model reads everything under `role: "assistant"` as an example of its
     own voice, so putting the trace notation there taught the model, turn
@@ -494,20 +501,23 @@ def _completion_messages_for_turn(turn: list[Message], *, collapse: bool) -> lis
         return [_plain_message(message) for message in turn]
 
     results_by_call_id = {
-        message.tool_call_id: message.content for message in turn if message.role == "tool"
+        message.tool_call_id: message for message in turn if message.role == "tool"
     }
     trace_lines = []
     for message in turn:
         if message.role != "assistant" or not message.tool_calls:
             continue
         for call in message.tool_calls:
-            result = results_by_call_id.get(call["id"])
-            if result is None:
+            result_message = results_by_call_id.get(call["id"])
+            if result_message is None:
                 outcome = "never returned a result (generation was stopped)"
-            elif result.startswith("Error:"):
-                outcome = result
+            elif result_message.content.startswith("Error:"):
+                outcome = result_message.content
             else:
-                outcome = "ok"
+                # Tagged with this stored message's id so the model can ask
+                # for the exact result back in full via recall_tool_output
+                # (see this function's docstring on completion_messages).
+                outcome = f"ok (id: {result_message.id})"
             trace_lines.append(f"[tool: {call['name']}({call['arguments']}) -> {outcome}]")
     final_answer = next(
         (

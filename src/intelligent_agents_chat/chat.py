@@ -19,7 +19,14 @@ import logging
 from intelligent_agents_chat.llm import VLLMGateway, check_model_available
 from intelligent_agents_chat.logging_config import log_event
 from intelligent_agents_chat.models import MODEL_PROFILES, ModelProfile
-from intelligent_agents_chat.tools import Tool, calculator, subagent, webfetch, websearch
+from intelligent_agents_chat.tools import (
+    Tool,
+    calculator,
+    recall_tool_output,
+    subagent,
+    webfetch,
+    websearch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +36,9 @@ profile_status: dict[str, bool | None] = {profile.key: None for profile in MODEL
 
 # Every available tool, self-registered by its module. Add a new tool by
 # writing a `tools/<name>.py` that exports a `Tool` (see tools/calculator.py),
-# then listing it here -- nothing else in this file needs to change.
+# then listing it here -- nothing else in this file needs to change. Not
+# recall_tool_output -- that one needs a conversation to scope itself to, so
+# it's built fresh per turn instead (see stream_reply).
 TOOLS: dict[str, Tool] = {
     tool.name: tool
     for tool in (
@@ -116,7 +125,7 @@ class UsageEvent:
 StreamEvent = TextChunk | ToolCallEvent | ToolResultEvent | UsageEvent
 
 
-async def _execute_tool(name: str, arguments: dict) -> str:
+async def _execute_tool(name: str, arguments: dict, tools: dict[str, Tool]) -> str:
     """Await one tool's `run` to completion before returning.
 
     Tools run asynchronously so none of them block
@@ -125,7 +134,7 @@ async def _execute_tool(name: str, arguments: dict) -> str:
     stops and waits for this to finish before it does anything else; it does
     not continue on in parallel while a tool (e.g. a sub-agent) is running.
     """
-    tool = TOOLS.get(name)
+    tool = tools.get(name)
     if tool is None:
         return f"Error: unknown tool '{name}'"
     try:
@@ -141,24 +150,33 @@ async def _execute_tool(name: str, arguments: dict) -> str:
         return f"Error: tool '{name}' failed unexpectedly: {error}"
 
 
-def format_reasoning_entry(text: str) -> str:
-    """Markdown for one reasoning block, as a collapsible accordion entry.
-
-    Used both live (while `text` is still streaming) and when replaying a
-    finished conversation from the DB -- keeping the formatting in one place
-    is the whole point, so the two views always look identical.
-    """
-    return f"**Thinking**\n\n{text}"
-
-
 def format_tool_call_entry(call: dict) -> str:
-    """Markdown for one tool call, as a collapsible accordion entry."""
-    return f"🔧 **{call['name']}**\n\n```\n{call['arguments']}\n```"
+    """Plain text (deliberately never Markdown -- see app.py's _add_trace_step
+    `prefix` parameter) for one tool call's name and arguments: a fixed
+    header shown above the result, which does go through Markdown (see
+    format_tool_result_entry) since tool/argument names routinely contain
+    underscores, which Markdown misreads as emphasis.
+    """
+    return f"🔧 {call['name']} {call['arguments']}"
 
 
-def format_tool_result_entry(name: str, result: str) -> str:
-    """Markdown for one tool result, as a collapsible accordion entry."""
-    return f"**{name}** → {result}"
+def format_tool_result_entry(result: str | None, *, still_running: bool = False) -> str:
+    """Markdown for a tool call's result -- the half of a trace step that can
+    actually contain structure worth rendering (tables, code, ...), unlike
+    the call header (see format_tool_call_entry, plain text on purpose).
+
+    Used both live (while `result` may still be None, mid-call) and when
+    replaying a finished conversation from the DB -- keeping the formatting
+    in one place is the whole point, so the two views always look identical.
+    still_running distinguishes "still executing" (live) from "the turn was
+    stopped before this call finished" (a genuinely missing result, only
+    possible on replay).
+    """
+    if result is not None:
+        return result
+    if still_running:
+        return "*(waiting for the result...)*"
+    return "*(no result -- generation was stopped before this call finished)*"
 
 
 async def stream_reply(
@@ -167,6 +185,7 @@ async def stream_reply(
     *,
     request_id: str | None = None,
     thinking_enabled: bool = False,
+    conversation_id: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Stream the assistant's reply, executing any tool calls the model makes.
 
@@ -174,8 +193,16 @@ async def stream_reply(
     `ToolCallEvent` once per round when the model requests tool calls,
     `ToolResultEvent` once per executed call, and a final `UsageEvent` (see its
     docstring) once the turn's real answer is ready.
+
+    conversation_id scopes recall_tool_output to this conversation, built
+    fresh for this call only (see tools/recall_tool_output.py) -- optional
+    only so tests that don't care about it can omit it; every real caller
+    (app.py's send_message) always has one.
     """
-    tools = [tool.schema for tool in TOOLS.values()] if profile.supports_tools else None
+    tools_for_turn = dict(TOOLS)
+    if conversation_id is not None:
+        tools_for_turn["recall_tool_output"] = recall_tool_output.build_tool(conversation_id)
+    tools = [tool.schema for tool in tools_for_turn.values()] if profile.supports_tools else None
     conversation_messages: list[dict] = list(messages)
     # See UsageEvent's docstring for what each of these means and why.
     initial_prompt_tokens: int | None = None
@@ -301,7 +328,7 @@ async def stream_reply(
                 # Each tool call is awaited to completion
                 # before the next one starts (and before the model gets to see any
                 # results), even though tools themselves run async.
-                result = await _execute_tool(call["name"], arguments)
+                result = await _execute_tool(call["name"], arguments, tools_for_turn)
             else:
                 result = (
                     "Error: too many tool calls in a single turn "

@@ -13,11 +13,15 @@ scratch:
 This script is written for the schema changes it currently knows about
 (tool-calling support, a `reasoning` column, the `memory_enabled` column on
 `conversations`, a `real_peak_total_tokens` column on
-`message_context_runs`, then moving model_profile/thinking_enabled/
+`message_context_runs`, moving model_profile/thinking_enabled/
 memory_enabled off `conversations` and onto the single shared `app_settings`
-row). If database.py's schema changes again later, extend or replace the
-migration below to match -- it's a one-off dev tool, not a general migration
-framework.
+row, then dropping `source_kind`/`content_hash` from `memory_entries` --
+stray leftovers from a schema shape database.py has never actually defined
+on this branch, silently breaking every memory insert with a NOT NULL
+violation once a database file had picked them up some other way, e.g. by
+briefly running a different branch against the same file). If database.py's
+schema changes again later, extend or replace the migration below to
+match -- it's a one-off dev tool, not a general migration framework.
 """
 
 from __future__ import annotations
@@ -155,6 +159,20 @@ def migrate(database_path: Path) -> None:
             connection.execute("ALTER TABLE conversations DROP COLUMN model_profile")
             connection.execute("ALTER TABLE conversations DROP COLUMN thinking_enabled")
             connection.execute("ALTER TABLE conversations DROP COLUMN memory_enabled")
+
+        # Empty (not missing) if the table doesn't exist yet -- nothing to do.
+        memory_entries_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(memory_entries)")
+        }
+        for stray_column in ("source_kind", "content_hash"):
+            if stray_column in memory_entries_columns:
+                print(
+                    f"Dropping stray memory_entries.{stray_column} column -- "
+                    "database.py never defines it, but a NOT NULL leftover here "
+                    "(e.g. from briefly running a different branch against this "
+                    "same file) makes every memory insert fail silently ..."
+                )
+                connection.execute(f"ALTER TABLE memory_entries DROP COLUMN {stray_column}")
 
         connection.commit()
         message_count = connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0]

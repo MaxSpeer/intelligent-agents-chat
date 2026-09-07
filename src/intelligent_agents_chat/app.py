@@ -20,7 +20,6 @@ from intelligent_agents_chat.chat import (
     ToolResultEvent,
     UsageEvent,
     active_generations,
-    format_reasoning_entry,
     format_tool_call_entry,
     format_tool_result_entry,
     poll_profile_status,
@@ -127,12 +126,118 @@ def _profile_label(profile_key: str | None) -> str:
 
 
 def _chat_markdown(content: str):
-    """Render untrusted chat content as sanitized Markdown."""
+    """Render content that's genuinely Markdown-authored (or at least
+    benefits more from Markdown's structure -- tables, code blocks -- than it
+    loses from the occasional misread underscore): the assistant's final
+    answer, and a tool call's result (see _add_trace_step's markdown=True).
+    Sanitized since it's still untrusted content.
+    """
     return ui.markdown(
         content,
         extras=CHAT_MARKDOWN_EXTRAS,
         sanitize=True,
     ).classes("chat-markdown")
+
+
+def _chat_plain_text(content: str):
+    """Render chat content that was never meant to be Markdown -- the
+    user's own message, or model reasoning: neither is Markdown *authored
+    for display*, so parsing it as Markdown only risks misreading an
+    ordinary underscore as emphasis. No sanitization needed either: NiceGUI's
+    `ui.label` always renders its argument as plain text, never HTML.
+    """
+    return ui.label(content).classes("chat-plain-text")
+
+
+@dataclass(slots=True)
+class _TraceStep:
+    """One row in a turn's trace timeline (see .trace-timeline in app.css):
+    reasoning, a tool call+result, or a plain note, always in the order they
+    actually happened. `title_label`/`preview`/`dialog_body` are kept around
+    so a live-streaming step (reasoning still arriving, or a tool call still
+    awaiting its result) can be updated in place via `update()` --
+    render_assistant_turn (replay) just builds one with its final text and
+    never calls update(). A tool step's `prefix` (its call header) is never
+    part of this state: it's fixed the moment the call happens and rendered
+    once, in _add_trace_step, without ever needing to change again.
+    """
+
+    title_label: object
+    preview: object
+    dialog_body: object
+    markdown: bool
+
+    def update(self, *, title: str | None = None, body: str | None = None) -> None:
+        if title is not None:
+            self.title_label.set_text(title)
+        if body is not None:
+            if self.markdown:
+                self.preview.set_content(body)
+                self.dialog_body.set_content(body)
+            else:
+                self.preview.set_text(body)
+                self.dialog_body.set_text(body)
+
+
+def _add_trace_step(
+    timeline,
+    *,
+    dot_class: str,
+    title: str,
+    body: str,
+    markdown: bool = False,
+    prefix: str | None = None,
+) -> _TraceStep:
+    """A step with a fixed-height preview (see .trace-step-preview) that
+    opens a popup with the full text on click. `markdown=True` for a tool
+    call's result (real Markdown -- tables, code, ... -- worth rendering) or
+    plain text (see _chat_plain_text) for reasoning, since that's model
+    output, not Markdown the model authored for display. `prefix`, if given,
+    is a fixed, always-plain-text header shown above `body` in both the
+    preview and the dialog -- for a tool call's name+arguments (see
+    format_tool_call_entry): unlike the result, this must never be parsed as
+    Markdown (tool/argument names routinely contain underscores, which
+    Markdown misreads as emphasis), and unlike `body` it never changes once
+    the call has happened, so it isn't kept on the returned _TraceStep. Its
+    place before `body` also means it's still visible in the clipped preview
+    before a click reveals the rest. See _add_trace_note for the plain,
+    non-expandable kind (compaction notices and the like).
+    """
+    render = _chat_markdown if markdown else _chat_plain_text
+    with timeline, ui.row().classes("trace-step"):
+        ui.element("span").classes(f"trace-step-dot {dot_class}")
+        with ui.column().classes("gap-1 trace-step-body"):
+            title_label = ui.label(title).classes("trace-step-title")
+            with ui.dialog() as dialog, ui.card().classes("trace-step-dialog"):
+                if prefix is not None:
+                    _chat_plain_text(prefix)
+                dialog_body = render(body)
+            with ui.element("div").classes("trace-step-preview") as preview:
+                preview.on("click", dialog.open)
+                if prefix is not None:
+                    _chat_plain_text(prefix)
+                preview_content = render(body)
+    return _TraceStep(title_label, preview_content, dialog_body, markdown)
+
+
+def _add_trace_note(timeline, text: str) -> None:
+    """A short, plain trace line -- no preview/popup, for things that are
+    never worth expanding (e.g. a compaction notice), unlike _add_trace_step.
+    """
+    with timeline, ui.row().classes("trace-step"):
+        ui.element("span").classes("trace-step-dot note")
+        ui.label(text).classes("trace-step-note-text")
+
+
+def _format_memory_sources_entry(sources: list) -> str:
+    """Plain text (see _chat_plain_text) listing every project-memory source
+    included in this turn's context -- title and locator per source, the
+    same fields the old separate "Project memory" dropdown below the answer
+    used to show. Shown as the trace's first step (see render_assistant_turn)
+    since this context is fixed before generation even starts, unlike
+    everything that happens after it (reasoning, tool calls, ...).
+    """
+    return "\n".join(f"{source.source_title} — {source.source_locator}" for source in sources)
 
 
 @ui.page("/")
@@ -322,13 +427,28 @@ def index() -> None:
 
     def render_assistant_turn(turn_messages: list[Message]) -> None:
         """Render one user turn's response as a single chat bubble: a
-        collapsible trace (reasoning, tool calls, tool results, in order) followed
-        by the final answer, if any -- the exact same shape `send_message` builds
-        live while streaming. Both share one bubble because QChatMessage renders
-        one bubble *per direct slot child*, so they must be wrapped together.
+        collapsible trace (retrieved project memory first, since it's fixed
+        before generation even starts, then reasoning, tool calls with their
+        results, and notes, in the order they actually happened) followed by
+        the final answer, if any. The reasoning/tool/note part of the trace
+        is the same shape `send_message` builds live while streaming; memory
+        sources only appear here, once persistence has run, since the live
+        bubble is replaced by this very function (via render_all()) the
+        moment generation finishes. Both trace and answer share one bubble
+        because QChatMessage renders one bubble *per direct slot child*, so
+        they must be wrapped together.
         """
-        entries: list[str] = []
-        call_names: dict[str, str] = {}
+        # Each step is {"kind": "reasoning" | "tool" | "note", "body": str}
+        # for reasoning/note, or {"kind": "tool", "call": dict, "result":
+        # str | None} for a tool step -- built as a plain dict (not a
+        # dataclass) specifically so a later "tool" message can mutate its
+        # "result" in place via `pending_by_call_id`, keeping call and
+        # result as one step no matter how many other calls the same round
+        # made in between (previously: call, call, call, result, result,
+        # result -- see completion_messages' docstring in context.py for the
+        # model-facing version of the same fix).
+        steps: list[dict] = []
+        pending_by_call_id: dict[str, dict] = {}
         final_content: str | None = None
         final_message_id: int | None = None
         model_profile: str | None = None
@@ -336,21 +456,31 @@ def index() -> None:
             if message.role == "assistant":
                 model_profile = message.model_profile
                 if message.reasoning:
-                    entries.append(format_reasoning_entry(message.reasoning))
+                    steps.append({"kind": "reasoning", "body": message.reasoning})
                 if message.tool_calls:
                     for call in message.tool_calls:
-                        call_names[call["id"]] = call["name"]
-                        entries.append(format_tool_call_entry(call))
+                        step = {"kind": "tool", "call": call, "result": None}
+                        steps.append(step)
+                        pending_by_call_id[call["id"]] = step
                     if message.content:
-                        entries.append(message.content)
+                        steps.append({"kind": "note", "body": message.content})
                 elif message.content:
                     final_content = message.content
                     final_message_id = message.id
             elif message.role == "tool":
-                name = call_names.get(message.tool_call_id or "", "tool")
-                entries.append(format_tool_result_entry(name, message.content))
+                step = pending_by_call_id.pop(message.tool_call_id or "", None)
+                if step is not None:
+                    step["result"] = message.content
 
-        if not entries and not final_content:
+        # Retrieved before rendering since it decides whether the accordion
+        # is worth showing at all even when there were no reasoning/tool
+        # steps -- e.g. a plain answer that still drew on project memory.
+        memory_sources = (
+            repository.list_message_context_sources(final_message_id)
+            if final_message_id is not None
+            else []
+        )
+        if not steps and not memory_sources and not final_content:
             return
         with ui.chat_message(
             name=_profile_label(model_profile),
@@ -358,34 +488,39 @@ def index() -> None:
             sent=False,
         ).classes("chat-message"):
             with ui.column().classes("gap-0 w-full"):
-                if entries:
+                if steps or memory_sources:
                     with (
-                        ui.expansion("thinking...", value=False)
-                        .props("dense")
-                        .classes("tool-trace")
+                        ui.expansion("Steps", value=False).props("dense").classes("tool-trace")
                     ):
-                        for entry in entries:
-                            _chat_markdown(entry)
+                        timeline = ui.column().classes("trace-timeline")
+                        if memory_sources:
+                            # Always first: this context was fixed before
+                            # generation even started, ahead of everything
+                            # that happened during it.
+                            _add_trace_step(
+                                timeline, dot_class="memory",
+                                title=f"Project memory · {len(memory_sources)} source"
+                                + ("s" if len(memory_sources) != 1 else ""),
+                                body=_format_memory_sources_entry(memory_sources),
+                            )
+                        for step in steps:
+                            if step["kind"] == "reasoning":
+                                _add_trace_step(
+                                    timeline, dot_class="reasoning", title="Thinking",
+                                    body=step["body"],
+                                )
+                            elif step["kind"] == "tool":
+                                _add_trace_step(
+                                    timeline, dot_class="tool", title=step["call"]["name"],
+                                    body=format_tool_result_entry(step["result"]),
+                                    markdown=True,
+                                    prefix=format_tool_call_entry(step["call"]),
+                                )
+                            else:
+                                _add_trace_note(timeline, step["body"])
                 if final_content:
                     _chat_markdown(final_content)
                 if final_message_id is not None:
-                    sources = repository.list_message_context_sources(final_message_id)
-                    if sources:
-                        with ui.expansion(
-                            f"Project memory · {len(sources)} source"
-                            + ("s" if len(sources) != 1 else ""),
-                            icon="history",
-                        ).classes("memory-sources"):
-                            for source in sources:
-                                with ui.row().classes("memory-source-row"):
-                                    ui.icon("chat_bubble_outline", size="xs")
-                                    with ui.column().classes("gap-0 min-w-0"):
-                                        ui.label(source.source_title).classes(
-                                            "memory-source-title"
-                                        )
-                                        ui.label(source.source_locator).classes(
-                                            "memory-source-locator"
-                                        )
                     context_run = repository.get_message_context_run(final_message_id)
                     if context_run is not None:
                         # Prefer the real peak (prompt+completion of the turn's
@@ -441,7 +576,7 @@ def index() -> None:
                             stamp=_display_time(message.created_at),
                             sent=True,
                         ).classes("chat-message"):
-                            _chat_markdown(message.content)
+                            _chat_plain_text(message.content)
                         index += 1
                         continue
                     turn_start = index
@@ -1032,32 +1167,57 @@ def index() -> None:
         stopped = False
         outcome = "streaming"
         last_paint = monotonic()
-        trace_expansion = None
-        current_reasoning_widget = None
+        trace_timeline = None
+        current_reasoning_step: _TraceStep | None = None
+        # tool_call_id -> its step, only while still waiting for a result --
+        # popped once the matching ToolResultEvent arrives (see below), so
+        # call and result always land in the same trace row no matter how
+        # many other calls the same round made in between. Only the step is
+        # kept (not the call dict): the call header is a fixed `prefix` set
+        # once at creation (see _add_trace_step) and never needs recomputing;
+        # only the result half (`body`) ever changes.
+        pending_tool_steps: dict[str, _TraceStep] = {}
 
-        def add_trace_entry(markdown_text: str):
-            nonlocal trace_expansion
-            if trace_expansion is None:
-                with trace_container:
-                    trace_expansion = (
-                        ui.expansion("thinking...", value=False)
-                        .props("dense")
-                        .classes("tool-trace")
-                    )
-            with trace_expansion:
-                return _chat_markdown(markdown_text)
+        def _ensure_trace_timeline():
+            nonlocal trace_timeline
+            if trace_timeline is None:
+                with trace_container, ui.expansion("Steps", value=False).props(
+                    "dense"
+                ).classes("tool-trace"):
+                    trace_timeline = ui.column().classes("trace-timeline")
+            return trace_timeline
+
+        def add_trace_step(
+            *,
+            dot_class: str,
+            title: str,
+            body: str,
+            markdown: bool = False,
+            prefix: str | None = None,
+        ) -> _TraceStep:
+            return _add_trace_step(
+                _ensure_trace_timeline(),
+                dot_class=dot_class,
+                title=title,
+                body=body,
+                markdown=markdown,
+                prefix=prefix,
+            )
+
+        def add_trace_note(text: str) -> None:
+            _add_trace_note(_ensure_trace_timeline(), text)
 
         def flush_pending(tool_calls: tuple[dict, ...] | None = None) -> Message | None:
-            nonlocal messages_saved_count, current_reasoning_widget
+            nonlocal messages_saved_count, current_reasoning_step
             reasoning = "".join(pending_reasoning).strip() or None
             content = "".join(pending_content).strip()
-            if current_reasoning_widget is not None and reasoning:
+            if current_reasoning_step is not None and reasoning:
                 # Paint the final, complete text -- the last periodic repaint may
                 # have landed slightly before the reasoning block actually closed.
-                current_reasoning_widget.set_content(format_reasoning_entry(reasoning))
+                current_reasoning_step.update(body=reasoning)
             pending_reasoning.clear()
             pending_content.clear()
-            current_reasoning_widget = None
+            current_reasoning_step = None
             if content or reasoning or tool_calls:
                 message = repository.add_message(
                     conversation.id,
@@ -1094,7 +1254,7 @@ def index() -> None:
                     thinking_enabled=settings.thinking_enabled,
                     memory_enabled=settings.memory_enabled,
                     force_compact=force_compact,
-                    on_compacting=lambda: add_trace_entry(
+                    on_compacting=lambda: add_trace_note(
                         "🗜️ Context limit reached -- compacting older history and retrying..."
                         if force_compact
                         else "🗜️ Compacting older conversation history..."
@@ -1127,6 +1287,7 @@ def index() -> None:
                             request_messages,
                             request_id=generation_id,
                             thinking_enabled=settings.thinking_enabled,
+                            conversation_id=conversation.id,
                         )
                     ) as stream:
                         async for event in stream:
@@ -1149,11 +1310,17 @@ def index() -> None:
                                 leftover_content = "".join(pending_content).strip()
                                 flush_pending(tool_calls=event.tool_calls)
                                 if leftover_content:
-                                    add_trace_entry(leftover_content)
+                                    add_trace_note(leftover_content)
                                 assistant_markdown.set_content(progress_text)
                                 for call in event.tool_calls:
                                     output_chars += len(call["arguments"])
-                                    add_trace_entry(format_tool_call_entry(call))
+                                    pending_tool_steps[call["id"]] = add_trace_step(
+                                        dot_class="tool",
+                                        title=call["name"],
+                                        body=format_tool_result_entry(None, still_running=True),
+                                        markdown=True,
+                                        prefix=format_tool_call_entry(call),
+                                    )
                             elif isinstance(event, ToolResultEvent):
                                 event_count += 1
                                 repository.add_message(
@@ -1164,7 +1331,9 @@ def index() -> None:
                                 )
                                 messages_saved_count += 1
                                 output_chars += len(event.result)
-                                add_trace_entry(format_tool_result_entry(event.name, event.result))
+                                step = pending_tool_steps.pop(event.tool_call_id, None)
+                                if step is not None:
+                                    step.update(body=format_tool_result_entry(event.result))
                             elif isinstance(event, UsageEvent):
                                 usage_event = event
                             now = monotonic()
@@ -1173,14 +1342,14 @@ def index() -> None:
                             if now - last_paint >= 0.04:
                                 if pending_reasoning:
                                     reasoning_text = "".join(pending_reasoning)
-                                    if current_reasoning_widget is None:
-                                        current_reasoning_widget = add_trace_entry(
-                                            format_reasoning_entry(reasoning_text)
+                                    if current_reasoning_step is None:
+                                        current_reasoning_step = add_trace_step(
+                                            dot_class="reasoning",
+                                            title="Thinking",
+                                            body=reasoning_text,
                                         )
                                     else:
-                                        current_reasoning_widget.set_content(
-                                            format_reasoning_entry(reasoning_text)
-                                        )
+                                        current_reasoning_step.update(body=reasoning_text)
                                 if pending_content:
                                     assistant_markdown.set_content("".join(pending_content))
                                 message_scroll.scroll_to(percent=1)
