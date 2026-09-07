@@ -1127,6 +1127,7 @@ def index() -> None:
                             request_messages,
                             request_id=generation_id,
                             thinking_enabled=settings.thinking_enabled,
+                            conversation_id=conversation.id,
                         )
                     ) as stream:
                         async for event in stream:

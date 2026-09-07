@@ -57,10 +57,11 @@ class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(tool.schema["function"]["name"], tool.name)
 
     async def test_dispatch_reaches_the_real_tool(self) -> None:
-        self.assertEqual(await _execute_tool("calculator", {"expression": "1+1"}), "2")
+        result = await _execute_tool("calculator", {"expression": "1+1"}, TOOLS)
+        self.assertEqual(result, "2")
 
     async def test_unknown_tool_name_is_a_reported_error_not_a_crash(self) -> None:
-        result = await _execute_tool("no-such-tool", {})
+        result = await _execute_tool("no-such-tool", {}, TOOLS)
         self.assertEqual(result, "Error: unknown tool 'no-such-tool'")
 
     async def test_a_tool_that_raises_is_caught_not_left_to_crash_the_agent_loop(self) -> None:
@@ -69,11 +70,35 @@ class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
             schema={"type": "function", "function": {"name": "broken"}},
             run=mock.AsyncMock(side_effect=RuntimeError("boom")),
         )
-        with mock.patch.dict(chat.TOOLS, {"broken": broken_tool}):
-            result = await _execute_tool("broken", {})
+        result = await _execute_tool("broken", {}, {"broken": broken_tool})
 
         self.assertTrue(result.startswith("Error:"))
         self.assertIn("boom", result)
+
+    async def test_recall_tool_output_is_offered_only_when_a_conversation_id_is_given(
+        self,
+    ) -> None:
+        """recall_tool_output needs a conversation to scope itself to (see
+        stream_reply) -- built fresh per turn, not part of the static TOOLS
+        registry above, so it must only show up in the schema the model
+        actually sees once a real conversation_id is passed in.
+        """
+        profile = ModelProfile(
+            key="tools", label="Tools", base_url="http://x/v1", model="test-model",
+            supports_tools=True,
+        )
+        offered_tool_names: list[list[str]] = []
+
+        async def fake_stream_reply(profile, messages, *, tools=None, tool_calls=None, **kwargs):
+            offered_tool_names.append([tool["function"]["name"] for tool in (tools or [])])
+            yield ContentDelta("answer")
+
+        with mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)):
+            [event async for event in stream_reply(profile, [])]
+            [event async for event in stream_reply(profile, [], conversation_id="conversation-1")]
+
+        self.assertNotIn("recall_tool_output", offered_tool_names[0])
+        self.assertIn("recall_tool_output", offered_tool_names[1])
 
 
 def _fake_gateway(*delta_lists):

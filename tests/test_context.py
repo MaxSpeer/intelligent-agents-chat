@@ -43,12 +43,13 @@ def _message(
     role: str,
     content: str,
     *,
+    message_id: int = 1,
     tool_calls: tuple[dict, ...] | None = None,
     tool_call_id: str | None = None,
     reasoning: str | None = None,
 ) -> Message:
     return Message(
-        id=1,
+        id=message_id,
         conversation_id="conversation",
         role=role,
         content=content,
@@ -208,9 +209,9 @@ class CompletionMessagesTests(unittest.TestCase):
             [
                 _message("user", "What is 1+1 and 2+2?"),
                 _message("assistant", "Let me compute that.", tool_calls=(call_1,)),
-                _message("tool", "2", tool_call_id="call_1"),
+                _message("tool", "2", message_id=10, tool_call_id="call_1"),
                 _message("assistant", "", tool_calls=(call_2,)),
-                _message("tool", "4", tool_call_id="call_2"),
+                _message("tool", "4", message_id=11, tool_call_id="call_2"),
                 _message("assistant", "1+1 is 2 and 2+2 is 4."),
                 _message("user", "Thanks, anything else?"),
             ]
@@ -223,8 +224,14 @@ class CompletionMessagesTests(unittest.TestCase):
         # framed to not read as something the user said).
         self.assertEqual(messages[1]["role"], "user")
         self.assertIn("not from the user", messages[1]["content"])
-        self.assertIn('[tool: calculator({"expression": "1+1"}) -> ok]', messages[1]["content"])
-        self.assertIn('[tool: calculator({"expression": "2+2"}) -> ok]', messages[1]["content"])
+        # Tagged with each result's own stored message id -- see
+        # recall_tool_output, which lets the model ask for one back in full.
+        self.assertIn(
+            '[tool: calculator({"expression": "1+1"}) -> ok (id: 10)]', messages[1]["content"]
+        )
+        self.assertIn(
+            '[tool: calculator({"expression": "2+2"}) -> ok (id: 11)]', messages[1]["content"]
+        )
         self.assertEqual(messages[2], {"role": "assistant", "content": "1+1 is 2 and 2+2 is 4."})
         self.assertEqual(messages[3], {"role": "user", "content": "Thanks, anything else?"})
         # The full tool results ("2", "4") and the narration before the first
