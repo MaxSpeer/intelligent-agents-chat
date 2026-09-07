@@ -13,11 +13,12 @@ from intelligent_agents_chat.documents import (
     BlobStore,
     Chunker,
     DocumentParser,
+    DocumentService,
     DocumentStore,
     DocumentValidationError,
+    ProjectRAGRetriever,
 )
 from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION, EmbeddingError
-from intelligent_agents_chat.rag import DocumentService, ProjectRAGRetriever
 from intelligent_agents_chat.retrieval import RetrievalQuery
 
 
@@ -81,7 +82,7 @@ class DocumentRAGTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
 
-    async def test_upload_duplicate_replace_and_delete_have_deterministic_lifecycle(self) -> None:
+    async def test_upload_duplicate_and_delete_have_deterministic_lifecycle(self) -> None:
         project = self.repository.create_project("Research")
         first = await self.service.upload(
             project_id=project.id,
@@ -96,6 +97,8 @@ class DocumentRAGTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.blob_store.exists(first.document.storage_key))
         self.assertGreater(first.document.chunk_count, 0)
 
+        # Same bytes under a different filename: recognised by content hash
+        # (see DocumentService.upload), so it isn't embedded a second time.
         duplicate = await self.service.upload(
             project_id=project.id,
             display_name="renamed.txt",
@@ -106,22 +109,11 @@ class DocumentRAGTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(duplicate.document.id, first.document.id)
         self.assertEqual(len(self.store.list_documents(project.id)), 1)
 
-        replaced = await self.service.replace(
-            first.document.id,
-            project.id,
-            display_name="updated.md",
-            media_type="text/markdown",
-            data=b"# Decision\nThe finance budget is cobalt.",
-        )
-        self.assertEqual(replaced.id, first.document.id)
-        self.assertEqual(replaced.display_name, "updated.md")
-        self.assertNotEqual(replaced.sha256, first.document.sha256)
-        self.assertIn("section: Decision", self.store.list_chunks(replaced.id)[0].locator)
-
-        self.assertTrue(await self.service.delete(replaced.id, project.id))
-        self.assertIsNone(self.store.get_document(replaced.id))
-        self.assertEqual(self.store.list_chunks(replaced.id), [])
-        self.assertFalse(self.blob_store.exists(replaced.storage_key))
+        document_id = first.document.id
+        self.assertTrue(await self.service.delete(document_id, project.id))
+        self.assertIsNone(self.store.get_document(document_id))
+        self.assertEqual(self.store.list_chunks(document_id), [])
+        self.assertFalse(self.blob_store.exists(first.document.storage_key))
 
     async def test_retrieval_never_crosses_project_boundaries_and_has_citations(self) -> None:
         public = self.repository.create_project("Public")
@@ -153,7 +145,10 @@ class DocumentRAGTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0].source_conversation_id, None)
         self.assertIn(
             results[0].source_id,
-            {chunk.id for chunk in self.store.list_chunks(public_upload.document.id)},
+            {
+                f"{chunk.document_id}:{chunk.ordinal}"
+                for chunk in self.store.list_chunks(public_upload.document.id)
+            },
         )
 
     async def test_failed_embedding_is_visible_and_retryable(self) -> None:
@@ -196,13 +191,15 @@ class DocumentParserTests(unittest.TestCase):
             media_type="text/plain",
         )
 
-        first = chunker.chunk("document-id", segments)
-        second = chunker.chunk("document-id", segments)
+        first = chunker.chunk(segments)
+        second = chunker.chunk(segments)
 
         self.assertGreater(len(first), 1)
-        self.assertEqual([chunk.id for chunk in first], [chunk.id for chunk in second])
+        # Same input, same chunks -- a re-index can't silently reshuffle what
+        # was already indexed (see DocumentService.reindex).
         self.assertEqual(
-            [chunk.content_hash for chunk in first], [chunk.content_hash for chunk in second]
+            [(chunk.ordinal, chunk.content, chunk.locator) for chunk in first],
+            [(chunk.ordinal, chunk.content, chunk.locator) for chunk in second],
         )
         self.assertTrue(set(first[0].content.split()).intersection(first[1].content.split()))
 

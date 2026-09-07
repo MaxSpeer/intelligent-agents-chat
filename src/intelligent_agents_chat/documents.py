@@ -1,7 +1,18 @@
-"""Project-scoped document lifecycle, parsing, chunking, and SQLite persistence."""
+"""Project-scoped documents end to end: parsing, chunking, SQLite persistence,
+embedding-vector storage, and the retrieval the search_documents tool runs.
+
+Everything about a project's uploaded documents lives here, in one place --
+the same way memory.py holds all of project memory (store, rebuild, and
+retrieval together). Reading top to bottom: the storage primitives
+(BlobStore for the original files, DocumentParser, Chunker, DocumentStore
+for SQLite and sqlite-vec), then DocumentService, which is what the UI
+actually calls to upload/reindex/delete, and finally ProjectRAGRetriever,
+which turns a query into ranked ContextCandidates for tools/search_documents.py.
+"""
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -17,8 +28,13 @@ import sqlite_vec
 from pypdf import PdfReader
 
 from intelligent_agents_chat.database import PROJECT_ROOT, connect_database
-from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION
+from intelligent_agents_chat.embeddings import (
+    EMBEDDING_DIMENSION,
+    EmbeddingError,
+    EmbeddingGateway,
+)
 from intelligent_agents_chat.logging_config import log_event
+from intelligent_agents_chat.retrieval import ContextCandidate, RetrievalQuery
 
 
 DEFAULT_DOCUMENT_ROOT = PROJECT_ROOT / ".data" / "documents"
@@ -69,34 +85,31 @@ class Document:
 
 @dataclass(frozen=True, slots=True)
 class ParsedSegment:
+    """One locatable piece of a parsed document -- a PDF page or a Markdown
+    section. `locator` is the human-readable citation ("page 3", "section:
+    Retrieval") the model gets to quote, and it's the only place that
+    structure is kept: nothing downstream needs the page number or heading
+    as separate values.
+    """
+
     text: str
     locator: str
-    page_number: int | None = None
-    section: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ChunkDraft:
-    id: str
     ordinal: int
     content: str
-    content_hash: str
     locator: str
-    page_number: int | None
-    section: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class DocumentChunk:
-    id: str
     document_id: str
     project_id: str
     ordinal: int
     content: str
-    content_hash: str
     locator: str
-    page_number: int | None
-    section: str | None
 
 
 class BlobStore:
@@ -176,11 +189,7 @@ class DocumentParser:
                 section_text = "\n".join(current_lines).strip()
                 if section_text:
                     segments.append(
-                        ParsedSegment(
-                            text=section_text,
-                            locator=f"section: {current_section}",
-                            section=current_section,
-                        )
+                        ParsedSegment(text=section_text, locator=f"section: {current_section}")
                     )
                 current_lines = []
             if heading:
@@ -189,11 +198,7 @@ class DocumentParser:
         section_text = "\n".join(current_lines).strip()
         if section_text:
             segments.append(
-                ParsedSegment(
-                    text=section_text,
-                    locator=f"section: {current_section}",
-                    section=current_section,
-                )
+                ParsedSegment(text=section_text, locator=f"section: {current_section}")
             )
         return segments
 
@@ -206,13 +211,7 @@ class DocumentParser:
             for page_index, page in enumerate(reader.pages, start=1):
                 text = _normalize_document_text(page.extract_text() or "")
                 if text:
-                    segments.append(
-                        ParsedSegment(
-                            text=text,
-                            locator=f"page {page_index}",
-                            page_number=page_index,
-                        )
-                    )
+                    segments.append(ParsedSegment(text=text, locator=f"page {page_index}"))
         except DocumentValidationError:
             raise
         except Exception as error:
@@ -240,28 +239,16 @@ class Chunker:
         self.chunk_chars = chunk_chars
         self.overlap_chars = overlap_chars
 
-    def chunk(self, document_id: str, segments: Sequence[ParsedSegment]) -> list[ChunkDraft]:
+    def chunk(self, segments: Sequence[ParsedSegment]) -> list[ChunkDraft]:
         drafts: list[ChunkDraft] = []
         for segment in segments:
             pieces = _split_text(segment.text, self.chunk_chars, self.overlap_chars)
             for piece_index, piece in enumerate(pieces, start=1):
-                content_hash = hashlib.sha256(piece.encode("utf-8")).hexdigest()
-                ordinal = len(drafts)
-                stable_seed = f"{document_id}\0{ordinal}\0{content_hash}".encode()
-                chunk_id = hashlib.sha256(stable_seed).hexdigest()
                 locator = segment.locator
                 if len(pieces) > 1:
                     locator = f"{locator}, chunk {piece_index}/{len(pieces)}"
                 drafts.append(
-                    ChunkDraft(
-                        id=chunk_id,
-                        ordinal=ordinal,
-                        content=piece,
-                        content_hash=content_hash,
-                        locator=locator,
-                        page_number=segment.page_number,
-                        section=segment.section,
-                    )
+                    ChunkDraft(ordinal=len(drafts), content=piece, locator=locator)
                 )
         if not drafts:
             raise DocumentValidationError("Document contains no indexable text chunks")
@@ -305,15 +292,11 @@ class DocumentStore:
 
                 CREATE TABLE IF NOT EXISTS document_chunks (
                     row_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    id TEXT NOT NULL UNIQUE,
                     document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
                     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                     ordinal INTEGER NOT NULL,
                     content TEXT NOT NULL,
-                    content_hash TEXT NOT NULL,
                     locator TEXT NOT NULL,
-                    page_number INTEGER,
-                    section TEXT,
                     created_at TEXT NOT NULL,
                     UNIQUE(document_id, ordinal)
                 );
@@ -335,32 +318,6 @@ class DocumentStore:
                     embedding FLOAT[{EMBEDDING_DIMENSION}] DISTANCE_METRIC=COSINE
                 );
                 """
-            )
-            # document_chunks_vec is created fresh (just above) on any
-            # database that predates it -- its own embedding pipeline (an
-            # optional remote endpoint, or none at all) is gone, so a
-            # document already marked 'indexed' from back then has chunks
-            # but no matching vec rows, and would otherwise silently return
-            # nothing from every search forever. Flag it for reindexing
-            # instead (the original file is untouched in BlobStore, so
-            # reindexing recovers it) -- a no-op once everything's been
-            # reindexed under the current pipeline, so safe to run on every
-            # startup.
-            connection.execute(
-                """
-                UPDATE documents
-                SET status = 'failed',
-                    error_message = 'Needs reindexing (embedding backend changed)',
-                    chunk_count = 0,
-                    updated_at = ?
-                WHERE status = 'indexed'
-                  AND id NOT IN (
-                    SELECT DISTINCT dc.document_id
-                    FROM document_chunks AS dc
-                    JOIN document_chunks_vec AS v ON v.row_id = dc.row_id
-                  )
-                """,
-                (_timestamp(),),
             )
         log_event(
             logger,
@@ -461,40 +418,6 @@ class DocumentStore:
             )
         return cursor.rowcount == 1
 
-    def update_original(
-        self,
-        document_id: str,
-        *,
-        display_name: str,
-        storage_key: str,
-        media_type: str,
-        extension: str,
-        sha256: str,
-        byte_size: int,
-    ) -> bool:
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE documents
-                SET display_name = ?, storage_key = ?, media_type = ?, extension = ?,
-                    sha256 = ?, byte_size = ?, status = 'processing', error_message = NULL,
-                    chunk_count = 0, embedding_model = NULL, embedding_dimension = NULL,
-                    updated_at = ?, indexed_at = NULL
-                WHERE id = ?
-                """,
-                (
-                    display_name,
-                    storage_key,
-                    media_type,
-                    extension,
-                    sha256,
-                    byte_size,
-                    _timestamp(),
-                    document_id,
-                ),
-            )
-        return cursor.rowcount == 1
-
     def replace_chunks(
         self,
         document_id: str,
@@ -538,20 +461,15 @@ class DocumentStore:
                 cursor = connection.execute(
                     """
                     INSERT INTO document_chunks (
-                        id, document_id, project_id, ordinal, content, content_hash,
-                        locator, page_number, section, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        document_id, project_id, ordinal, content, locator, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        chunk.id,
                         document_id,
                         project_id,
                         chunk.ordinal,
                         chunk.content,
-                        chunk.content_hash,
                         chunk.locator,
-                        chunk.page_number,
-                        chunk.section,
                         now,
                     ),
                 )
@@ -615,8 +533,7 @@ class DocumentStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, document_id, project_id, ordinal, content, content_hash,
-                       locator, page_number, section
+                SELECT document_id, project_id, ordinal, content, locator
                 FROM document_chunks
                 WHERE document_id = ?
                 ORDER BY ordinal
@@ -641,8 +558,7 @@ class DocumentStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT dc.id, dc.document_id, dc.project_id, dc.ordinal, dc.content,
-                       dc.content_hash, dc.locator, dc.page_number, dc.section,
+                SELECT dc.document_id, dc.project_id, dc.ordinal, dc.content, dc.locator,
                        document.display_name, v.distance AS distance
                 FROM document_chunks_vec AS v
                 JOIN document_chunks AS dc ON dc.row_id = v.row_id
@@ -660,6 +576,248 @@ class DocumentStore:
     def _connect(self) -> sqlite3.Connection:
         return connect_database(self.database_path)
 
+
+@dataclass(frozen=True, slots=True)
+class UploadResult:
+    document: Document
+    duplicate: bool
+
+
+class DocumentService:
+    """Coordinate safe blob storage, parsing, chunking, embeddings, and
+    metadata -- the one entry point app.py's document dialog uses for
+    everything a user can do to a project's documents (upload, retry a
+    failed one, delete). The pieces above each do one job and know nothing
+    about each other; this is what puts them in order and keeps the
+    `documents` row's status honest when a step fails halfway.
+    """
+
+    def __init__(
+        self,
+        store: DocumentStore,
+        blob_store: BlobStore,
+        parser: DocumentParser,
+        chunker: Chunker,
+        embedding_gateway: EmbeddingGateway,
+    ) -> None:
+        self.store = store
+        self.blob_store = blob_store
+        self.parser = parser
+        self.chunker = chunker
+        self.embedding_gateway = embedding_gateway
+
+    @property
+    def embedding_model(self) -> str:
+        return self.embedding_gateway.model_name
+
+    async def upload(
+        self,
+        *,
+        project_id: str,
+        display_name: str,
+        media_type: str,
+        data: bytes,
+    ) -> UploadResult:
+        clean_name = Path(display_name).name.strip()
+        extension = validate_document_input(clean_name, media_type, len(data))
+        digest = hashlib.sha256(data).hexdigest()
+        duplicate = self.store.find_duplicate(project_id, digest)
+        if duplicate is not None:
+            if duplicate.status == "failed":
+                duplicate = await self.reindex(duplicate.id, project_id)
+            log_event(
+                logger,
+                logging.INFO,
+                "documents.document.duplicate",
+                project_id=project_id,
+                document_id=duplicate.id,
+                byte_size=len(data),
+            )
+            return UploadResult(document=duplicate, duplicate=True)
+        if self.store.count_documents(project_id) >= MAX_DOCUMENTS_PER_PROJECT:
+            raise DocumentValidationError(
+                f"Project document limit of {MAX_DOCUMENTS_PER_PROJECT} has been reached"
+            )
+
+        document_id = str(uuid4())
+        storage_key = self.blob_store.storage_key(project_id, document_id, extension)
+        try:
+            document = self.store.create_pending(
+                project_id=project_id,
+                display_name=clean_name,
+                storage_key=storage_key,
+                media_type=media_type.split(";", 1)[0].strip().lower(),
+                extension=extension,
+                sha256=digest,
+                byte_size=len(data),
+                document_id=document_id,
+            )
+        except sqlite3.IntegrityError:
+            raced_duplicate = self.store.find_duplicate(project_id, digest)
+            if raced_duplicate is None:
+                raise
+            return UploadResult(document=raced_duplicate, duplicate=True)
+
+        try:
+            await asyncio.to_thread(self.blob_store.write, storage_key, data)
+            indexed = await self._index(document, data)
+        except Exception as error:
+            self.store.mark_failed(document.id, str(error))
+            log_event(
+                logger,
+                logging.WARNING,
+                "documents.document.ingestion_failed",
+                project_id=project_id,
+                document_id=document.id,
+                byte_size=len(data),
+                error_type=type(error).__name__,
+            )
+            raise
+
+        log_event(
+            logger,
+            logging.INFO,
+            "documents.document.uploaded",
+            project_id=project_id,
+            document_id=indexed.id,
+            byte_size=indexed.byte_size,
+            chunk_count=indexed.chunk_count,
+            embedding_model=indexed.embedding_model,
+        )
+        return UploadResult(document=indexed, duplicate=False)
+
+    async def reindex(self, document_id: str, project_id: str) -> Document:
+        document = self._project_document(document_id, project_id)
+        self.store.mark_processing(document.id)
+        try:
+            data = await asyncio.to_thread(self.blob_store.read, document.storage_key)
+            indexed = await self._index(document, data)
+        except Exception as error:
+            self.store.mark_failed(document.id, str(error))
+            log_event(
+                logger,
+                logging.WARNING,
+                "documents.document.reindex_failed",
+                project_id=project_id,
+                document_id=document.id,
+                error_type=type(error).__name__,
+            )
+            raise
+        log_event(
+            logger,
+            logging.INFO,
+            "documents.document.reindexed",
+            project_id=project_id,
+            document_id=document.id,
+            chunk_count=indexed.chunk_count,
+            embedding_model=indexed.embedding_model,
+        )
+        return indexed
+
+    async def delete(self, document_id: str, project_id: str) -> bool:
+        deleted = self.store.delete_document(document_id, project_id)
+        if deleted is None:
+            return False
+        await asyncio.to_thread(self.blob_store.delete, deleted.storage_key)
+        log_event(
+            logger,
+            logging.INFO,
+            "documents.document.deleted",
+            project_id=project_id,
+            document_id=document_id,
+            chunk_count=deleted.chunk_count,
+        )
+        return True
+
+    async def _index(self, document: Document, data: bytes) -> Document:
+        segments = await asyncio.to_thread(
+            self.parser.parse,
+            data,
+            display_name=document.display_name,
+            media_type=document.media_type,
+        )
+        chunks = self.chunker.chunk(segments)
+        embeddings = await self._embed_chunks(chunks)
+        return self.store.replace_chunks(
+            document.id,
+            chunks,
+            embeddings=embeddings,
+            embedding_model=self.embedding_model,
+        )
+
+    async def _embed_chunks(self, chunks: Sequence[ChunkDraft]) -> list[list[float]]:
+        return await self.embedding_gateway.embed([chunk.content for chunk in chunks])
+
+    def _project_document(self, document_id: str, project_id: str) -> Document:
+        document = self.store.get_document(document_id)
+        if document is None or document.project_id != project_id:
+            raise DocumentError("Document does not exist in this project")
+        return document
+
+
+class ProjectRAGRetriever:
+    """Turn a query into ranked, citable passages from one project's
+    documents: embed the query with the same model the chunks were embedded
+    with, then let sqlite-vec find the nearest ones (see
+    DocumentStore.vector_search). Implements the same Retriever seam as
+    memory.py's ProjectMemoryStore, but is only ever reached through the
+    search_documents tool -- documents are never pulled into a turn's
+    context automatically (see tools/search_documents.py).
+    """
+
+    def __init__(self, store: DocumentStore, embedding_gateway: EmbeddingGateway) -> None:
+        self.store = store
+        self.embedding_gateway = embedding_gateway
+
+    async def retrieve(self, query: RetrievalQuery) -> list[ContextCandidate]:
+        if not query.project_id.strip():
+            raise ValueError("Project-scoped retrieval requires a project ID")
+        if query.limit <= 0 or not query.text.strip():
+            return []
+
+        try:
+            query_vectors = await self.embedding_gateway.embed([query.text])
+        except EmbeddingError as error:
+            log_event(
+                logger,
+                logging.WARNING,
+                "documents.retrieve.query_embedding_failed",
+                project_id=query.project_id,
+                query_chars=len(query.text),
+                error_type=type(error).__name__,
+            )
+            return []
+
+        matches = self.store.vector_search(query.project_id, query_vectors[0], query.limit)
+        candidates = [
+            ContextCandidate(
+                source_kind="project_document",
+                # (document, position) identifies a chunk uniquely -- see
+                # document_chunks' UNIQUE(document_id, ordinal) in documents.py.
+                source_id=f"{chunk.document_id}:{chunk.ordinal}",
+                project_id=query.project_id,
+                source_conversation_id=None,
+                text=bounded_chunk_text(chunk.content),
+                title=title,
+                locator=chunk.locator,
+                # Cosine distance, inverted so higher means "more similar" --
+                # matches the convention of every other candidate's score
+                # (see memory.py), even though it isn't a strict [0, 1] bound.
+                score=1.0 - distance,
+            )
+            for chunk, distance, title in matches
+        ]
+        log_event(
+            logger,
+            logging.INFO,
+            "documents.retrieve.completed",
+            project_id=query.project_id,
+            query_chars=len(query.text),
+            requested_limit=query.limit,
+            result_count=len(candidates),
+            embedding_model=self.embedding_gateway.model_name,
+        )
+        return candidates
 
 def validate_document_input(display_name: str, media_type: str, byte_size: int) -> str:
     clean_name = Path(display_name).name.strip()
@@ -763,15 +921,11 @@ def _document_from_row(row: sqlite3.Row) -> Document:
 
 def _chunk_from_row(row: sqlite3.Row) -> DocumentChunk:
     return DocumentChunk(
-        id=row["id"],
         document_id=row["document_id"],
         project_id=row["project_id"],
         ordinal=int(row["ordinal"]),
         content=row["content"],
-        content_hash=row["content_hash"],
         locator=row["locator"],
-        page_number=row["page_number"],
-        section=row["section"],
     )
 
 

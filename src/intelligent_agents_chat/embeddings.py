@@ -22,10 +22,7 @@ from intelligent_agents_chat.database import PROJECT_ROOT
 from intelligent_agents_chat.logging_config import log_event
 
 
-# A small, general-purpose sentence embedding model -- English only, but the
-# standard lightweight choice for this kind of retrieval (384 dimensions,
-# ~90 MB). document_chunks_vec's schema (see documents.py) hardcodes this
-# dimension; changing the model means migrating that column too.
+# A small, general-purpose sentence embedding model, English only, 384 dimensions
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_DIMENSION = 384
 EMBEDDING_CACHE_DIR = PROJECT_ROOT / ".data" / "embedding-models"
@@ -122,6 +119,6 @@ def create_embedding_gateway() -> EmbeddingGateway:
     """The one embedding gateway the whole app shares -- always local and
     always available. Unlike the old remote-endpoint gateway this replaces,
     there's no "unconfigured, fall back to lexical search" state any more
-    (see rag.py, which now requires embeddings for every retrieval).
+    (see documents.py, which now requires embeddings for every retrieval).
     """
     return LocalEmbeddingGateway()

@@ -18,7 +18,6 @@ from intelligent_agents_chat.models import ModelProfile
 
 API_KEY = "not-needed"
 REQUEST_TIMEOUT_SECONDS = 120.0
-CONTROL_REQUEST_TIMEOUT_SECONDS = 60.0
 HEALTH_CHECK_TIMEOUT_SECONDS = 3.0
 MAX_TOKENS = 1024
 THINKING_MAX_TOKENS = 8192
@@ -90,93 +89,6 @@ class ContentDelta:
 
 class VLLMGateway:
     """Create streamed replies with the selected OpenAI-compatible profile."""
-
-    async def complete_control(
-        self,
-        profile: ModelProfile,
-        messages: Sequence[dict[str, str]],
-        *,
-        purpose: str,
-        request_id: str | None = None,
-        max_tokens: int = 384,
-    ) -> str:
-        """Run a short non-streaming control request with model reasoning disabled."""
-        if max_tokens <= 0:
-            raise ValueError("Control max_tokens must be positive")
-        started_at = monotonic()
-        client: AsyncOpenAI | None = None
-        context = {
-            "request_id": request_id,
-            "purpose": purpose,
-            "profile_key": profile.key,
-            "model_name": profile.model,
-            "endpoint": sanitized_endpoint(profile.base_url),
-            "max_tokens": max_tokens,
-            "input_message_count": len(messages),
-            "input_chars": sum(len(message.get("content", "")) for message in messages),
-        }
-        log_event(logger, logging.INFO, "llm.control.started", **context)
-        outcome = "started"
-        output = ""
-        finish_reason: str | None = None
-        try:
-            client = AsyncOpenAI(
-                base_url=profile.base_url,
-                api_key=API_KEY,
-                timeout=CONTROL_REQUEST_TIMEOUT_SECONDS,
-            )
-            extra_body: dict[str, object] = {}
-            if profile.supports_thinking:
-                extra_body["chat_template_kwargs"] = {"enable_thinking": False}
-            if profile.reasoning_effort is not None:
-                extra_body["reasoning_effort"] = profile.reasoning_effort
-            response = await client.chat.completions.create(
-                model=profile.model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.0,
-                stream=False,
-                extra_body=extra_body or None,
-            )
-            if not response.choices:
-                raise LLMError(f"{profile.label} returned no control response.")
-            choice = response.choices[0]
-            finish_reason = str(choice.finish_reason) if choice.finish_reason is not None else None
-            output = choice.message.content or ""
-            if not output.strip():
-                raise LLMError(f"{profile.label} returned an empty control response.")
-            outcome = "completed"
-            return output
-        except asyncio.CancelledError:
-            outcome = "cancelled"
-            raise
-        except (APIConnectionError, APITimeoutError) as error:
-            outcome = "connection_error"
-            raise LLMError(
-                f"Could not reach the {profile.label} model endpoint for {purpose}."
-            ) from error
-        except APIStatusError as error:
-            outcome = "http_error"
-            raise LLMError(
-                f"The {profile.label} model endpoint returned HTTP {error.status_code} for "
-                f"{purpose}."
-            ) from error
-        except Exception:
-            outcome = "control_error"
-            raise
-        finally:
-            if client is not None:
-                await client.close()
-            log_event(
-                logger,
-                logging.INFO,
-                "llm.control.finished",
-                **context,
-                outcome=outcome,
-                output_chars=len(output),
-                finish_reason=finish_reason,
-                duration_ms=round((monotonic() - started_at) * 1_000, 2),
-            )
 
     async def stream_reply(
         self,

@@ -1114,64 +1114,6 @@ def index() -> None:
                     )
                 render_documents()
 
-            async def replace_document(document_id: str) -> None:
-                document = document_store.get_document(document_id)
-                if document is None or document.project_id != project.id:
-                    ui.notify("This document no longer exists.", type="warning")
-                    render_documents()
-                    return
-
-                with (
-                    ui.dialog() as replace_dialog,
-                    ui.card().classes("w-[34rem] max-w-full p-6 gap-5"),
-                ):
-                    ui.label(f'Replace "{document.display_name}"').classes("text-xl font-bold")
-                    ui.label(
-                        "The generated document ID stays stable; old chunks and embeddings are "
-                        "replaced atomically after the new file is processed."
-                    ).classes("text-sm text-slate-500")
-
-                    async def handle_replacement(event) -> None:
-                        file = event.file
-                        try:
-                            replacement = await document_service.replace(
-                                document.id,
-                                project.id,
-                                display_name=file.name,
-                                media_type=file.content_type,
-                                data=await file.read(),
-                            )
-                        except Exception as error:
-                            page_event(
-                                logging.WARNING,
-                                "ui.documents.replace_failed",
-                                document_id=document.id,
-                                error_type=type(error).__name__,
-                            )
-                            ui.notify(str(error), type="negative", multi_line=True, timeout=8000)
-                            return
-                        page_event(
-                            logging.INFO,
-                            "ui.documents.replaced",
-                            document_id=document.id,
-                            chunk_count=replacement.chunk_count,
-                        )
-                        replace_dialog.close()
-                        render_documents()
-                        ui.notify(f'Replaced "{replacement.display_name}".', type="positive")
-
-                    replacement_uploader = ui.upload(
-                        label="Choose replacement",
-                        max_file_size=10 * 1024 * 1024,
-                        max_files=1,
-                        auto_upload=True,
-                        on_upload=handle_replacement,
-                    ).props(f"accept={DOCUMENT_UPLOAD_ACCEPT} flat bordered")
-                    replacement_uploader.classes("document-uploader")
-                    with ui.row().classes("w-full justify-end"):
-                        ui.button("Cancel", on_click=replace_dialog.close).props("flat no-caps")
-                replace_dialog.open()
-
             async def confirm_delete_document(document_id: str) -> None:
                 document = document_store.get_document(document_id)
                 if document is None or document.project_id != project.id:
@@ -1246,16 +1188,17 @@ def index() -> None:
                                         "document-error text-sm"
                                     )
                                 with ui.row().classes("gap-2"):
-                                    ui.button(
-                                        "Retry" if document.status == "failed" else "Re-index",
-                                        icon="refresh",
-                                        on_click=partial(reindex_document, document.id),
-                                    ).props("flat dense no-caps")
-                                    ui.button(
-                                        "Replace",
-                                        icon="swap_horiz",
-                                        on_click=partial(replace_document, document.id),
-                                    ).props("flat dense no-caps")
+                                    # Only for a document that actually failed:
+                                    # re-running a successful one re-reads the
+                                    # same file through the same deterministic
+                                    # pipeline and the same pinned model, so it
+                                    # can only ever produce what's already there.
+                                    if document.status == "failed":
+                                        ui.button(
+                                            "Retry",
+                                            icon="refresh",
+                                            on_click=partial(reindex_document, document.id),
+                                        ).props("flat dense no-caps")
                                     ui.button(
                                         "Delete",
                                         icon="delete_outline",

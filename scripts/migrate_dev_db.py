@@ -18,12 +18,11 @@ unused `source_kind`/`content_hash` columns -- source_kind was always the
 same hardcoded literal and content_hash was never actually read back
 anywhere (rebuild_conversation's upsert guard compares `content` itself),
 so both were dead weight from the start; safe to drop outright since memory
-entries are derived data the app rebuilds automatically on startup).
-Document/chunk tables (documents.py's own) aren't handled here --
-DocumentStore.initialize() migrates those itself, automatically, every time
-the app starts. If database.py's schema changes again later, extend or
-replace the migration below to match -- it's a
-one-off dev tool, not a general migration framework.
+entries are derived data the app rebuilds automatically on startup, and
+finally rebuilding `document_chunks` without its own unused id/content_hash/
+page_number/section columns). If database.py's or documents.py's schema
+changes again later, extend or replace the migration below to match -- it's
+a one-off dev tool, not a general migration framework.
 """
 
 from __future__ import annotations
@@ -193,6 +192,51 @@ def migrate(database_path: Path) -> None:
                     "upsert guard compares `content` itself) ..."
                 )
                 connection.execute(f"ALTER TABLE memory_entries DROP COLUMN {stray_column}")
+
+        # Same idea for document chunks: `id` (a content-derived hash) and
+        # `content_hash` were never read back, and page_number/section only
+        # ever fed the `locator` string that's stored right next to them.
+        # Rebuilt rather than dropped column by column so row_id survives
+        # exactly -- document_chunks_vec joins on it (see documents.py), so
+        # keeping it means the existing embeddings stay valid and nothing
+        # has to be re-embedded.
+        chunk_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(document_chunks)")
+        }
+        if chunk_columns & {"id", "content_hash", "page_number", "section"}:
+            print(
+                "Rebuilding document_chunks without the unused id/content_hash/"
+                "page_number/section columns (embeddings are kept as they are) ..."
+            )
+            connection.executescript(
+                """
+                ALTER TABLE document_chunks RENAME TO document_chunks_old;
+
+                CREATE TABLE document_chunks (
+                    row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    ordinal INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    locator TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(document_id, ordinal)
+                );
+
+                INSERT INTO document_chunks (
+                    row_id, document_id, project_id, ordinal, content, locator, created_at
+                )
+                SELECT row_id, document_id, project_id, ordinal, content, locator, created_at
+                FROM document_chunks_old;
+
+                DROP TABLE document_chunks_old;
+
+                CREATE INDEX IF NOT EXISTS document_chunks_document_idx
+                    ON document_chunks(document_id, ordinal);
+                CREATE INDEX IF NOT EXISTS document_chunks_project_idx
+                    ON document_chunks(project_id, document_id);
+                """
+            )
 
         connection.commit()
         message_count = connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0]

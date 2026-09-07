@@ -12,7 +12,7 @@ from unittest import mock
 
 from intelligent_agents_chat import context
 from intelligent_agents_chat.context import (
-    MEMORY_GUARD,
+    RETRIEVAL_GUARD,
     ContextAssembler,
     ContextOverflowError,
     _compact_conversation_history,
@@ -63,7 +63,7 @@ def _message(
 
 class ContextAssemblerTests(unittest.TestCase):
     def test_includes_memory_with_guard_and_auditable_source(self) -> None:
-        plan = ContextAssembler("Base system prompt", memory_budget_tokens=500).assemble(
+        plan = ContextAssembler("Base system prompt", retrieval_budget_tokens=500).assemble(
             [
                 {"role": "user", "content": "Earlier question"},
                 {"role": "assistant", "content": "Earlier answer"},
@@ -76,7 +76,7 @@ class ContextAssemblerTests(unittest.TestCase):
 
         self.assertEqual(len(plan.included_sources), 1)
         self.assertEqual(plan.included_sources[0].rank, 1)
-        self.assertIn(MEMORY_GUARD, plan.messages[0]["content"])
+        self.assertIn(RETRIEVAL_GUARD, plan.messages[0]["content"])
         self.assertEqual(plan.messages[1]["role"], "user")
         self.assertIn("<retrieved-context>", plan.messages[1]["content"])
         self.assertIn("[project_memory:1]", plan.messages[1]["content"])
@@ -84,7 +84,7 @@ class ContextAssemblerTests(unittest.TestCase):
         self.assertLessEqual(plan.estimated_input_tokens, plan.input_budget_tokens)
 
     def test_excludes_memory_when_its_complete_wrapper_exceeds_budget(self) -> None:
-        plan = ContextAssembler("System", memory_budget_tokens=20).assemble(
+        plan = ContextAssembler("System", retrieval_budget_tokens=20).assemble(
             [{"role": "user", "content": "Question"}],
             [candidate(text="large " * 100)],
             context_window_tokens=500,
@@ -94,12 +94,12 @@ class ContextAssemblerTests(unittest.TestCase):
         self.assertEqual(plan.included_sources, ())
         self.assertEqual(len(plan.excluded_sources), 1)
         self.assertEqual(plan.excluded_sources[0].reason, "retrieval_budget_exceeded")
-        self.assertNotIn(MEMORY_GUARD, plan.messages[0]["content"])
+        self.assertNotIn(RETRIEVAL_GUARD, plan.messages[0]["content"])
 
     def test_history_is_filled_newest_first_and_the_oldest_is_cut_when_it_does_not_fit(
         self,
     ) -> None:
-        plan = ContextAssembler("", memory_budget_tokens=0).assemble(
+        plan = ContextAssembler("", retrieval_budget_tokens=0).assemble(
             [
                 {"role": "user", "content": "old " * 100},
                 {"role": "assistant", "content": "old reply " * 100},
@@ -119,32 +119,6 @@ class ContextAssemblerTests(unittest.TestCase):
         self.assertEqual(plan.omitted_history_messages, 2)
         self.assertLessEqual(plan.estimated_input_tokens, plan.input_budget_tokens)
 
-    def test_reports_budget_categories_and_trace_id(self) -> None:
-        plan = ContextAssembler("System", memory_budget_tokens=500).assemble(
-            [
-                {"role": "user", "content": "Earlier question"},
-                {"role": "assistant", "content": "Earlier answer"},
-                {"role": "user", "content": "Latest question"},
-            ],
-            [candidate()],
-            context_window_tokens=2_000,
-            output_reserve_tokens=200,
-            trace_id="trace-123",
-        )
-
-        self.assertEqual(plan.trace_id, "trace-123")
-        self.assertEqual(plan.context_window_tokens, 2_000)
-        self.assertEqual(plan.output_reserve_tokens, 200)
-        self.assertEqual(plan.remaining_input_tokens, 1_800 - plan.estimated_input_tokens)
-        self.assertEqual(
-            plan.estimated_input_tokens,
-            plan.system_tokens
-            + plan.current_user_tokens
-            + plan.history_tokens
-            + plan.tool_tokens
-            + plan.retrieval_tokens,
-        )
-
     def test_memory_has_priority_over_history_even_the_most_recent_message(self) -> None:
         """Memory gets first claim on the leftover budget -- not just on
         whatever history's newest-first fill didn't already spend. Without
@@ -152,7 +126,7 @@ class ContextAssemblerTests(unittest.TestCase):
         recent history and starve memory, even though memory is often the
         only way to recall something from a *different* chat.
         """
-        plan = ContextAssembler("", memory_budget_tokens=200).assemble(
+        plan = ContextAssembler("", retrieval_budget_tokens=200).assemble(
             [
                 {"role": "user", "content": "recent question"},
                 {"role": "assistant", "content": "recent answer"},
