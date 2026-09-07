@@ -1,8 +1,8 @@
 :root {
     --ink: #172033;
     --muted: #657089;
-    --primary: #635bff;
-    --primary-dark: #4b43df;
+    --primary: #c0bdf8;
+    --primary-dark: #a7a5d8;
     --surface: rgba(255, 255, 255, 0.88);
     --surface-solid: #ffffff;
     --line: rgba(104, 117, 147, 0.16);
@@ -277,6 +277,19 @@ body {
     margin-bottom: 0;
 }
 
+/* The plain-text counterpart to .chat-markdown (see _chat_plain_text in
+   app.py) -- same sizing/wrapping, but white-space: pre-wrap instead of
+   Markdown's own paragraph/line handling, since this is a single text node,
+   not parsed HTML. */
+.chat-plain-text {
+    display: block;
+    min-width: 0;
+    max-width: min(42rem, 76vw);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    line-height: 1.58;
+}
+
 .chat-markdown p,
 .chat-markdown ul,
 .chat-markdown ol,
@@ -392,182 +405,6 @@ body {
     background: var(--surface-solid) !important;
 }
 
-.memory-sources {
-    width: min(32rem, 100%);
-    margin-top: .65rem;
-    border: 1px solid var(--line);
-    border-radius: .7rem;
-    color: var(--muted);
-    background: rgba(99, 91, 255, .035);
-    font-size: .78rem;
-}
-
-.context-inspector {
-    width: min(36rem, 100%);
-    margin-top: .7rem;
-    border: 1px solid rgba(99, 91, 255, .2);
-    border-radius: .8rem;
-    color: var(--muted);
-    background: linear-gradient(145deg, rgba(99, 91, 255, .065), rgba(38, 198, 218, .035));
-    font-size: .78rem;
-}
-
-.context-inspector > .q-expansion-item__container > .q-item {
-    min-height: 2.5rem;
-}
-
-.context-inspector .q-expansion-item__content {
-    display: flex;
-    flex-direction: column;
-    gap: .75rem;
-    padding: .15rem .85rem 1rem;
-}
-
-.context-usage-row {
-    width: 100%;
-    justify-content: space-between;
-    gap: .75rem;
-}
-
-.context-usage-label {
-    color: var(--ink);
-    font-weight: 700;
-}
-
-.context-remaining-label {
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
-}
-
-.context-progress {
-    width: 100%;
-}
-
-.context-metric-grid,
-.context-category-grid {
-    display: grid;
-    width: 100%;
-    gap: .55rem;
-}
-
-.context-metric-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.context-category-grid {
-    grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
-}
-
-.context-metric {
-    min-width: 0;
-    gap: .1rem;
-    padding: .55rem .6rem;
-    border: 1px solid rgba(99, 91, 255, .12);
-    border-radius: .6rem;
-    background: rgba(255, 255, 255, .68);
-}
-
-.context-metric-label,
-.context-category-label {
-    color: var(--muted);
-    font-size: .66rem;
-    font-weight: 650;
-}
-
-.context-metric-value {
-    color: var(--ink);
-    font-size: .9rem;
-    font-weight: 760;
-    font-variant-numeric: tabular-nums;
-}
-
-.context-section-title {
-    margin-top: .15rem;
-    color: var(--ink);
-    font-size: .72rem;
-    font-weight: 730;
-}
-
-.context-category {
-    min-width: 0;
-    flex-wrap: nowrap;
-    align-items: center;
-    gap: .45rem;
-    padding: .4rem .5rem;
-    border-radius: .55rem;
-    background: rgba(255, 255, 255, .52);
-}
-
-.context-category .q-icon {
-    color: var(--primary);
-}
-
-.context-category-value {
-    color: var(--ink);
-    font-size: .72rem;
-    font-weight: 650;
-    font-variant-numeric: tabular-nums;
-}
-
-.context-selection-row {
-    width: 100%;
-    gap: .4rem;
-}
-
-.context-selection-chip {
-    padding: .22rem .48rem;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    color: var(--muted);
-    background: rgba(255, 255, 255, .65);
-    font-size: .65rem;
-}
-
-.context-exclusion-row {
-    width: 100%;
-    flex-wrap: nowrap;
-    align-items: flex-start;
-    gap: .45rem;
-    padding: .4rem .5rem;
-    border-left: 2px solid rgba(209, 79, 104, .4);
-    background: rgba(209, 79, 104, .035);
-}
-
-.context-exclusion-row .q-icon {
-    color: #b3435a;
-}
-
-.context-exclusion-title {
-    max-width: 28rem;
-    overflow: hidden;
-    color: var(--ink);
-    font-size: .72rem;
-    font-weight: 680;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.context-exclusion-detail,
-.context-estimator,
-.context-trace-id {
-    color: var(--muted);
-    font-size: .65rem;
-    line-height: 1.45;
-}
-
-.context-trace-id {
-    overflow-wrap: anywhere;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.memory-source-row {
-    width: 100%;
-    flex-wrap: nowrap;
-    align-items: flex-start;
-    gap: .5rem;
-    padding: .25rem 0;
-}
-
 .q-tooltip {
     /* Preserves literal \n line breaks in tooltip text (e.g. the context-usage
     icon's multi-line breakdown) while still collapsing runs of whitespace and
@@ -580,34 +417,6 @@ body {
     margin-top: .5rem;
     color: var(--muted);
     cursor: help;
-}
-
-.memory-source-title {
-    max-width: 26rem;
-    overflow: hidden;
-    color: var(--ink);
-    font-size: .78rem;
-    font-weight: 650;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.memory-source-locator {
-    color: var(--muted);
-    font-size: .7rem;
-}
-
-.memory-source-excerpt {
-    display: -webkit-box;
-    max-width: 27rem;
-    margin-top: .3rem;
-    overflow: hidden;
-    color: var(--muted);
-    font-size: .72rem;
-    line-height: 1.45;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 4;
-    white-space: pre-wrap;
 }
 
 .memory-dialog {
@@ -728,6 +537,155 @@ body {
 
 .tool-trace .chat-markdown:last-child {
     margin-bottom: 0;
+}
+
+/* One vertical line of steps inside the trace (reasoning/tool/note, in
+   chronological order) -- the ::before draws one continuous connecting
+   line behind every step's dot, so a turn with many rounds reads as a
+   single timeline rather than a stack of unrelated boxes. */
+.trace-timeline {
+    position: relative;
+    width: 100%;
+    gap: .65rem;
+    padding-left: 1.3rem;
+}
+
+.trace-timeline::before {
+    content: "";
+    position: absolute;
+    left: .34rem;
+    top: .4rem;
+    bottom: .4rem;
+    width: 2px;
+    background: var(--line);
+}
+
+.trace-step {
+    position: relative;
+    width: 100%;
+    align-items: flex-start;
+    flex-wrap: nowrap;
+    gap: 0;
+}
+
+.trace-step-dot {
+    position: absolute;
+    left: -1.3rem;
+    top: .2rem;
+    width: .5rem;
+    height: .5rem;
+    border-radius: 999px;
+    background: var(--muted);
+    box-shadow: 0 0 0 3px var(--surface-solid);
+}
+
+.trace-step-dot.reasoning {
+    background: #8b7ff0;
+}
+
+.trace-step-dot.tool {
+    background: var(--primary);
+}
+
+.trace-step-dot.note {
+    background: #9aa2b5;
+}
+
+.trace-step-dot.memory {
+    background: #d9a441;
+}
+
+.trace-step-body {
+    width: 100%;
+    min-width: 0;
+}
+
+.trace-step-title {
+    color: var(--ink);
+    font-size: .78rem;
+    font-weight: 700;
+}
+
+.trace-step-note-text {
+    color: var(--muted);
+    font-size: .8rem;
+    font-style: italic;
+}
+
+/* Project-memory sources (see _add_memory_trace_step): a list of
+   independent items, each with its own click-to-reveal excerpt -- unlike
+   every other trace step, this one isn't a single fixed-height preview +
+   popup, so no .trace-step-preview here. */
+.memory-source-list {
+    width: 100%;
+}
+
+.memory-source-header {
+    color: var(--muted);
+    font-size: .78rem;
+}
+
+.memory-source-expansion {
+    border: 1px solid var(--line);
+    border-radius: .5rem;
+    background: rgba(255, 255, 255, .55);
+}
+
+.memory-source-expansion .q-item {
+    min-height: 1.6rem;
+    padding: .35rem .65rem;
+    color: var(--muted);
+    font-size: .78rem;
+}
+
+.memory-source-expansion .q-expansion-item__content {
+    padding: 0 .65rem .55rem;
+}
+
+.memory-source-expansion .chat-plain-text {
+    font-size: .8rem;
+}
+
+/* A fixed-height glimpse of a step's content -- click opens the full text
+   in a popup (see trace-step-dialog) instead of growing the trace itself
+   for one long tool result or reasoning block. */
+.trace-step-preview {
+    position: relative;
+    max-height: 5.5rem;
+    overflow: hidden;
+    padding: .5rem .65rem;
+    border: 1px solid var(--line);
+    border-radius: .6rem;
+    background: rgba(255, 255, 255, .55);
+    cursor: pointer;
+    transition: border-color .15s ease;
+}
+
+.trace-step-preview:hover {
+    border-color: var(--primary);
+}
+
+.trace-step-preview::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1.6rem;
+    background: linear-gradient(to bottom, transparent, var(--surface-solid));
+    pointer-events: none;
+}
+
+.trace-step-preview .chat-markdown,
+.trace-step-preview .chat-plain-text {
+    font-size: .8rem;
+}
+
+.trace-step-dialog {
+    width: min(42rem, 92vw);
+    max-height: 82vh;
+    overflow-y: auto;
+    padding: 1.3rem;
 }
 
 .empty-state {

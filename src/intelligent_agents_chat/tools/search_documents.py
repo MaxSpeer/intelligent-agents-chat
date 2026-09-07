@@ -55,10 +55,14 @@ _SCHEMA: dict = {
 
 
 def _format_results(results) -> str:
-    blocks = []
-    for result in results:
-        blocks.append(f"[{result.title}] ({result.locator})\n{result.text}")
-    return "\n\n".join(blocks)
+    """Markdown for the model to read (see chat.py's format_tool_result_entry
+    -- tool output goes through the real Markdown renderer, tables and all),
+    one heading per passage so multiple results stay visually separated
+    instead of running together: a ### heading for the title/locator, then
+    the passage text, then a --- rule before the next one.
+    """
+    blocks = [f"### {result.title}\n{result.locator}\n\n{result.text}" for result in results]
+    return "\n\n---\n\n".join(blocks)
 
 
 def build_tool(project_id: str) -> Tool:

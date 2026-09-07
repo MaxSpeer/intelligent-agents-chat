@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
 import logging
 from pathlib import Path
 import re
@@ -120,7 +119,6 @@ class ProjectMemoryStore:
                     connection.execute("DELETE FROM memory_entries WHERE id = ?", (existing["id"],))
 
             for start_id, end_id, content in chunks:
-                content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 # rebuild_conversation reprocesses the whole conversation on every
                 # call (see the module docstring's rationale), so most chunks here
                 # are unchanged from the previous rebuild. The WHERE guard keeps
@@ -134,15 +132,13 @@ class ProjectMemoryStore:
                     """
                     INSERT INTO memory_entries (
                         project_id, source_conversation_id, source_message_start_id,
-                        source_message_end_id, source_kind, content, content_hash,
-                        enabled, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, 'conversation_turn', ?, ?, 1, ?, ?)
+                        source_message_end_id, content, enabled, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
                     ON CONFLICT (
                         source_conversation_id, source_message_start_id, source_message_end_id
                     ) DO UPDATE SET
                         project_id = excluded.project_id,
                         content = excluded.content,
-                        content_hash = excluded.content_hash,
                         updated_at = excluded.updated_at
                     WHERE memory_entries.content IS NOT excluded.content
                     """,
@@ -152,7 +148,6 @@ class ProjectMemoryStore:
                         start_id,
                         end_id,
                         content,
-                        content_hash,
                         now,
                         now,
                     ),

@@ -28,6 +28,7 @@ from intelligent_agents_chat.models import MODEL_PROFILES, ModelProfile
 from intelligent_agents_chat.tools import (
     Tool,
     calculator,
+    recall_tool_output,
     search_documents,
     subagent,
     webfetch,
@@ -40,11 +41,13 @@ logger = logging.getLogger(__name__)
 PROFILE_STATUS_POLL_INTERVAL_SECONDS = 15.0
 profile_status: dict[str, bool | None] = {profile.key: None for profile in MODEL_PROFILES}
 
-# Every tool available regardless of which conversation is asking, self-
-# registered by its module. Add a new tool by writing a `tools/<name>.py`
-# that exports a `Tool` (see tools/calculator.py), then listing it here --
-# nothing else in this file needs to change. search_documents is deliberately
-# NOT here: it needs a project_id bound per request (see stream_reply).
+# Every tool available regardless of which conversation/project is asking,
+# self-registered by its module. Add a new tool by writing a
+# `tools/<name>.py` that exports a `Tool` (see tools/calculator.py), then
+# listing it here -- nothing else in this file needs to change. Not
+# search_documents (needs a project_id bound per request) or
+# recall_tool_output (needs a conversation to scope itself to) -- both are
+# built fresh per turn instead (see stream_reply).
 TOOLS: dict[str, Tool] = {
     tool.name: tool
     for tool in (
@@ -161,24 +164,33 @@ async def _execute_tool(name: str, arguments: dict, tools: dict[str, Tool]) -> s
         return f"Error: tool '{name}' failed unexpectedly: {error}"
 
 
-def format_reasoning_entry(text: str) -> str:
-    """Markdown for one reasoning block, as a collapsible accordion entry.
-
-    Used both live (while `text` is still streaming) and when replaying a
-    finished conversation from the DB -- keeping the formatting in one place
-    is the whole point, so the two views always look identical.
-    """
-    return f"**Thinking**\n\n{text}"
-
-
 def format_tool_call_entry(call: dict) -> str:
-    """Markdown for one tool call, as a collapsible accordion entry."""
-    return f"🔧 **{call['name']}**\n\n```\n{call['arguments']}\n```"
+    """Plain text (deliberately never Markdown -- see app.py's _add_trace_step
+    `prefix` parameter) for one tool call's name and arguments: a fixed
+    header shown above the result, which does go through Markdown (see
+    format_tool_result_entry) since tool/argument names routinely contain
+    underscores, which Markdown misreads as emphasis.
+    """
+    return f"🔧 {call['name']} {call['arguments']}"
 
 
-def format_tool_result_entry(name: str, result: str) -> str:
-    """Markdown for one tool result, as a collapsible accordion entry."""
-    return f"**{name}** → {result}"
+def format_tool_result_entry(result: str | None, *, still_running: bool = False) -> str:
+    """Markdown for a tool call's result -- the half of a trace step that can
+    actually contain structure worth rendering (tables, code, ...), unlike
+    the call header (see format_tool_call_entry, plain text on purpose).
+
+    Used both live (while `result` may still be None, mid-call) and when
+    replaying a finished conversation from the DB -- keeping the formatting
+    in one place is the whole point, so the two views always look identical.
+    still_running distinguishes "still executing" (live) from "the turn was
+    stopped before this call finished" (a genuinely missing result, only
+    possible on replay).
+    """
+    if result is not None:
+        return result
+    if still_running:
+        return "*(waiting for the result...)*"
+    return "*(no result -- generation was stopped before this call finished)*"
 
 
 async def stream_reply(
@@ -188,6 +200,7 @@ async def stream_reply(
     request_id: str | None = None,
     thinking_enabled: bool = False,
     project_id: str,
+    conversation_id: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Stream the assistant's reply, executing any tool calls the model makes.
 
@@ -196,11 +209,18 @@ async def stream_reply(
     `ToolResultEvent` once per executed call, and a final `UsageEvent` (see its
     docstring) once the turn's real answer is ready.
 
-    project_id scopes the one request-specific tool, search_documents (see
-    its module docstring) -- built fresh here, alongside the static TOOLS,
-    rather than the model ever supplying which project to search itself.
+    project_id scopes the one project-bound tool, search_documents (see its
+    module docstring) -- built fresh here, alongside the static TOOLS, rather
+    than the model ever supplying which project to search itself.
+
+    conversation_id scopes recall_tool_output to this conversation, built
+    fresh for this call only (see tools/recall_tool_output.py) -- optional
+    only so tests that don't care about it can omit it; every real caller
+    (app.py's send_message) always has one.
     """
     tools_for_turn = {**TOOLS, "search_documents": search_documents.build_tool(project_id)}
+    if conversation_id is not None:
+        tools_for_turn["recall_tool_output"] = recall_tool_output.build_tool(conversation_id)
     tool_schemas = (
         [tool.schema for tool in tools_for_turn.values()] if profile.supports_tools else None
     )

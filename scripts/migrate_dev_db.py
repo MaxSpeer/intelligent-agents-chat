@@ -13,11 +13,17 @@ This script is written for the schema changes it currently knows about
 memory_enabled off `conversations` and onto the single shared `app_settings`
 row, then dropping `rag_enabled` and `message_adaptive_rag_runs` now that
 project-document retrieval is a tool instead of an automatic,
-per-conversation-toggle pipeline). Document/chunk tables (documents.py's
-own) aren't handled here -- DocumentStore.initialize() migrates those
-itself, automatically, every time the app starts. If database.py's schema
-changes again later, extend or replace the migration below to match -- it's
-a one-off dev tool, not a general migration framework.
+per-conversation-toggle pipeline, and finally dropping `memory_entries`'s
+unused `source_kind`/`content_hash` columns -- source_kind was always the
+same hardcoded literal and content_hash was never actually read back
+anywhere (rebuild_conversation's upsert guard compares `content` itself),
+so both were dead weight from the start; safe to drop outright since memory
+entries are derived data the app rebuilds automatically on startup).
+Document/chunk tables (documents.py's own) aren't handled here --
+DocumentStore.initialize() migrates those itself, automatically, every time
+the app starts. If database.py's schema changes again later, extend or
+replace the migration below to match -- it's a
+one-off dev tool, not a general migration framework.
 """
 
 from __future__ import annotations
@@ -172,6 +178,21 @@ def migrate(database_path: Path) -> None:
                 "in the normal tool-call trace instead ..."
             )
             connection.execute("DROP TABLE message_adaptive_rag_runs")
+
+        # Empty (not missing) if the table doesn't exist yet -- nothing to do; a
+        # fresh CREATE TABLE IF NOT EXISTS already matches the current schema.
+        memory_entries_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(memory_entries)")
+        }
+        for stray_column in ("source_kind", "content_hash"):
+            if stray_column in memory_entries_columns:
+                print(
+                    f"Dropping memory_entries.{stray_column} -- unused: source_kind "
+                    "was always the same hardcoded literal and content_hash was "
+                    "never actually read back anywhere (rebuild_conversation's "
+                    "upsert guard compares `content` itself) ..."
+                )
+                connection.execute(f"ALTER TABLE memory_entries DROP COLUMN {stray_column}")
 
         connection.commit()
         message_count = connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0]

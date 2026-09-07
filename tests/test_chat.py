@@ -11,7 +11,6 @@ from intelligent_agents_chat.chat import (
     TextChunk,
     UsageEvent,
     _execute_tool,
-    format_reasoning_entry,
     format_tool_call_entry,
     format_tool_result_entry,
     stream_reply,
@@ -26,9 +25,6 @@ class FormatEntryTests(unittest.TestCase):
     see app.py's send_message and render_assistant_turn.
     """
 
-    def test_format_reasoning_entry_includes_the_full_text(self) -> None:
-        self.assertIn("because 1+1=2", format_reasoning_entry("because 1+1=2"))
-
     def test_format_tool_call_entry_includes_name_and_arguments(self) -> None:
         call = {"id": "call_1", "name": "calculator", "arguments": '{"expression": "1+1"}'}
 
@@ -37,11 +33,33 @@ class FormatEntryTests(unittest.TestCase):
         self.assertIn("calculator", entry)
         self.assertIn('{"expression": "1+1"}', entry)
 
-    def test_format_tool_result_entry_includes_name_and_result(self) -> None:
-        entry = format_tool_result_entry("calculator", "2")
+    def test_format_tool_call_entry_is_never_markdown(self) -> None:
+        """Tool/argument names routinely contain underscores, which Markdown
+        misreads as emphasis -- the call header is rendered as plain text
+        (see app.py's _add_trace_step), so it must never contain Markdown
+        emphasis syntax that could get misread once seen through the
+        result's Markdown renderer.
+        """
+        call = {"id": "call_1", "name": "web_search", "arguments": "{}"}
 
-        self.assertIn("calculator", entry)
-        self.assertIn("2", entry)
+        entry = format_tool_call_entry(call)
+
+        self.assertNotIn("*", entry)
+
+    def test_format_tool_result_entry_returns_the_result_as_is(self) -> None:
+        entry = format_tool_result_entry("2")
+
+        self.assertEqual(entry, "2")
+
+    def test_format_tool_result_entry_still_running_has_no_result_yet(self) -> None:
+        entry = format_tool_result_entry(None, still_running=True)
+
+        self.assertIn("waiting", entry)
+
+    def test_format_tool_result_entry_missing_result_reports_it_was_stopped(self) -> None:
+        entry = format_tool_result_entry(None)
+
+        self.assertIn("stopped", entry)
 
 
 class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
@@ -57,7 +75,8 @@ class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(tool.schema["function"]["name"], tool.name)
 
     async def test_dispatch_reaches_the_real_tool(self) -> None:
-        self.assertEqual(await _execute_tool("calculator", {"expression": "1+1"}, TOOLS), "2")
+        result = await _execute_tool("calculator", {"expression": "1+1"}, TOOLS)
+        self.assertEqual(result, "2")
 
     async def test_unknown_tool_name_is_a_reported_error_not_a_crash(self) -> None:
         result = await _execute_tool("no-such-tool", {}, TOOLS)
@@ -73,6 +92,36 @@ class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.startswith("Error:"))
         self.assertIn("boom", result)
+
+    async def test_recall_tool_output_is_offered_only_when_a_conversation_id_is_given(
+        self,
+    ) -> None:
+        """recall_tool_output needs a conversation to scope itself to (see
+        stream_reply) -- built fresh per turn, not part of the static TOOLS
+        registry above, so it must only show up in the schema the model
+        actually sees once a real conversation_id is passed in.
+        """
+        profile = ModelProfile(
+            key="tools", label="Tools", base_url="http://x/v1", model="test-model",
+            supports_tools=True,
+        )
+        offered_tool_names: list[list[str]] = []
+
+        async def fake_stream_reply(profile, messages, *, tools=None, tool_calls=None, **kwargs):
+            offered_tool_names.append([tool["function"]["name"] for tool in (tools or [])])
+            yield ContentDelta("answer")
+
+        with mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)):
+            [event async for event in stream_reply(profile, [], project_id="test-project")]
+            [
+                event
+                async for event in stream_reply(
+                    profile, [], project_id="test-project", conversation_id="conversation-1"
+                )
+            ]
+
+        self.assertNotIn("recall_tool_output", offered_tool_names[0])
+        self.assertIn("recall_tool_output", offered_tool_names[1])
 
 
 def _fake_gateway(*delta_lists):
