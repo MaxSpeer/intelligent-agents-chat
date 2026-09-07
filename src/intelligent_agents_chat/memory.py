@@ -9,13 +9,13 @@ from pathlib import Path
 import re
 import sqlite3
 
-from intelligent_agents_chat.database import connect_database
+from intelligent_agents_chat.database import DEFAULT_DATABASE_PATH, connect_database
 from intelligent_agents_chat.logging_config import log_event
-from intelligent_agents_chat.retrieval import ContextCandidate, RetrievalQuery
 
 
 MAX_QUERY_TERMS = 12
 MAX_RETRIEVED_CHARS = 3_000
+DEFAULT_RETRIEVAL_LIMIT = 6
 _STOP_WORDS = {
     "aber",
     "auch",
@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class MemoryEntry:
+    """One stored turn, as the "Manage project memory" dialog lists it."""
+
     id: int
     project_id: str
     source_conversation_id: str
@@ -52,6 +54,22 @@ class MemoryEntry:
     title: str
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryCandidate:
+    """One retrieved entry on its way into a turn's context: the text to
+    quote plus what to cite it as. That's all anything downstream reads --
+    ContextAssembler renders exactly these three into the prompt's retrieval
+    block, and app.py persists the same three as the answer's provenance
+    (see ContextSourceInput in database.py and the trace step it feeds).
+    Ranking lives in the result order, not in a field: retrieve() already
+    returns the best match first.
+    """
+
+    text: str
+    title: str
+    locator: str
 
 
 class ProjectMemoryStore:
@@ -164,21 +182,34 @@ class ProjectMemoryStore:
         )
         return len(chunks)
 
-    def retrieve(self, query: RetrievalQuery) -> list[ContextCandidate]:
-        if not query.project_id.strip():
+    def retrieve(
+        self,
+        *,
+        project_id: str,
+        text: str,
+        exclude_conversation_id: str | None = None,
+        limit: int = DEFAULT_RETRIEVAL_LIMIT,
+    ) -> list[MemoryCandidate]:
+        """The turns from this project most relevant to `text`.
+
+        exclude_conversation_id skips the conversation being answered right
+        now: its own messages are already in the history that gets sent, so
+        quoting them back as "memory" would just be noise.
+        """
+        if not project_id.strip():
             raise ValueError("Project-scoped retrieval requires a project ID")
-        if query.limit <= 0:
+        if limit <= 0:
             return []
-        fts_query = _fts_query(query.text)
+        fts_query = _fts_query(text)
         if not fts_query:
             return []
 
-        parameters: list[object] = [fts_query, query.project_id]
+        parameters: list[object] = [fts_query, project_id]
         exclusion = ""
-        if query.exclude_conversation_id is not None:
+        if exclude_conversation_id is not None:
             exclusion = "AND me.source_conversation_id != ?"
-            parameters.append(query.exclude_conversation_id)
-        parameters.append(query.limit)
+            parameters.append(exclude_conversation_id)
+        parameters.append(limit)
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
@@ -199,17 +230,12 @@ class ProjectMemoryStore:
             ).fetchall()
 
         candidates = [
-            ContextCandidate(
-                source_kind="project_memory",
-                source_id=str(row["id"]),
-                project_id=row["project_id"],
-                source_conversation_id=row["source_conversation_id"],
+            MemoryCandidate(
                 text=_bounded_text(row["content"]),
                 title=row["title"],
                 locator=(
                     f"messages {row['source_message_start_id']}-{row['source_message_end_id']}"
                 ),
-                score=max(0.0, -float(row["relevance"])),
             )
             for row in rows
         ]
@@ -217,11 +243,11 @@ class ProjectMemoryStore:
             logger,
             logging.INFO,
             "memory.retrieve.completed",
-            project_id=query.project_id,
-            excluded_conversation_id=query.exclude_conversation_id,
-            query_chars=len(query.text),
+            project_id=project_id,
+            excluded_conversation_id=exclude_conversation_id,
+            query_chars=len(text),
             query_term_count=fts_query.count(" OR ") + 1,
-            requested_limit=query.limit,
+            requested_limit=limit,
             result_count=len(candidates),
         )
         return candidates
@@ -373,3 +399,6 @@ def _memory_entry_from_row(row: sqlite3.Row) -> MemoryEntry:
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
+
+
+memory_store = ProjectMemoryStore(DEFAULT_DATABASE_PATH)

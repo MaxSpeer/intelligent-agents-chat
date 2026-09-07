@@ -112,8 +112,13 @@ class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
             yield ContentDelta("answer")
 
         with mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)):
-            [event async for event in stream_reply(profile, [])]
-            [event async for event in stream_reply(profile, [], conversation_id="conversation-1")]
+            [event async for event in stream_reply(profile, [], project_id="test-project")]
+            [
+                event
+                async for event in stream_reply(
+                    profile, [], project_id="test-project", conversation_id="conversation-1"
+                )
+            ]
 
         self.assertNotIn("recall_tool_output", offered_tool_names[0])
         self.assertIn("recall_tool_output", offered_tool_names[1])
@@ -143,7 +148,9 @@ class StreamReplyReasoningFallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_reasoning_only_round_is_used_as_the_final_answer(self) -> None:
         gateway = _fake_gateway([ContentDelta("This is actually the answer.", is_reasoning=True)])
         with mock.patch.object(chat, "gateway", gateway):
-            events = [event async for event in stream_reply(self.PROFILE, [])]
+            events = [
+                event async for event in stream_reply(self.PROFILE, [], project_id="test-project")
+            ]
 
         final_answer = "".join(
             e.text for e in events if isinstance(e, TextChunk) and not e.is_reasoning
@@ -155,7 +162,9 @@ class StreamReplyReasoningFallbackTests(unittest.IsolatedAsyncioTestCase):
             [ContentDelta("thinking...", is_reasoning=True), ContentDelta("Real answer.")]
         )
         with mock.patch.object(chat, "gateway", gateway):
-            events = [event async for event in stream_reply(self.PROFILE, [])]
+            events = [
+                event async for event in stream_reply(self.PROFILE, [], project_id="test-project")
+            ]
 
         final_answer = "".join(
             e.text for e in events if isinstance(e, TextChunk) and not e.is_reasoning
@@ -188,7 +197,7 @@ class StreamReplyReasoningFallbackTests(unittest.IsolatedAsyncioTestCase):
                 yield delta
 
         with mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)):
-            events = [event async for event in stream_reply(profile, [])]
+            events = [event async for event in stream_reply(profile, [], project_id="test-project")]
 
         text_events_before_tool_call = []
         for event in events:
@@ -236,7 +245,9 @@ class UsageEventTests(unittest.IsolatedAsyncioTestCase):
                 yield delta
 
         with mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)):
-            events = [event async for event in stream_reply(self.PROFILE, [])]
+            events = [
+                event async for event in stream_reply(self.PROFILE, [], project_id="test-project")
+            ]
 
         usage_events = [event for event in events if isinstance(event, UsageEvent)]
         self.assertEqual(len(usage_events), 1)
@@ -249,7 +260,9 @@ class UsageEventTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_usage_event_when_the_server_never_reports_usage(self) -> None:
         gateway = _fake_gateway([ContentDelta("Hello")])
         with mock.patch.object(chat, "gateway", gateway):
-            events = [event async for event in stream_reply(self.PROFILE, [])]
+            events = [
+                event async for event in stream_reply(self.PROFILE, [], project_id="test-project")
+            ]
 
         self.assertFalse(any(isinstance(event, UsageEvent) for event in events))
 
@@ -292,7 +305,12 @@ class ToolRoundBudgetTests(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(chat, "gateway", SimpleNamespace(stream_reply=fake_stream_reply)),
             mock.patch.object(chat, "MAX_TOOL_ROUNDS", 3),
         ):
-            [event async for event in stream_reply(profile, [{"role": "user", "content": "hi"}])]
+            [
+                event
+                async for event in stream_reply(
+                    profile, [{"role": "user", "content": "hi"}], project_id="test-project"
+                )
+            ]
 
         self.assertEqual(len(calls_seen), 3)
         self.assertFalse(has_warning(calls_seen[0]))  # 3 rounds left, > TOOL_ROUNDS_WARNING_AT

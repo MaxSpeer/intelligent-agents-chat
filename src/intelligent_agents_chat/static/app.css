@@ -185,6 +185,22 @@ body {
     white-space: nowrap;
 }
 
+.header-context-meter {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: .35rem;
+    color: var(--muted);
+}
+
+.header-context-meter .q-icon {
+    color: var(--primary);
+}
+
+.header-context-label {
+    font-size: .68rem;
+    font-variant-numeric: tabular-nums;
+}
+
 .model-select {
     width: min(15rem, 27vw);
 }
@@ -434,6 +450,59 @@ body {
     line-height: 1.5;
 }
 
+.document-dialog {
+    width: min(54rem, 96vw);
+    max-height: 90vh;
+    gap: 1rem;
+    padding: 1.4rem;
+}
+
+.document-ingestion-status {
+    width: 100%;
+    align-items: center;
+    gap: .55rem;
+    padding: .65rem .8rem;
+    border: 1px solid rgba(99, 91, 255, .14);
+    border-radius: .7rem;
+    background: rgba(99, 91, 255, .04);
+}
+
+.document-uploader {
+    width: 100%;
+    min-height: 5.5rem;
+    border-radius: .8rem;
+}
+
+.document-entry-list {
+    width: 100%;
+    min-height: 8rem;
+    overflow-y: auto;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+}
+
+.document-entry {
+    width: 100%;
+    border-bottom: 1px solid var(--line);
+}
+
+.document-entry:last-child {
+    border-bottom: 0;
+}
+
+.document-entry.status-indexed .q-item__section--avatar {
+    color: #2f9d72;
+}
+
+.document-entry.status-processing .q-item__section--avatar {
+    color: #9a7318;
+}
+
+.document-entry.status-failed .q-item__section--avatar,
+.document-error {
+    color: #c83f5b;
+}
+
 /* Collapsible reasoning/tool-call/tool-result trace, shown between a user
    message and the assistant's final answer -- built live while streaming
    and rebuilt identically when a finished conversation is replayed. */
@@ -541,6 +610,40 @@ body {
     color: var(--muted);
     font-size: .8rem;
     font-style: italic;
+}
+
+/* Project-memory sources (see _add_memory_trace_step): a list of
+   independent items, each with its own click-to-reveal excerpt -- unlike
+   every other trace step, this one isn't a single fixed-height preview +
+   popup, so no .trace-step-preview here. */
+.memory-source-list {
+    width: 100%;
+}
+
+.memory-source-header {
+    color: var(--muted);
+    font-size: .78rem;
+}
+
+.memory-source-expansion {
+    border: 1px solid var(--line);
+    border-radius: .5rem;
+    background: rgba(255, 255, 255, .55);
+}
+
+.memory-source-expansion .q-item {
+    min-height: 1.6rem;
+    padding: .35rem .65rem;
+    color: var(--muted);
+    font-size: .78rem;
+}
+
+.memory-source-expansion .q-expansion-item__content {
+    padding: 0 .65rem .55rem;
+}
+
+.memory-source-expansion .chat-plain-text {
+    font-size: .8rem;
 }
 
 /* A fixed-height glimpse of a step's content -- click opens the full text
@@ -658,12 +761,12 @@ body {
 @media (max-width: 720px) {
     .app-shell {
         grid-template-columns: 1fr;
-        grid-template-rows: 18rem minmax(0, 1fr);
+        grid-template-rows: 21rem minmax(0, 1fr);
     }
 
     .sidebar {
         width: 100%;
-        height: 18rem;
+        height: 21rem;
         padding: .9rem 1rem;
         gap: .7rem;
         border-right: 0;
@@ -690,11 +793,12 @@ body {
     }
 
     .main-panel {
-        height: calc(100vh - 18rem);
+        height: calc(100vh - 21rem);
     }
 
     .chat-header {
-        min-height: 7.5rem;
+        min-height: 10rem;
+        flex: 0 0 auto;
         flex-wrap: wrap;
         align-content: center;
         gap: .45rem;
@@ -711,23 +815,44 @@ body {
         gap: .45rem;
     }
 
+    .header-controls {
+        display: grid !important;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        width: 100% !important;
+        min-width: 0;
+        max-width: 100%;
+        justify-content: stretch;
+        box-sizing: border-box;
+    }
+
     .chat-title {
         max-width: 100%;
     }
 
-    .model-select {
-        width: auto;
-        min-width: 8.5rem;
-        max-width: 11rem;
-        flex: 1 1 9rem;
+    .header-context-meter {
+        justify-content: center;
     }
 
-    .model-status-dot {
+    .context-metric-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .model-select {
+        grid-column: 1 / -1;
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .model-status {
         display: none;
     }
 
     .thinking-toggle,
     .memory-toggle {
+        min-width: 0;
+        width: 100%;
+        justify-content: center;
         padding: .1rem .35rem;
         font-size: .72rem;
     }

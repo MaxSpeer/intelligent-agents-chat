@@ -29,11 +29,11 @@ from intelligent_agents_chat.chat import (
 from intelligent_agents_chat.context import (
     ContextOverflowError,
     ContextPlan,
-    memory_store,
     prepare_conversation_context,
     rebuild_conversation_memory,
-    repository,
 )
+from intelligent_agents_chat.documents import document_service, document_store
+from intelligent_agents_chat.memory import memory_store
 from intelligent_agents_chat.database import (
     AppSettings,
     ContextRunInput,
@@ -43,6 +43,7 @@ from intelligent_agents_chat.database import (
     Conversation,
     Message,
     Project,
+    repository,
 )
 from intelligent_agents_chat.llm import (
     LLMError,
@@ -55,6 +56,8 @@ from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, get_profile, pro
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+DOCUMENT_UPLOAD_ACCEPT = ".txt,.md,.markdown,.pdf"
+DOCUMENT_UPLOAD_LABEL = "TXT, Markdown, or PDF"
 
 logger = logging.getLogger(__name__)
 
@@ -229,15 +232,47 @@ def _add_trace_note(timeline, text: str) -> None:
         ui.label(text).classes("trace-step-note-text")
 
 
-def _format_memory_sources_entry(sources: list) -> str:
-    """Plain text (see _chat_plain_text) listing every project-memory source
-    included in this turn's context -- title and locator per source, the
-    same fields the old separate "Project memory" dropdown below the answer
-    used to show. Shown as the trace's first step (see render_assistant_turn)
+def _add_memory_trace_step(timeline, sources: list) -> None:
+    """The trace's first step (see render_assistant_turn), listing every
+    project-memory source included in this turn's context. Shown first
     since this context is fixed before generation even starts, unlike
     everything that happens after it (reasoning, tool calls, ...).
+
+    Two-level, unlike _add_trace_step's single fixed-height preview + popup:
+    each source's metadata (title, locator, rank, token estimate) is always
+    visible once the "Steps" accordion is open, and only that one source's
+    excerpt is hidden behind its own click (a nested ui.expansion) -- a list
+    of independent items reads better expanded one at a time than one big
+    popup with every excerpt already run together. Plain text throughout
+    (see _chat_plain_text): titles/excerpts come from arbitrary chat
+    history, not Markdown authored for display.
+
+    Memory only -- never document passages, which is why nothing here has
+    to say which kind of source a row is. `sources` comes solely from
+    context_plan.included_sources (see send_message and context.py's
+    prepare_conversation_context), and that is filled solely by
+    retrieve_project_memory. A document only ever reaches the model when it
+    calls search_documents, and then it shows up in that tool's own trace
+    step instead (see chat.py's format_tool_result_entry).
     """
-    return "\n".join(f"{source.source_title} — {source.source_locator}" for source in sources)
+    title = f"Project memory · {len(sources)} source" + ("s" if len(sources) != 1 else "")
+    with timeline, ui.row().classes("trace-step"):
+        ui.element("span").classes("trace-step-dot memory")
+        with ui.column().classes("gap-1 trace-step-body"):
+            ui.label(title).classes("trace-step-title")
+            with ui.column().classes("gap-1 memory-source-list"):
+                for source in sources:
+                    header = (
+                        f"{source.source_title} — {source.source_locator} "
+                        f"(rank {source.rank}, {source.token_estimate:,} tokens)"
+                    )
+                    if source.source_excerpt:
+                        with ui.expansion(header).props("dense").classes(
+                            "memory-source-expansion"
+                        ):
+                            _chat_plain_text(source.source_excerpt)
+                    else:
+                        ui.label(header).classes("memory-source-header")
 
 
 @ui.page("/")
@@ -428,7 +463,8 @@ def index() -> None:
     def render_assistant_turn(turn_messages: list[Message]) -> None:
         """Render one user turn's response as a single chat bubble: a
         collapsible trace (retrieved project memory first, since it's fixed
-        before generation even starts, then reasoning, tool calls with their
+        before generation even starts -- see _add_memory_trace_step for why
+        never document passages -- then reasoning, tool calls with their
         results, and notes, in the order they actually happened) followed by
         the final answer, if any. The reasoning/tool/note part of the trace
         is the same shape `send_message` builds live while streaming; memory
@@ -450,11 +486,12 @@ def index() -> None:
         steps: list[dict] = []
         pending_by_call_id: dict[str, dict] = {}
         final_content: str | None = None
-        final_message_id: int | None = None
         model_profile: str | None = None
+        context_message_id: int | None = None
         for message in turn_messages:
             if message.role == "assistant":
                 model_profile = message.model_profile
+                context_message_id = message.id
                 if message.reasoning:
                     steps.append({"kind": "reasoning", "body": message.reasoning})
                 if message.tool_calls:
@@ -466,7 +503,6 @@ def index() -> None:
                         steps.append({"kind": "note", "body": message.content})
                 elif message.content:
                     final_content = message.content
-                    final_message_id = message.id
             elif message.role == "tool":
                 step = pending_by_call_id.pop(message.tool_call_id or "", None)
                 if step is not None:
@@ -475,9 +511,13 @@ def index() -> None:
         # Retrieved before rendering since it decides whether the accordion
         # is worth showing at all even when there were no reasoning/tool
         # steps -- e.g. a plain answer that still drew on project memory.
+        # context_message_id is the turn's last assistant-role message -- the
+        # same one memory sources/the context run get persisted against (see
+        # send_message's finally block), since that's always the final
+        # flush_pending() call's message once a turn completes normally.
         memory_sources = (
-            repository.list_message_context_sources(final_message_id)
-            if final_message_id is not None
+            repository.list_message_context_sources(context_message_id)
+            if context_message_id is not None
             else []
         )
         if not steps and not memory_sources and not final_content:
@@ -497,12 +537,7 @@ def index() -> None:
                             # Always first: this context was fixed before
                             # generation even started, ahead of everything
                             # that happened during it.
-                            _add_trace_step(
-                                timeline, dot_class="memory",
-                                title=f"Project memory · {len(memory_sources)} source"
-                                + ("s" if len(memory_sources) != 1 else ""),
-                                body=_format_memory_sources_entry(memory_sources),
-                            )
+                            _add_memory_trace_step(timeline, memory_sources)
                         for step in steps:
                             if step["kind"] == "reasoning":
                                 _add_trace_step(
@@ -520,8 +555,8 @@ def index() -> None:
                                 _add_trace_note(timeline, step["body"])
                 if final_content:
                     _chat_markdown(final_content)
-                if final_message_id is not None:
-                    context_run = repository.get_message_context_run(final_message_id)
+                if context_message_id is not None:
+                    context_run = repository.get_message_context_run(context_message_id)
                     if context_run is not None:
                         # Prefer the real peak (prompt+completion of the turn's
                         # last round -- the most the model ever held in context
@@ -566,6 +601,10 @@ def index() -> None:
                     with ui.element("div").classes("empty-icon"):
                         ui.icon("forum", size="md")
                     ui.label("Start a conversation").classes("text-xl font-bold")
+                    ui.label(
+                        f'Messages in "{current_project().name}" are kept separate and saved '
+                        "locally in SQLite."
+                    ).classes("text-sm text-slate-500 leading-relaxed")
             else:
                 index = 0
                 while index < len(messages):
@@ -956,6 +995,216 @@ def index() -> None:
         )
         render_conversation_list()
 
+    def manage_project_documents() -> None:
+        project = current_project()
+        page_event(
+            logging.INFO,
+            "ui.documents.management_opened",
+            embedding_model=document_service.embedding_model,
+        )
+
+        with ui.dialog() as dialog, ui.card().classes("document-dialog"):
+            with ui.row().classes("w-full items-start justify-between no-wrap"):
+                with ui.column().classes("gap-1 min-w-0"):
+                    ui.label(f"Project documents · {project.name}").classes("text-xl font-bold")
+                    ui.label(
+                        f"Upload {DOCUMENT_UPLOAD_LABEL} files. Indexed passages are available "
+                        "only to chats in this project, via the search_documents tool."
+                    ).classes("text-sm text-slate-500")
+                document_dialog_close = ui.button(icon="close", on_click=dialog.close).props(
+                    "flat round dense"
+                )
+                document_dialog_close.props["aria-label"] = "Close project documents"
+
+            with ui.row().classes("document-ingestion-status"):
+                ui.icon("hub", size="sm")
+                ui.label(f"Semantic search · {document_service.embedding_model}").classes(
+                    "text-xs text-slate-500"
+                )
+
+            document_count_label = ui.label().classes("text-xs text-slate-400")
+            documents_container = ui.column().classes("document-entry-list")
+
+            async def upload_document(event) -> None:
+                file = event.file
+                page_event(
+                    logging.INFO,
+                    "ui.documents.upload_started",
+                    filename_chars=len(file.name),
+                    media_type=file.content_type,
+                    byte_size=file.size(),
+                )
+                try:
+                    data = await file.read()
+                    result = await document_service.upload(
+                        project_id=project.id,
+                        display_name=file.name,
+                        media_type=file.content_type,
+                        data=data,
+                    )
+                except Exception as error:
+                    page_event(
+                        logging.WARNING,
+                        "ui.documents.upload_failed",
+                        filename_chars=len(file.name),
+                        media_type=file.content_type,
+                        byte_size=file.size(),
+                        error_type=type(error).__name__,
+                    )
+                    ui.notify(str(error), type="negative", multi_line=True, timeout=8000)
+                else:
+                    page_event(
+                        logging.INFO,
+                        "ui.documents.upload_completed",
+                        document_id=result.document.id,
+                        duplicate=result.duplicate,
+                        chunk_count=result.document.chunk_count,
+                        embedding_model=result.document.embedding_model,
+                    )
+                    ui.notify(
+                        (
+                            f'"{result.document.display_name}" was already indexed.'
+                            if result.duplicate
+                            else f'Indexed "{result.document.display_name}" '
+                            f"({result.document.chunk_count} chunks)."
+                        ),
+                        type="info" if result.duplicate else "positive",
+                    )
+                render_documents()
+
+            uploader = ui.upload(
+                label="Add project documents",
+                multiple=True,
+                max_file_size=10 * 1024 * 1024,
+                max_total_size=30 * 1024 * 1024,
+                max_files=10,
+                auto_upload=True,
+                on_upload=upload_document,
+                on_rejected=lambda: ui.notify(
+                    f"Only up to 10 {DOCUMENT_UPLOAD_LABEL} files of at most 10 MiB are accepted.",
+                    type="warning",
+                ),
+            ).props(f"accept={DOCUMENT_UPLOAD_ACCEPT} flat bordered")
+            uploader.classes("document-uploader")
+
+            async def reindex_document(document_id: str) -> None:
+                page_event(
+                    logging.INFO,
+                    "ui.documents.reindex_started",
+                    document_id=document_id,
+                )
+                try:
+                    indexed = await document_service.reindex(document_id, project.id)
+                except Exception as error:
+                    page_event(
+                        logging.WARNING,
+                        "ui.documents.reindex_failed",
+                        document_id=document_id,
+                        error_type=type(error).__name__,
+                    )
+                    ui.notify(str(error), type="negative", multi_line=True, timeout=8000)
+                else:
+                    ui.notify(
+                        f'Re-indexed "{indexed.display_name}" ({indexed.chunk_count} chunks).',
+                        type="positive",
+                    )
+                render_documents()
+
+            async def confirm_delete_document(document_id: str) -> None:
+                document = document_store.get_document(document_id)
+                if document is None or document.project_id != project.id:
+                    ui.notify("This document no longer exists.", type="warning")
+                    render_documents()
+                    return
+                with ui.dialog() as delete_dialog, ui.card().classes("w-96 max-w-full p-6 gap-5"):
+                    ui.label("Delete project document?").classes("text-xl font-bold")
+                    ui.label(
+                        f'"{document.display_name}", its chunks, and embeddings will be removed.'
+                    ).classes("text-sm text-slate-500")
+                    with ui.row().classes("w-full justify-end gap-2"):
+                        ui.button("Cancel", on_click=lambda: delete_dialog.submit(False)).props(
+                            "flat no-caps"
+                        )
+                        ui.button("Delete", on_click=lambda: delete_dialog.submit(True)).props(
+                            "unelevated no-caps color=negative"
+                        )
+                if not await delete_dialog:
+                    return
+                deleted = await document_service.delete(document.id, project.id)
+                page_event(
+                    logging.INFO,
+                    "ui.documents.deleted",
+                    document_id=document.id,
+                    deleted=deleted,
+                )
+                render_documents()
+                if deleted:
+                    ui.notify(f'Deleted "{document.display_name}".', type="info")
+
+            def render_documents() -> None:
+                documents = document_store.list_documents(project.id)
+                document_count_label.set_text(
+                    f"{len(documents)} project document" + ("s" if len(documents) != 1 else "")
+                )
+                documents_container.clear()
+                with documents_container:
+                    if not documents:
+                        ui.label(
+                            "No documents yet. Upload a file to make it available for RAG."
+                        ).classes("text-sm text-slate-500 py-6")
+                    for document in documents:
+                        status_icon = {
+                            "indexed": "check_circle",
+                            "processing": "hourglass_top",
+                            "failed": "error",
+                        }.get(document.status, "help")
+                        with ui.expansion(
+                            document.display_name,
+                            caption=(
+                                f"{document.status} · {document.chunk_count} chunks · "
+                                f"{document.byte_size / 1024:.1f} KiB"
+                            ),
+                            icon=status_icon,
+                        ).classes(f"document-entry status-{document.status}"):
+                            with ui.column().classes("gap-2"):
+                                ui.label(f"SHA-256 · {document.sha256[:16]}…").classes(
+                                    "text-xs text-slate-400"
+                                )
+                                if document.embedding_model:
+                                    ui.label(
+                                        f"Embeddings · {document.embedding_model} · "
+                                        f"{document.embedding_dimension} dimensions"
+                                    ).classes("text-xs text-slate-400")
+                                else:
+                                    ui.label("Embeddings · not yet indexed").classes(
+                                        "text-xs text-slate-400"
+                                    )
+                                if document.error_message:
+                                    ui.label(document.error_message).classes(
+                                        "document-error text-sm"
+                                    )
+                                with ui.row().classes("gap-2"):
+                                    # Only for a document that actually failed:
+                                    # re-running a successful one re-reads the
+                                    # same file through the same deterministic
+                                    # pipeline and the same pinned model, so it
+                                    # can only ever produce what's already there.
+                                    if document.status == "failed":
+                                        ui.button(
+                                            "Retry",
+                                            icon="refresh",
+                                            on_click=partial(reindex_document, document.id),
+                                        ).props("flat dense no-caps")
+                                    ui.button(
+                                        "Delete",
+                                        icon="delete_outline",
+                                        on_click=partial(confirm_delete_document, document.id),
+                                    ).props("flat dense no-caps color=negative")
+
+            render_documents()
+
+        dialog.open()
+
     def manage_project_memory() -> None:
         project = current_project()
         page_event(logging.INFO, "ui.memory.management_opened")
@@ -1177,6 +1426,13 @@ def index() -> None:
         # once at creation (see _add_trace_step) and never needs recomputing;
         # only the result half (`body`) ever changes.
         pending_tool_steps: dict[str, _TraceStep] = {}
+        # The last assistant message flush_pending actually persisted, of any
+        # kind (tool-calling or final content) -- kept so the turn's context
+        # sources/context run (see the finally block below) can still attach
+        # to *some* message even if the turn's very last flush_pending() call
+        # (right before persistence) has nothing new to flush (e.g. a tool
+        # round produced no further reasoning/content of its own).
+        context_message: Message | None = None
 
         def _ensure_trace_timeline():
             nonlocal trace_timeline
@@ -1208,7 +1464,7 @@ def index() -> None:
             _add_trace_note(_ensure_trace_timeline(), text)
 
         def flush_pending(tool_calls: tuple[dict, ...] | None = None) -> Message | None:
-            nonlocal messages_saved_count, current_reasoning_step
+            nonlocal messages_saved_count, current_reasoning_step, context_message
             reasoning = "".join(pending_reasoning).strip() or None
             content = "".join(pending_content).strip()
             if current_reasoning_step is not None and reasoning:
@@ -1219,7 +1475,7 @@ def index() -> None:
             pending_content.clear()
             current_reasoning_step = None
             if content or reasoning or tool_calls:
-                message = repository.add_message(
+                context_message = repository.add_message(
                     conversation.id,
                     "assistant",
                     content,
@@ -1228,7 +1484,7 @@ def index() -> None:
                     tool_calls=tool_calls,
                 )
                 messages_saved_count += 1
-                return message
+                return context_message
             return None
 
         try:
@@ -1254,6 +1510,7 @@ def index() -> None:
                     thinking_enabled=settings.thinking_enabled,
                     memory_enabled=settings.memory_enabled,
                     force_compact=force_compact,
+                    request_id=generation_id,
                     on_compacting=lambda: add_trace_note(
                         "🗜️ Context limit reached -- compacting older history and retrying..."
                         if force_compact
@@ -1287,6 +1544,7 @@ def index() -> None:
                             request_messages,
                             request_id=generation_id,
                             thinking_enabled=settings.thinking_enabled,
+                            project_id=conversation.project_id,
                             conversation_id=conversation.id,
                         )
                     ) as stream:
@@ -1416,32 +1674,24 @@ def index() -> None:
             raise
         finally:
             try:
-                assistant_message = flush_pending()
-                if (
-                    assistant_message is not None
-                    and context_plan is not None
-                    and context_plan.included_sources
-                ):
-                    repository.add_message_context_sources(
-                        assistant_message.id,
-                        [
-                            ContextSourceInput(
-                                source_kind=source.candidate.source_kind,
-                                source_id=source.candidate.source_id,
-                                source_project_id=source.candidate.project_id,
-                                source_conversation_id=source.candidate.source_conversation_id,
-                                source_title=source.candidate.title,
-                                source_locator=source.candidate.locator,
-                                rank=source.rank,
-                                score=source.candidate.score,
-                                token_estimate=source.token_estimate,
-                            )
-                            for source in context_plan.included_sources
-                        ],
-                    )
-                if assistant_message is not None and context_plan is not None:
+                final_message = flush_pending() or context_message
+                if final_message is not None and context_plan is not None:
+                    if context_plan.included_sources:
+                        repository.add_message_context_sources(
+                            final_message.id,
+                            [
+                                ContextSourceInput(
+                                    source_title=source.candidate.title,
+                                    source_locator=source.candidate.locator,
+                                    source_excerpt=source.candidate.text,
+                                    rank=source.rank,
+                                    token_estimate=source.token_estimate,
+                                )
+                                for source in context_plan.included_sources
+                            ],
+                        )
                     repository.add_message_context_run(
-                        assistant_message.id,
+                        final_message.id,
                         ContextRunInput(
                             context_window_tokens=profile.context_window_tokens,
                             input_budget_tokens=context_plan.input_budget_tokens,
@@ -1552,13 +1802,19 @@ def index() -> None:
                 on_click=manage_project_memory,
             ).props("flat no-caps align=left").classes("memory-manage-button")
 
+            ui.button(
+                "Manage project documents",
+                icon="folder_open",
+                on_click=manage_project_documents,
+            ).props("flat no-caps align=left").classes("memory-manage-button")
+
         with ui.column().classes("main-panel"):
             initial_settings = current_settings()
             with ui.row().classes("chat-header items-center justify-between"):
                 with ui.column().classes("min-w-0 gap-0"):
                     ui.label("Conversation").classes("eyebrow")
                     title_label = ui.label().classes("chat-title")
-                with ui.row().classes("items-center gap-4 no-wrap"):
+                with ui.row().classes("items-center gap-4 header-controls"):
                     model_select = (
                         ui.select(
                             profile_options(),
@@ -1569,7 +1825,7 @@ def index() -> None:
                         .props("outlined dense options-dense")
                         .classes("model-select")
                     )
-                    with ui.row().classes("items-center gap-2 no-wrap"):
+                    with ui.row().classes("items-center gap-2 no-wrap model-status"):
                         model_status_dot = ui.element("span").classes("model-status-dot")
                         model_status_label = ui.label().classes(
                             "status-copy text-xs text-slate-400"

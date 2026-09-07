@@ -4,8 +4,14 @@
 callers can both render and persist each one correctly -- see app.py's send_message
 for how they get turned into chat_message widgets and `messages` table rows. It
 consumes whatever context.py's prepare_conversation_context already assembled; this
-module doesn't need to import anything from there to do that. RAG will be added
-later as a further step in this same loop.
+module doesn't need to import anything from there to do that.
+
+Project-document retrieval (search_documents) is a tool like any other here,
+not a separate pipeline -- the model decides for itself whether/when to call
+it, inside the same round budget as every other tool. It's the one tool that
+needs a project_id bound at request time rather than left to the model (see
+tools/search_documents.py), which is why stream_reply takes project_id and
+builds one extra, request-scoped tool alongside the static TOOLS registry.
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ from intelligent_agents_chat.tools import (
     Tool,
     calculator,
     recall_tool_output,
+    search_documents,
     subagent,
     webfetch,
     websearch,
@@ -34,11 +41,13 @@ logger = logging.getLogger(__name__)
 PROFILE_STATUS_POLL_INTERVAL_SECONDS = 15.0
 profile_status: dict[str, bool | None] = {profile.key: None for profile in MODEL_PROFILES}
 
-# Every available tool, self-registered by its module. Add a new tool by
-# writing a `tools/<name>.py` that exports a `Tool` (see tools/calculator.py),
-# then listing it here -- nothing else in this file needs to change. Not
-# recall_tool_output -- that one needs a conversation to scope itself to, so
-# it's built fresh per turn instead (see stream_reply).
+# Every tool available regardless of which conversation/project is asking,
+# self-registered by its module. Add a new tool by writing a
+# `tools/<name>.py` that exports a `Tool` (see tools/calculator.py), then
+# listing it here -- nothing else in this file needs to change. Not
+# search_documents (needs a project_id bound per request) or
+# recall_tool_output (needs a conversation to scope itself to) -- both are
+# built fresh per turn instead (see stream_reply).
 TOOLS: dict[str, Tool] = {
     tool.name: tool
     for tool in (
@@ -133,6 +142,11 @@ async def _execute_tool(name: str, arguments: dict, tools: dict[str, Tool]) -> s
     still a sequential await, though - the calling agent loop (below)
     stops and waits for this to finish before it does anything else; it does
     not continue on in parallel while a tool (e.g. a sub-agent) is running.
+
+    `tools` is the round's actual tool set (TOOLS plus the request-scoped
+    search_documents, see stream_reply) -- passed in rather than read off the
+    module-level TOOLS directly, since that no longer has everything a given
+    turn can call.
     """
     tool = tools.get(name)
     if tool is None:
@@ -185,6 +199,7 @@ async def stream_reply(
     *,
     request_id: str | None = None,
     thinking_enabled: bool = False,
+    project_id: str,
     conversation_id: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Stream the assistant's reply, executing any tool calls the model makes.
@@ -194,15 +209,21 @@ async def stream_reply(
     `ToolResultEvent` once per executed call, and a final `UsageEvent` (see its
     docstring) once the turn's real answer is ready.
 
+    project_id scopes the one project-bound tool, search_documents (see its
+    module docstring) -- built fresh here, alongside the static TOOLS, rather
+    than the model ever supplying which project to search itself.
+
     conversation_id scopes recall_tool_output to this conversation, built
     fresh for this call only (see tools/recall_tool_output.py) -- optional
     only so tests that don't care about it can omit it; every real caller
     (app.py's send_message) always has one.
     """
-    tools_for_turn = dict(TOOLS)
+    tools_for_turn = {**TOOLS, "search_documents": search_documents.build_tool(project_id)}
     if conversation_id is not None:
         tools_for_turn["recall_tool_output"] = recall_tool_output.build_tool(conversation_id)
-    tools = [tool.schema for tool in tools_for_turn.values()] if profile.supports_tools else None
+    tool_schemas = (
+        [tool.schema for tool in tools_for_turn.values()] if profile.supports_tools else None
+    )
     conversation_messages: list[dict] = list(messages)
     # See UsageEvent's docstring for what each of these means and why.
     initial_prompt_tokens: int | None = None
@@ -245,7 +266,7 @@ async def stream_reply(
             conversation_messages,
             request_id=request_id,
             thinking_enabled=thinking_enabled,
-            tools=tools,
+            tools=tool_schemas,
             tool_calls=pending_tool_calls,
             usage=round_usage,
         ):

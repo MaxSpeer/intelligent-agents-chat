@@ -66,7 +66,7 @@ MIN_SEARCH_WORD_LENGTH = 4
 USER_AGENT = "Mozilla/5.0 (compatible; IntelligentAgentsChatBot/1.0)"
 
 # Cache fetched pages in memory:
-# URL -> cleaned text. FIFO eviction 
+# URL -> cleaned text. FIFO eviction
 _page_cache: dict[str, str] = {}
 _CACHE_MAX_ENTRIES = 32
 
@@ -165,7 +165,7 @@ async def _get_extracted_text(url: str) -> str:
 
 
 # Decimal numbers are matched whole (not split into two tokens on the ".")
-# before falling back to plain word characters. A lone "3" or "878" is useless 
+# before falling back to plain word characters. A lone "3" or "878" is useless
 # search signal, but "3.878" is specific enough to matter.
 _TOKEN_PATTERN = re.compile(r"\d+\.\d+|\w+")
 
@@ -174,8 +174,8 @@ def _search_words(terms: list[str]) -> set[str]:
     words = set()
     for term in terms:
         for token in _TOKEN_PATTERN.findall(term.lower()):
-            # Numbers are exempt from the length filter entirely: 
-            # unlike a short common word ("the") even a short number ("43") 
+            # Numbers are exempt from the length filter entirely:
+            # unlike a short common word ("the") even a short number ("43")
             # is specific enough to be useful.
             if token.isdigit() or token.replace(".", "", 1).isdigit():
                 words.add(token)

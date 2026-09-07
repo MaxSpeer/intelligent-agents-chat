@@ -12,6 +12,8 @@ import sqlite3
 from typing import Literal
 from uuid import uuid4
 
+import sqlite_vec
+
 from intelligent_agents_chat.logging_config import log_event
 
 
@@ -60,16 +62,15 @@ class Message:
 
 @dataclass(frozen=True, slots=True)
 class ContextSourceInput:
-    """One retrieval source supplied while generating an assistant message."""
+    """One retrieval source supplied while generating an assistant message --
+    exactly what the answer's trace step later shows about it (see app.py's
+    _add_memory_trace_step), and nothing beyond that.
+    """
 
-    source_kind: str
-    source_id: str
-    source_project_id: str
-    source_conversation_id: str | None
     source_title: str
     source_locator: str
+    source_excerpt: str
     rank: int
-    score: float
     token_estimate: int
 
 
@@ -79,14 +80,10 @@ class MessageContextSource:
 
     id: int
     assistant_message_id: int
-    source_kind: str
-    source_id: str
-    source_project_id: str
-    source_conversation_id: str | None
     source_title: str
     source_locator: str
+    source_excerpt: str
     rank: int
-    score: float
     token_estimate: int
 
 
@@ -221,6 +218,15 @@ class ChatRepository:
                     ON messages(conversation_id, id);
                 """
             )
+            messages_schema_migrated = _migrate_messages_schema(connection)
+            if not _column_exists(connection, "conversations", "memory_enabled"):
+                connection.execute(
+                    """
+                    ALTER TABLE conversations
+                    ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK (memory_enabled IN (0, 1))
+                    """
+                )
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS memory_entries (
@@ -277,14 +283,10 @@ class ChatRepository:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     assistant_message_id INTEGER NOT NULL
                         REFERENCES messages(id) ON DELETE CASCADE,
-                    source_kind TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    source_project_id TEXT NOT NULL,
-                    source_conversation_id TEXT,
                     source_title TEXT NOT NULL,
                     source_locator TEXT NOT NULL,
+                    source_excerpt TEXT NOT NULL DEFAULT '',
                     rank INTEGER NOT NULL,
-                    score REAL NOT NULL,
                     token_estimate INTEGER NOT NULL,
                     UNIQUE (assistant_message_id, rank)
                 );
@@ -312,8 +314,82 @@ class ChatRepository:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS documents (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    display_name TEXT NOT NULL,
+                    storage_key TEXT NOT NULL UNIQUE,
+                    media_type TEXT NOT NULL,
+                    extension TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    byte_size INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    error_message TEXT,
+                    chunk_count INTEGER NOT NULL DEFAULT 0,
+                    embedding_model TEXT,
+                    embedding_dimension INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    indexed_at TEXT,
+                    UNIQUE(project_id, sha256)
+                );
+
+                CREATE INDEX IF NOT EXISTS documents_project_updated_idx
+                    ON documents(project_id, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS documents_project_status_idx
+                    ON documents(project_id, status);
+
+                CREATE TABLE IF NOT EXISTS document_chunks (
+                    row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    ordinal INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    locator TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(document_id, ordinal)
+                );
+
+                CREATE INDEX IF NOT EXISTS document_chunks_document_idx
+                    ON document_chunks(document_id, ordinal);
+                CREATE INDEX IF NOT EXISTS document_chunks_project_idx
+                    ON document_chunks(project_id, document_id);
                 """
             )
+            # Separate from the script above because the vector column's width
+            # has to be interpolated: `vec0` takes it as literal DDL, not as a
+            # parameter. `row_id` deliberately shares values with
+            # document_chunks.row_id (kept in sync by hand in
+            # DocumentStore.replace_chunks) so a plain JOIN recovers a chunk's
+            # content/locator after a vector search -- vec0 has no foreign keys
+            # or content_rowid-style linkage of its own.
+            #
+            # Imported here rather than at module level: embeddings.py imports
+            # PROJECT_ROOT from this module, so importing it back at module
+            # level would be a cycle. The constant lives there because the
+            # pinned model decides the width -- changing the model means
+            # migrating this column.
+            from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION
+
+            connection.execute(
+                f"""
+                CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_vec USING vec0(
+                    row_id INTEGER PRIMARY KEY,
+                    project_id TEXT PARTITION KEY,
+                    embedding FLOAT[{EMBEDDING_DIMENSION}] DISTANCE_METRIC=COSINE
+                )
+                """
+            )
+            _migrate_context_run_schema(connection)
+            if not _column_exists(connection, "message_context_sources", "source_excerpt"):
+                connection.execute(
+                    """
+                    ALTER TABLE message_context_sources
+                    ADD COLUMN source_excerpt TEXT NOT NULL DEFAULT ''
+                    """
+                )
+            connection.execute("PRAGMA user_version = 6")
             now = _timestamp()
             connection.execute(
                 """
@@ -329,6 +405,8 @@ class ChatRepository:
             database_path=str(self.database_path),
             sqlite_version=sqlite3.sqlite_version,
             journal_mode=journal_mode,
+            schema_version=6,
+            messages_schema_migrated=messages_schema_migrated,
         )
 
     def get_project(self, project_id: str = DEFAULT_PROJECT_ID) -> Project | None:
@@ -667,22 +745,17 @@ class ChatRepository:
             connection.executemany(
                 """
                 INSERT INTO message_context_sources (
-                    assistant_message_id, source_kind, source_id, source_project_id,
-                    source_conversation_id, source_title, source_locator, rank, score,
-                    token_estimate
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    assistant_message_id, source_title, source_locator, source_excerpt,
+                    rank, token_estimate
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
                         assistant_message_id,
-                        source.source_kind,
-                        source.source_id,
-                        source.source_project_id,
-                        source.source_conversation_id,
                         source.source_title,
                         source.source_locator,
+                        source.source_excerpt,
                         source.rank,
-                        source.score,
                         source.token_estimate,
                     )
                     for source in sources
@@ -694,16 +767,14 @@ class ChatRepository:
             "database.message_context_sources.created",
             assistant_message_id=assistant_message_id,
             source_count=len(sources),
-            source_kinds=sorted({source.source_kind for source in sources}),
         )
 
     def list_message_context_sources(self, assistant_message_id: int) -> list[MessageContextSource]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, assistant_message_id, source_kind, source_id, source_project_id,
-                       source_conversation_id, source_title, source_locator, rank, score,
-                       token_estimate
+                SELECT id, assistant_message_id, source_title, source_locator,
+                       source_excerpt, rank, token_estimate
                 FROM message_context_sources
                 WHERE assistant_message_id = ?
                 ORDER BY rank ASC
@@ -811,12 +882,170 @@ class ChatRepository:
 
 
 def connect_database(database_path: Path) -> sqlite3.Connection:
-    """Open one consistently configured SQLite connection for repository services."""
+    """Open one consistently configured SQLite connection for repository services.
+
+    Loads the sqlite-vec extension on every connection -- it's the one
+    shared factory used by ChatRepository, DocumentStore, and
+    ProjectMemoryStore, so this is the one place that guarantees
+    document_chunks_vec (see documents.py) is queryable regardless of which
+    of those opens the connection.
+    """
     connection = sqlite3.connect(database_path, timeout=5.0)
     connection.row_factory = sqlite3.Row
+    connection.enable_load_extension(True)
+    sqlite_vec.load(connection)
+    connection.enable_load_extension(False)
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 5000")
     return connection
+
+
+def _column_exists(connection: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(row[1] == column for row in connection.execute(f"PRAGMA table_info({table})"))
+
+
+def _migrate_context_run_schema(connection: sqlite3.Connection) -> bool:
+    """Replace the older detailed inspector table with PR 14's usage table."""
+    desired_columns = (
+        "assistant_message_id",
+        "context_window_tokens",
+        "input_budget_tokens",
+        "estimated_input_tokens",
+        "real_prompt_tokens",
+        "real_completion_tokens",
+        "real_peak_total_tokens",
+        "created_at",
+    )
+    existing_columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(message_context_runs)")
+    }
+    if existing_columns == set(desired_columns):
+        return False
+
+    select_expressions = {
+        "assistant_message_id": "assistant_message_id",
+        "context_window_tokens": "context_window_tokens",
+        "input_budget_tokens": "input_budget_tokens",
+        "estimated_input_tokens": "estimated_input_tokens",
+        "real_prompt_tokens": (
+            "real_prompt_tokens" if "real_prompt_tokens" in existing_columns else "NULL"
+        ),
+        "real_completion_tokens": (
+            "real_completion_tokens" if "real_completion_tokens" in existing_columns else "NULL"
+        ),
+        "real_peak_total_tokens": (
+            "real_peak_total_tokens" if "real_peak_total_tokens" in existing_columns else "NULL"
+        ),
+        "created_at": "created_at",
+    }
+    connection.execute("DROP TABLE IF EXISTS message_context_runs_migrated")
+    connection.execute(
+        """
+        CREATE TABLE message_context_runs_migrated (
+            assistant_message_id INTEGER PRIMARY KEY
+                REFERENCES messages(id) ON DELETE CASCADE,
+            context_window_tokens INTEGER NOT NULL,
+            input_budget_tokens INTEGER NOT NULL,
+            estimated_input_tokens INTEGER NOT NULL,
+            real_prompt_tokens INTEGER,
+            real_completion_tokens INTEGER,
+            real_peak_total_tokens INTEGER,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        INSERT INTO message_context_runs_migrated ({", ".join(desired_columns)})
+        SELECT {", ".join(select_expressions[column] for column in desired_columns)}
+        FROM message_context_runs
+        """
+    )
+    connection.execute("DROP TABLE message_context_runs")
+    connection.execute("ALTER TABLE message_context_runs_migrated RENAME TO message_context_runs")
+    return True
+
+
+def _migrate_messages_schema(connection: sqlite3.Connection) -> bool:
+    """Upgrade pre-tool-calling databases without losing messages or provenance."""
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(messages)")}
+    table_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'"
+    ).fetchone()
+    table_sql = str(table_row[0]) if table_row and table_row[0] else ""
+    needs_rebuild = not {"tool_calls", "tool_call_id"} <= columns or "'tool'" not in table_sql
+
+    if not needs_rebuild:
+        if "reasoning" not in columns:
+            connection.execute("ALTER TABLE messages ADD COLUMN reasoning TEXT")
+            return True
+        return False
+
+    copy_columns = [
+        column
+        for column in (
+            "id",
+            "conversation_id",
+            "role",
+            "content",
+            "model_profile",
+            "tool_calls",
+            "tool_call_id",
+            "reasoning",
+            "created_at",
+        )
+        if column in columns
+    ]
+    copy_column_sql = ", ".join(copy_columns)
+    foreign_keys_enabled = bool(connection.execute("PRAGMA foreign_keys").fetchone()[0])
+    connection.commit()
+    if foreign_keys_enabled:
+        connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.executescript(
+            f"""
+            BEGIN IMMEDIATE;
+
+            DROP TABLE IF EXISTS messages_migrated;
+
+            CREATE TABLE messages_migrated (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL
+                    REFERENCES conversations(id) ON DELETE CASCADE,
+                role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
+                content TEXT NOT NULL,
+                model_profile TEXT,
+                tool_calls TEXT,
+                tool_call_id TEXT,
+                reasoning TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            INSERT INTO messages_migrated ({copy_column_sql})
+            SELECT {copy_column_sql} FROM messages;
+
+            DROP TABLE messages;
+            ALTER TABLE messages_migrated RENAME TO messages;
+
+            CREATE INDEX messages_conversation_id_idx
+                ON messages(conversation_id, id);
+
+            COMMIT;
+            """
+        )
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        if foreign_keys_enabled:
+            connection.execute("PRAGMA foreign_keys = ON")
+
+    violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise sqlite3.IntegrityError(
+            f"Message schema migration left {len(violations)} foreign-key violations"
+        )
+    return True
 
 
 def _timestamp() -> str:
@@ -874,14 +1103,10 @@ def _message_context_source_from_row(row: sqlite3.Row) -> MessageContextSource:
     return MessageContextSource(
         id=row["id"],
         assistant_message_id=row["assistant_message_id"],
-        source_kind=row["source_kind"],
-        source_id=row["source_id"],
-        source_project_id=row["source_project_id"],
-        source_conversation_id=row["source_conversation_id"],
         source_title=row["source_title"],
         source_locator=row["source_locator"],
+        source_excerpt=row["source_excerpt"],
         rank=row["rank"],
-        score=row["score"],
         token_estimate=row["token_estimate"],
     )
 
@@ -907,3 +1132,14 @@ def _conversation_compaction_from_row(row: sqlite3.Row) -> ConversationCompactio
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
+
+
+#
+# The one repository the whole app shares
+#
+
+# Constructed here, initialized nowhere near here: building it only stores a
+# path, so importing this module still does nothing at all. Creating and
+# migrating the schema is an application-startup step -- see bootstrap.py,
+# which main() calls once before the server starts serving.
+repository = ChatRepository()

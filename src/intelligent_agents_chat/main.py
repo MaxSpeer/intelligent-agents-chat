@@ -7,6 +7,7 @@ import logging
 from nicegui import ui
 
 from intelligent_agents_chat import app  # noqa: F401 -- registers the "/" page route
+from intelligent_agents_chat.bootstrap import bootstrap
 from intelligent_agents_chat.logging_config import log_event, shutdown_logging
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     """Start the NiceGUI development server."""
+    # Before ui.run(), so the database exists and project memory is current
+    # by the time the first request can arrive. Importing app above only
+    # registers the page function; nothing it does touches storage until a
+    # request actually runs it.
+    bootstrap()
     log_event(
         logger,
         logging.INFO,

@@ -51,6 +51,31 @@ class FakeVLLMHandler(BaseHTTPRequestHandler):
 
         content_length = int(self.headers.get("Content-Length", "0"))
         FakeVLLMHandler.request_body = json.loads(self.rfile.read(content_length))
+        if not FakeVLLMHandler.request_body.get("stream", False):
+            body = json.dumps(
+                {
+                    "id": "chatcmpl-control",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": '{"retrieve":false,"query":"","reason":"skip"}',
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         messages = FakeVLLMHandler.request_body.get("messages", [])
         slow_response = any(message.get("content") == "Slow stream check" for message in messages)
         tool_call_response = any(

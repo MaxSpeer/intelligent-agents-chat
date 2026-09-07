@@ -6,7 +6,6 @@ import unittest
 
 from intelligent_agents_chat.database import ChatRepository
 from intelligent_agents_chat.memory import ProjectMemoryStore, _fts_query
-from intelligent_agents_chat.retrieval import RetrievalQuery
 
 
 class ProjectMemoryStoreTests(unittest.TestCase):
@@ -51,24 +50,20 @@ class ProjectMemoryStoreTests(unittest.TestCase):
         self.memory.rebuild_project(self.private.id)
 
         results = self.memory.retrieve(
-            RetrievalQuery(
-                project_id=self.research.id,
-                text="What is the orchid launch code?",
-                exclude_conversation_id=target.id,
-            )
+            project_id=self.research.id,
+            text="What is the orchid launch code?",
+            exclude_conversation_id=target.id,
         )
 
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].source_conversation_id, source.id)
+        self.assertEqual(results[0].title, "Orchid notes")
         self.assertIn("amber", results[0].text)
         self.assertNotIn("violet", results[0].text)
 
         current_chat_results = self.memory.retrieve(
-            RetrievalQuery(
-                project_id=self.research.id,
-                text="orchid",
-                exclude_conversation_id=source.id,
-            )
+            project_id=self.research.id,
+            text="orchid",
+            exclude_conversation_id=source.id,
         )
         self.assertEqual(current_chat_results, [])
 
@@ -89,7 +84,7 @@ class ProjectMemoryStoreTests(unittest.TestCase):
         self.assertEqual([entry.id for entry in second], [first[0].id])
         self.assertFalse(second[0].enabled)
         self.assertEqual(
-            self.memory.retrieve(RetrievalQuery(project_id=self.research.id, text="SQLite memory")),
+            self.memory.retrieve(project_id=self.research.id, text="SQLite memory"),
             [],
         )
 
@@ -97,7 +92,7 @@ class ProjectMemoryStoreTests(unittest.TestCase):
         self.assertEqual(
             len(
                 self.memory.retrieve(
-                    RetrievalQuery(project_id=self.research.id, text="SQLite memory")
+                    project_id=self.research.id, text="SQLite memory"
                 )
             ),
             1,
@@ -139,7 +134,7 @@ class ProjectMemoryStoreTests(unittest.TestCase):
         self._add_turn(source.id, "Remember the zephyr protocol.", "Remembered.")
         self.memory.rebuild_conversation(source.id)
         self.assertEqual(
-            len(self.memory.retrieve(RetrievalQuery(self.research.id, "zephyr protocol"))),
+            len(self.memory.retrieve(project_id=self.research.id, text="zephyr protocol")),
             1,
         )
 
@@ -147,7 +142,7 @@ class ProjectMemoryStoreTests(unittest.TestCase):
 
         self.assertEqual(self.memory.list_entries(self.research.id), [])
         self.assertEqual(
-            self.memory.retrieve(RetrievalQuery(self.research.id, "zephyr protocol")),
+            self.memory.retrieve(project_id=self.research.id, text="zephyr protocol"),
             [],
         )
 
@@ -167,15 +162,16 @@ class ProjectMemoryStoreTests(unittest.TestCase):
         self.memory.rebuild_project(self.research.id)
 
         results = self.memory.retrieve(
-            RetrievalQuery(
-                project_id=self.research.id,
-                text='quokka " OR * habitat:',
-            )
+            project_id=self.research.id,
+            text='quokka " OR * habitat:',
         )
 
+        # Both entries match, and the punctuation did not break FTS syntax.
+        # Ranking shows up as result order (retrieve() orders by relevance in
+        # SQL), so the stronger match has to come first.
         self.assertEqual(len(results), 2)
-        self.assertEqual(results[0].source_conversation_id, strongest.id)
-        self.assertGreaterEqual(results[0].score, results[1].score)
+        self.assertEqual(results[0].title, "Quokka details")
+        self.assertEqual(results[1].title, "Other notes")
 
     def test_a_decimal_number_in_the_query_still_finds_its_matching_entry(self) -> None:
         source = self.repository.create_conversation(
@@ -189,7 +185,7 @@ class ProjectMemoryStoreTests(unittest.TestCase):
         self.memory.rebuild_conversation(source.id)
 
         results = self.memory.retrieve(
-            RetrievalQuery(project_id=self.research.id, text="the 3.878 million figure")
+            project_id=self.research.id, text="the 3.878 million figure"
         )
 
         self.assertEqual(len(results), 1)
@@ -283,7 +279,7 @@ class ToolCallingTurnChunkingTests(unittest.TestCase):
         self.memory.rebuild_conversation(self.conversation.id)
 
         matches = self.memory.retrieve(
-            RetrievalQuery(project_id=self.project.id, text="falconer")
+            project_id=self.project.id, text="falconer"
         )
 
         self.assertEqual(matches, [])

@@ -12,7 +12,7 @@ from unittest import mock
 
 from intelligent_agents_chat import context
 from intelligent_agents_chat.context import (
-    MEMORY_GUARD,
+    RETRIEVAL_GUARD,
     ContextAssembler,
     ContextOverflowError,
     _compact_conversation_history,
@@ -22,21 +22,12 @@ from intelligent_agents_chat.context import (
 )
 from intelligent_agents_chat.database import ChatRepository, Conversation, Message
 from intelligent_agents_chat.llm import SYSTEM_PROMPT
+from intelligent_agents_chat.memory import MemoryCandidate
 from intelligent_agents_chat.models import ModelProfile
-from intelligent_agents_chat.retrieval import ContextCandidate
 
 
-def candidate(source_id: str = "1", *, text: str = "The decision was SQLite.") -> ContextCandidate:
-    return ContextCandidate(
-        source_kind="project_memory",
-        source_id=source_id,
-        project_id="project-a",
-        source_conversation_id="source-chat",
-        text=text,
-        title="Architecture",
-        locator="messages 1-2",
-        score=0.5,
-    )
+def candidate(*, text: str = "The decision was SQLite.") -> MemoryCandidate:
+    return MemoryCandidate(text=text, title="Architecture", locator="messages 1-2")
 
 
 def _message(
@@ -63,7 +54,7 @@ def _message(
 
 class ContextAssemblerTests(unittest.TestCase):
     def test_includes_memory_with_guard_and_auditable_source(self) -> None:
-        plan = ContextAssembler("Base system prompt", memory_budget_tokens=500).assemble(
+        plan = ContextAssembler("Base system prompt", retrieval_budget_tokens=500).assemble(
             [
                 {"role": "user", "content": "Earlier question"},
                 {"role": "assistant", "content": "Earlier answer"},
@@ -76,15 +67,17 @@ class ContextAssemblerTests(unittest.TestCase):
 
         self.assertEqual(len(plan.included_sources), 1)
         self.assertEqual(plan.included_sources[0].rank, 1)
-        self.assertIn(MEMORY_GUARD, plan.messages[0]["content"])
+        self.assertIn(RETRIEVAL_GUARD, plan.messages[0]["content"])
         self.assertEqual(plan.messages[1]["role"], "user")
-        self.assertIn("<project-memory>", plan.messages[1]["content"])
-        self.assertIn("[project_memory:1]", plan.messages[1]["content"])
+        self.assertIn("<retrieved-context>", plan.messages[1]["content"])
+        # Title and locator are the citation the model sees -- see the
+        # retrieval block ContextAssembler builds.
+        self.assertIn('From "Architecture" (messages 1-2)', plan.messages[1]["content"])
         self.assertEqual(plan.messages[-1]["content"], "What database did we choose?")
         self.assertLessEqual(plan.estimated_input_tokens, plan.input_budget_tokens)
 
     def test_excludes_memory_when_its_complete_wrapper_exceeds_budget(self) -> None:
-        plan = ContextAssembler("System", memory_budget_tokens=20).assemble(
+        plan = ContextAssembler("System", retrieval_budget_tokens=20).assemble(
             [{"role": "user", "content": "Question"}],
             [candidate(text="large " * 100)],
             context_window_tokens=500,
@@ -93,13 +86,13 @@ class ContextAssemblerTests(unittest.TestCase):
 
         self.assertEqual(plan.included_sources, ())
         self.assertEqual(len(plan.excluded_sources), 1)
-        self.assertEqual(plan.excluded_sources[0].reason, "memory_budget_exceeded")
-        self.assertNotIn(MEMORY_GUARD, plan.messages[0]["content"])
+        self.assertEqual(plan.excluded_sources[0].reason, "retrieval_budget_exceeded")
+        self.assertNotIn(RETRIEVAL_GUARD, plan.messages[0]["content"])
 
     def test_history_is_filled_newest_first_and_the_oldest_is_cut_when_it_does_not_fit(
         self,
     ) -> None:
-        plan = ContextAssembler("", memory_budget_tokens=0).assemble(
+        plan = ContextAssembler("", retrieval_budget_tokens=0).assemble(
             [
                 {"role": "user", "content": "old " * 100},
                 {"role": "assistant", "content": "old reply " * 100},
@@ -126,7 +119,7 @@ class ContextAssemblerTests(unittest.TestCase):
         recent history and starve memory, even though memory is often the
         only way to recall something from a *different* chat.
         """
-        plan = ContextAssembler("", memory_budget_tokens=200).assemble(
+        plan = ContextAssembler("", retrieval_budget_tokens=200).assemble(
             [
                 {"role": "user", "content": "recent question"},
                 {"role": "assistant", "content": "recent answer"},
@@ -249,16 +242,18 @@ class CompletionMessagesTests(unittest.TestCase):
             [
                 _message("user", "Fetch that page."),
                 _message("assistant", "", tool_calls=(call,)),
-                _message("tool", "Error: 'url' must start with http:// or https://.", tool_call_id="call_1"),
+                _message(
+                    "tool",
+                    "Error: 'url' must start with http:// or https://.",
+                    tool_call_id="call_1",
+                ),
                 _message("assistant", "I couldn't fetch that -- the URL looks invalid."),
                 _message("user", "Try a different URL then."),
             ]
         )
 
         self.assertEqual(messages[1]["role"], "user")
-        self.assertIn(
-            "Error: 'url' must start with http:// or https://.", messages[1]["content"]
-        )
+        self.assertIn("Error: 'url' must start with http:// or https://.", messages[1]["content"])
 
     def test_a_tool_call_with_no_result_is_reported_as_interrupted(self) -> None:
         """The turn was stopped between the tool call and its result being
@@ -311,7 +306,10 @@ class CompletionMessagesTests(unittest.TestCase):
                         {
                             "id": "call_1",
                             "type": "function",
-                            "function": {"name": "calculator", "arguments": '{"expression": "1+1"}'},
+                            "function": {
+                                "name": "calculator",
+                                "arguments": '{"expression": "1+1"}',
+                            },
                         }
                     ],
                 },
@@ -612,9 +610,7 @@ class PrepareConversationContextCompactionTests(unittest.IsolatedAsyncioTestCase
                 on_compacting=on_compacting,
             )
 
-        self.assertIsNotNone(
-            self.repository.get_conversation_compaction(self.conversation.id)
-        )
+        self.assertIsNotNone(self.repository.get_conversation_compaction(self.conversation.id))
         self.assertTrue(
             any(
                 "Compact summary of the earlier turns." in message["content"]

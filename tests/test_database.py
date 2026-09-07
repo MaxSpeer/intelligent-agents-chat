@@ -147,14 +147,10 @@ class ChatRepositoryTests(unittest.TestCase):
             assistant.id,
             [
                 ContextSourceInput(
-                    source_kind="project_memory",
-                    source_id="42",
-                    source_project_id=DEFAULT_PROJECT_ID,
-                    source_conversation_id=source.id,
                     source_title=source.title,
                     source_locator="messages 1-2",
+                    source_excerpt="The database decision was SQLite FTS5.",
                     rank=1,
-                    score=0.75,
                     token_estimate=20,
                 )
             ],
@@ -163,9 +159,9 @@ class ChatRepositoryTests(unittest.TestCase):
         loaded = self.repository.list_message_context_sources(assistant.id)
 
         self.assertEqual(len(loaded), 1)
-        self.assertEqual(loaded[0].source_kind, "project_memory")
-        self.assertEqual(loaded[0].source_conversation_id, source.id)
         self.assertEqual(loaded[0].source_title, "Architecture")
+        self.assertEqual(loaded[0].source_locator, "messages 1-2")
+        self.assertEqual(loaded[0].source_excerpt, "The database decision was SQLite FTS5.")
         self.assertEqual(loaded[0].rank, 1)
 
         self.assertTrue(self.repository.delete_conversation(target.id))

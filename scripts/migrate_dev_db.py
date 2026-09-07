@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Dev-only helper: bring an existing local chats.sqlite3 up to date with
-database.py's current schema, without losing its chat history.
+"""Explicitly initialize or migrate a local chat database.
 
-Not used by the app itself -- database.py only ever creates the current
-schema fresh (no migrations there, by design). Run this by hand after
-pulling a change that adds columns to the `messages` table, if you'd rather
-keep your local chat history than let the app recreate the file from
-scratch:
+The application runs the same idempotent migrations automatically at startup.
+This helper is useful for checking a database before launching the UI:
 
     uv run python scripts/migrate_dev_db.py [path-to-chats.sqlite3]
 
@@ -15,13 +11,20 @@ This script is written for the schema changes it currently knows about
 `conversations`, a `real_peak_total_tokens` column on
 `message_context_runs`, moving model_profile/thinking_enabled/
 memory_enabled off `conversations` and onto the single shared `app_settings`
-row, then dropping `source_kind`/`content_hash` from `memory_entries` --
-stray leftovers from a schema shape database.py has never actually defined
-on this branch, silently breaking every memory insert with a NOT NULL
-violation once a database file had picked them up some other way, e.g. by
-briefly running a different branch against the same file). If database.py's
-schema changes again later, extend or replace the migration below to
-match -- it's a one-off dev tool, not a general migration framework.
+row, then dropping `rag_enabled` and `message_adaptive_rag_runs` now that
+project-document retrieval is a tool instead of an automatic,
+per-conversation-toggle pipeline, and finally dropping `memory_entries`'s
+unused `source_kind`/`content_hash` columns -- source_kind was always the
+same hardcoded literal and content_hash was never actually read back
+anywhere (rebuild_conversation's upsert guard compares `content` itself),
+so both were dead weight from the start; safe to drop outright since memory
+entries are derived data the app rebuilds automatically on startup, then
+rebuilding `document_chunks` without its own unused id/content_hash/
+page_number/section columns, and finally rebuilding
+`message_context_sources` without the five columns nothing ever read back).
+If database.py's schema changes again later, extend or replace the
+migration below to match -- it's a one-off dev tool, not a general
+migration framework.
 """
 
 from __future__ import annotations
@@ -160,23 +163,139 @@ def migrate(database_path: Path) -> None:
             connection.execute("ALTER TABLE conversations DROP COLUMN thinking_enabled")
             connection.execute("ALTER TABLE conversations DROP COLUMN memory_enabled")
 
-        # Empty (not missing) if the table doesn't exist yet -- nothing to do.
+        if "rag_enabled" in conversation_columns:
+            print(
+                "Dropping conversations.rag_enabled -- project-document retrieval is a tool "
+                "now (search_documents), not an automatic per-conversation toggle ..."
+            )
+            connection.execute("ALTER TABLE conversations DROP COLUMN rag_enabled")
+
+        if connection.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'message_adaptive_rag_runs'"
+        ).fetchone():
+            print(
+                "Dropping message_adaptive_rag_runs -- there's no separate adaptive-RAG "
+                "controller trace to persist any more; a search_documents tool call shows up "
+                "in the normal tool-call trace instead ..."
+            )
+            connection.execute("DROP TABLE message_adaptive_rag_runs")
+
+        # Empty (not missing) if the table doesn't exist yet -- nothing to do; a
+        # fresh CREATE TABLE IF NOT EXISTS already matches the current schema.
         memory_entries_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(memory_entries)")
         }
         for stray_column in ("source_kind", "content_hash"):
             if stray_column in memory_entries_columns:
                 print(
-                    f"Dropping stray memory_entries.{stray_column} column -- "
-                    "database.py never defines it, but a NOT NULL leftover here "
-                    "(e.g. from briefly running a different branch against this "
-                    "same file) makes every memory insert fail silently ..."
+                    f"Dropping memory_entries.{stray_column} -- unused: source_kind "
+                    "was always the same hardcoded literal and content_hash was "
+                    "never actually read back anywhere (rebuild_conversation's "
+                    "upsert guard compares `content` itself) ..."
                 )
                 connection.execute(f"ALTER TABLE memory_entries DROP COLUMN {stray_column}")
 
+        # Same idea for document chunks: `id` (a content-derived hash) and
+        # `content_hash` were never read back, and page_number/section only
+        # ever fed the `locator` string that's stored right next to them.
+        # Rebuilt rather than dropped column by column so row_id survives
+        # exactly -- document_chunks_vec joins on it (see documents.py), so
+        # keeping it means the existing embeddings stay valid and nothing
+        # has to be re-embedded.
+        chunk_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(document_chunks)")
+        }
+        if chunk_columns & {"id", "content_hash", "page_number", "section"}:
+            print(
+                "Rebuilding document_chunks without the unused id/content_hash/"
+                "page_number/section columns (embeddings are kept as they are) ..."
+            )
+            connection.executescript(
+                """
+                ALTER TABLE document_chunks RENAME TO document_chunks_old;
+
+                CREATE TABLE document_chunks (
+                    row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    ordinal INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    locator TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(document_id, ordinal)
+                );
+
+                INSERT INTO document_chunks (
+                    row_id, document_id, project_id, ordinal, content, locator, created_at
+                )
+                SELECT row_id, document_id, project_id, ordinal, content, locator, created_at
+                FROM document_chunks_old;
+
+                DROP TABLE document_chunks_old;
+
+                CREATE INDEX IF NOT EXISTS document_chunks_document_idx
+                    ON document_chunks(document_id, ordinal);
+                CREATE INDEX IF NOT EXISTS document_chunks_project_idx
+                    ON document_chunks(project_id, document_id);
+                """
+            )
+
+        # message_context_sources kept five columns nothing ever read back:
+        # source_kind (always 'project_memory' since documents became a tool),
+        # source_id/source_project_id/source_conversation_id, and score. What
+        # remains is exactly what the answer's trace step shows. Rebuilt
+        # rather than dropped column by column, since UNIQUE/index have to be
+        # recreated anyway -- the rows themselves are carried over.
+        context_source_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(message_context_sources)")
+        }
+        if context_source_columns & {
+            "source_kind",
+            "source_id",
+            "source_project_id",
+            "source_conversation_id",
+            "score",
+        }:
+            print(
+                "Rebuilding message_context_sources without the write-only "
+                "source_kind/source_id/source_project_id/source_conversation_id/score "
+                "columns (existing provenance rows are kept) ..."
+            )
+            connection.executescript(
+                """
+                ALTER TABLE message_context_sources RENAME TO message_context_sources_old;
+
+                CREATE TABLE message_context_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    assistant_message_id INTEGER NOT NULL
+                        REFERENCES messages(id) ON DELETE CASCADE,
+                    source_title TEXT NOT NULL,
+                    source_locator TEXT NOT NULL,
+                    source_excerpt TEXT NOT NULL DEFAULT '',
+                    rank INTEGER NOT NULL,
+                    token_estimate INTEGER NOT NULL,
+                    UNIQUE (assistant_message_id, rank)
+                );
+
+                INSERT INTO message_context_sources (
+                    id, assistant_message_id, source_title, source_locator,
+                    source_excerpt, rank, token_estimate
+                )
+                SELECT id, assistant_message_id, source_title, source_locator,
+                       source_excerpt, rank, token_estimate
+                FROM message_context_sources_old;
+
+                DROP TABLE message_context_sources_old;
+
+                CREATE INDEX IF NOT EXISTS message_context_sources_message_idx
+                    ON message_context_sources(assistant_message_id, rank);
+                """
+            )
+
         connection.commit()
         message_count = connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-    print(f"Done. {database_path} now matches the current schema ({message_count} messages kept).")
+        schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
+    print(f"Done. {database_path} is at schema {schema_version} ({message_count} messages kept).")
 
 
 if __name__ == "__main__":
