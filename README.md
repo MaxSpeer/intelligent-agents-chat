@@ -18,12 +18,7 @@ Elective
   - [x] Isolation
   - [x] Selection
   - [x] Compressing
-
-One of
-
-- [ ] RAG
-- [ ] User-defined Tools
-- [ ] Code Execution
+- [x] RAG
 
 ## Architecture
 
@@ -124,4 +119,4 @@ conversation can be reopened later. Context preparation lives in
 | Elective | Websearch | [Search for sources, then read and condense selected pages](docs/websearch.md) |
 | Elective | Subagents | [Delegate focused tasks with isolated context](docs/subagents.md) |
 | Elective | Intelligent context management | [Select, isolate, and compress information within the context window](docs/context-management.md) |
-| Elective | RAG | In implementation; documentation to follow. |
+| Elective | RAG | [Search a project's uploaded documents, decided and queried by the agent itself](docs/rag.md) |
