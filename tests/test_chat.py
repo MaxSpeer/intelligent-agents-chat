@@ -11,7 +11,6 @@ from intelligent_agents_chat.chat import (
     TextChunk,
     UsageEvent,
     _execute_tool,
-    format_reasoning_entry,
     format_tool_call_entry,
     format_tool_result_entry,
     stream_reply,
@@ -26,9 +25,6 @@ class FormatEntryTests(unittest.TestCase):
     see app.py's send_message and render_assistant_turn.
     """
 
-    def test_format_reasoning_entry_includes_the_full_text(self) -> None:
-        self.assertIn("because 1+1=2", format_reasoning_entry("because 1+1=2"))
-
     def test_format_tool_call_entry_includes_name_and_arguments(self) -> None:
         call = {"id": "call_1", "name": "calculator", "arguments": '{"expression": "1+1"}'}
 
@@ -37,11 +33,33 @@ class FormatEntryTests(unittest.TestCase):
         self.assertIn("calculator", entry)
         self.assertIn('{"expression": "1+1"}', entry)
 
-    def test_format_tool_result_entry_includes_name_and_result(self) -> None:
-        entry = format_tool_result_entry("calculator", "2")
+    def test_format_tool_call_entry_is_never_markdown(self) -> None:
+        """Tool/argument names routinely contain underscores, which Markdown
+        misreads as emphasis -- the call header is rendered as plain text
+        (see app.py's _add_trace_step), so it must never contain Markdown
+        emphasis syntax that could get misread once seen through the
+        result's Markdown renderer.
+        """
+        call = {"id": "call_1", "name": "web_search", "arguments": "{}"}
 
-        self.assertIn("calculator", entry)
-        self.assertIn("2", entry)
+        entry = format_tool_call_entry(call)
+
+        self.assertNotIn("*", entry)
+
+    def test_format_tool_result_entry_returns_the_result_as_is(self) -> None:
+        entry = format_tool_result_entry("2")
+
+        self.assertEqual(entry, "2")
+
+    def test_format_tool_result_entry_still_running_has_no_result_yet(self) -> None:
+        entry = format_tool_result_entry(None, still_running=True)
+
+        self.assertIn("waiting", entry)
+
+    def test_format_tool_result_entry_missing_result_reports_it_was_stopped(self) -> None:
+        entry = format_tool_result_entry(None)
+
+        self.assertIn("stopped", entry)
 
 
 class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):

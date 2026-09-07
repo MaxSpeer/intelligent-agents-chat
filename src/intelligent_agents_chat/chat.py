@@ -150,24 +150,33 @@ async def _execute_tool(name: str, arguments: dict, tools: dict[str, Tool]) -> s
         return f"Error: tool '{name}' failed unexpectedly: {error}"
 
 
-def format_reasoning_entry(text: str) -> str:
-    """Markdown for one reasoning block, as a collapsible accordion entry.
-
-    Used both live (while `text` is still streaming) and when replaying a
-    finished conversation from the DB -- keeping the formatting in one place
-    is the whole point, so the two views always look identical.
-    """
-    return f"**Thinking**\n\n{text}"
-
-
 def format_tool_call_entry(call: dict) -> str:
-    """Markdown for one tool call, as a collapsible accordion entry."""
-    return f"🔧 **{call['name']}**\n\n```\n{call['arguments']}\n```"
+    """Plain text (deliberately never Markdown -- see app.py's _add_trace_step
+    `prefix` parameter) for one tool call's name and arguments: a fixed
+    header shown above the result, which does go through Markdown (see
+    format_tool_result_entry) since tool/argument names routinely contain
+    underscores, which Markdown misreads as emphasis.
+    """
+    return f"🔧 {call['name']} {call['arguments']}"
 
 
-def format_tool_result_entry(name: str, result: str) -> str:
-    """Markdown for one tool result, as a collapsible accordion entry."""
-    return f"**{name}** → {result}"
+def format_tool_result_entry(result: str | None, *, still_running: bool = False) -> str:
+    """Markdown for a tool call's result -- the half of a trace step that can
+    actually contain structure worth rendering (tables, code, ...), unlike
+    the call header (see format_tool_call_entry, plain text on purpose).
+
+    Used both live (while `result` may still be None, mid-call) and when
+    replaying a finished conversation from the DB -- keeping the formatting
+    in one place is the whole point, so the two views always look identical.
+    still_running distinguishes "still executing" (live) from "the turn was
+    stopped before this call finished" (a genuinely missing result, only
+    possible on replay).
+    """
+    if result is not None:
+        return result
+    if still_running:
+        return "*(waiting for the result...)*"
+    return "*(no result -- generation was stopped before this call finished)*"
 
 
 async def stream_reply(
