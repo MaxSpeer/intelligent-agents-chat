@@ -22,14 +22,10 @@ Elective
 
 ## Architecture
 
-Intelligent Agents Chat is our university project for exploring how an LLM becomes an agent:
-it can use tools, recall earlier conversations, and manage the context it needs for a task.
-Chats are grouped into projects, which also define the scope of shared memory.
-
 ![Local chat application connected to independent vLLM servers on the HPI SCI cluster](docs/images/system-architecture.png)
 
-The **local Python server** runs the NiceGUI interface, agent loop, tools, and SQLite storage
-(`.data/chats.sqlite3`). The **HPI SCI Compute Cluster** runs model inference through vLLM in
+The local Python server runs the NiceGUI interface, agent loop, tools, and SQLite storage
+(`.data/chats.sqlite3`). The HPI SCI Compute Cluster runs model inference through vLLM in
 Enroot containers, scheduled with Slurm. SSH tunnels expose those APIs on local ports.
 
 This separation is deliberately modular: the agent talks to an OpenAI-compatible API and does
@@ -54,7 +50,6 @@ changing the agent loop. A local Ollama profile is also included for lightweight
 There are **three steps**. The web application and tunnels run locally; only vLLM runs on the
 cluster. This assumes `uv` is installed locally, SCI VPN/SSH access works, and the cluster
 checkout, model files, adapters, and Enroot image are prepared in the project's storage.
-One-time setup and Slurm troubleshooting are covered in [cluster/README.md](cluster/README.md).
 
 ### 1. Start the application locally
 
