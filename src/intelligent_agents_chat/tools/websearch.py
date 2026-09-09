@@ -1,7 +1,4 @@
-"""A tool that searches the web (via DuckDuckGo) and returns a short list of
-results -- title, URL, snippet -- for the model to pick from. Pair it with
-web_fetch (webfetch.py) to actually read a promising result's content.
-"""
+"""Search DuckDuckGo and return result titles, URLs, and snippets."""
 
 from __future__ import annotations
 
@@ -40,8 +37,7 @@ _SCHEMA: dict = {
 
 
 def _search(query: str) -> list[dict]:
-    """The actual (synchronous, blocking) DDGS call, factored out on its own
-    so tests can mock it without real network access."""
+    """Run a synchronous DuckDuckGo text search."""
     return DDGS(timeout=REQUEST_TIMEOUT_SECONDS).text(query, max_results=MAX_RESULTS)
 
 

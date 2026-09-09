@@ -1,36 +1,8 @@
-"""A tool that fetches one URL and returns its cleaned, size-bounded content
--- optionally targeted at a specific part of it via `search_terms`.
+"""Fetch, extract, and cache readable web-page text with size limits.
 
-Never hands raw HTML to the model -- that's both wasteful (HTML is mostly
-markup, not content) and unsafe for the context budget: this tool's result is
-persisted as a `tool` message and replayed on *every future turn* of the same
-conversation (see chat.py's completion_messages), so an oversized result
-keeps costing tokens long after this one fetch.
-
-Handling, in order:
-1. Download the page (size-capped, so a huge or misbehaving response can't
-   blow up memory) and strip it down to its main readable text with
-   trafilatura -- no LLM involved, deterministic and cheap. Cached per URL
-   in `_page_cache` (in-memory, this process only), so asking the same page
-   a second question doesn't re-download and re-extract it.
-2. If that text is already short, return it as is.
-3. Otherwise, take an excerpt to condense: if `search_terms` were given and
-   they appear (as individual words, not necessarily the exact phrase --
-   see `_best_window`) somewhere in the page, the excerpt is a window
-   centered on wherever those words cluster most densely, e.g. a
-   Wikipedia-style section heading -- not just the page's start, so a term
-   naming a later section actually reaches the sub-agent instead of always
-   being truncated away. Falls back to the page's start otherwise (and says
-   so, and why).
-4. Condense the excerpt via the sub-agent tool (tools/subagent.py) -- reusing
-   the same "ask an isolated LLM to do one focused thing" primitive.
-
-`search_terms` and `topic` are deliberately different knobs: `search_terms`
-drives *where* the excerpt comes from; `topic` only steers how the sub-agent
-frames its summary of whatever excerpt was picked, and never feeds the
-search itself -- topic often shares words with the whole page (e.g. the
-page's own subject, appearing everywhere), which would drown out
-search_terms' far rarer, more specific words with noise if mixed in.
+Return short text directly; condense long excerpts through the sub-agent.
+`search_terms` locates excerpts, falling back to the page start without a match.
+`topic` guides only the summary.
 """
 
 from __future__ import annotations
@@ -44,29 +16,21 @@ import trafilatura
 from intelligent_agents_chat.tools import Tool, subagent
 
 REQUEST_TIMEOUT_SECONDS = 15.0
-# Refuse to even buffer something absurd (a misidentified video/binary, an
-# endless stream, ...) -- checked while downloading, not just after.
+# Enforce this limit while downloading.
 MAX_RESPONSE_BYTES = 5_000_000
-# Cleaned text (or a matched excerpt) at or under this size is returned
-# as-is; above it, it goes through the sub-agent to be condensed.
-# Deliberately tight: results are replayed on every future turn.
+# Return text up to this size verbatim; condense longer text.
 VERBATIM_CHAR_LIMIT = 3_000
-# Hard cap on how much cleaned text we ever hand to the sub-agent to
-# condense, independent of the sub-agent's own model's context size.
+# Maximum excerpt size passed to the sub-agent.
 MAX_CONDENSE_INPUT_CHARS = 20_000
-# How much text before the best match to include in the excerpt -- a match
-# is often a heading, so most of the budget should go to what follows it.
+# Include this much text before a match; reserve most space for following content.
 MATCH_WINDOW_CONTEXT_CHARS = 500
-# How close together search-term word matches must be to count as the same
-# cluster, when scoring *where* to center the excerpt (see _best_window).
-# Deliberately much smaller than MAX_CONDENSE_INPUT_CHARS/window_size.
+# Score word clusters within this radius, independently of excerpt size.
 MATCH_CLUSTER_RADIUS_CHARS = 1_500
 # Words shorter than this are too common to be useful search signal.
 MIN_SEARCH_WORD_LENGTH = 4
 USER_AGENT = "Mozilla/5.0 (compatible; IntelligentAgentsChatBot/1.0)"
 
-# Cache fetched pages in memory:
-# URL -> cleaned text. FIFO eviction
+# URL-to-text cache with FIFO eviction.
 _page_cache: dict[str, str] = {}
 _CACHE_MAX_ENTRIES = 32
 
@@ -144,10 +108,9 @@ async def _download(url: str) -> str:
 
 
 async def _get_extracted_text(url: str) -> str:
-    """Return `url`'s cleaned text, from the cache if we've fetched it before.
+    """Return cached or freshly extracted page text.
 
-    Raises httpx.HTTPStatusError / httpx.HTTPError / ValueError on failure --
-    the caller turns those into a user-facing `Error: ...` string itself.
+    Raise httpx.HTTPError or ValueError on download or extraction failure.
     """
     cached = _page_cache.get(url)
     if cached is not None:
@@ -164,9 +127,7 @@ async def _get_extracted_text(url: str) -> str:
     return text
 
 
-# Decimal numbers are matched whole (not split into two tokens on the ".")
-# before falling back to plain word characters. A lone "3" or "878" is useless
-# search signal, but "3.878" is specific enough to matter.
+# Keep decimal numbers as whole search tokens.
 _TOKEN_PATTERN = re.compile(r"\d+\.\d+|\w+")
 
 
@@ -174,9 +135,7 @@ def _search_words(terms: list[str]) -> set[str]:
     words = set()
     for term in terms:
         for token in _TOKEN_PATTERN.findall(term.lower()):
-            # Numbers are exempt from the length filter entirely:
-            # unlike a short common word ("the") even a short number ("43")
-            # is specific enough to be useful.
+            # Short numbers remain useful search terms.
             if token.isdigit() or token.replace(".", "", 1).isdigit():
                 words.add(token)
             elif len(token) >= MIN_SEARCH_WORD_LENGTH:
@@ -192,18 +151,10 @@ def _best_window(
     context_before: int,
     cluster_radius: int,
 ) -> str | None:
-    """Return a `window_size`-char slice of `text` around wherever the most
-    distinct words from `terms` cluster together within `cluster_radius`
-    characters of each other, or `None` if none of them appear in `text` at
-    all. Word-overlap, not exact-phrase matching, so a term like "roman
-    period" still finds a "Roman era" section via the shared word "roman".
+    """Return a text window around the densest cluster of distinct search-term words.
 
-    `cluster_radius` is deliberately much smaller than `window_size` and
-    scores independently of it: scoring over the full (large) `window_size`
-    instead would reward whichever region has the most matches loosely
-    scattered across a huge span, not the region where they're actually
-    clustered together (e.g. a heading and the paragraphs right after it) --
-    which is usually a much smaller span than the excerpt we want to return.
+    Score matches within `cluster_radius`, independently of `window_size`.
+    Return None if no terms match.
     """
     words = _search_words(terms)
     if not words:
@@ -273,8 +224,6 @@ async def run(arguments: dict) -> str:
     search_terms = [str(term).strip() for term in raw_terms if str(term).strip()]
 
     if search_terms:
-        # topic deliberately does not feed the search itself -- see the
-        # module docstring.
         window = _best_window(
             text,
             search_terms,

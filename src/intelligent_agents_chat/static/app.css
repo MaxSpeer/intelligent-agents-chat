@@ -277,10 +277,7 @@ body {
     margin-bottom: 0;
 }
 
-/* The plain-text counterpart to .chat-markdown (see _chat_plain_text in
-   app.py) -- same sizing/wrapping, but white-space: pre-wrap instead of
-   Markdown's own paragraph/line handling, since this is a single text node,
-   not parsed HTML. */
+/* Plain text preserves line breaks and wraps to the chat width. */
 .chat-plain-text {
     display: block;
     min-width: 0;
@@ -406,10 +403,7 @@ body {
 }
 
 .q-tooltip {
-    /* Preserves literal \n line breaks in tooltip text (e.g. the context-usage
-    icon's multi-line breakdown) while still collapsing runs of whitespace and
-    wrapping normally -- a no-op for every other tooltip here, none of which
-    contain \n. */
+    /* Preserve line breaks in tooltip text. */
     white-space: pre-line;
 }
 
@@ -503,12 +497,7 @@ body {
     color: #c83f5b;
 }
 
-/* Collapsible reasoning/tool-call/tool-result trace, shown between a user
-   message and the assistant's final answer -- built live while streaming
-   and rebuilt identically when a finished conversation is replayed. */
-/* Nested inside the same chat bubble as the final answer -- a compact,
-   collapsed-by-default section, not a separate card, so it reads as part of
-   one message rather than a second bubble stacked on top. */
+/* Collapsible trace within the assistant answer bubble. */
 .tool-trace {
     width: 100%;
     margin-bottom: .5rem;
@@ -539,10 +528,7 @@ body {
     margin-bottom: 0;
 }
 
-/* One vertical line of steps inside the trace (reasoning/tool/note, in
-   chronological order) -- the ::before draws one continuous connecting
-   line behind every step's dot, so a turn with many rounds reads as a
-   single timeline rather than a stack of unrelated boxes. */
+/* Chronological trace steps connected by a vertical line. */
 .trace-timeline {
     position: relative;
     width: 100%;
@@ -612,10 +598,7 @@ body {
     font-style: italic;
 }
 
-/* Project-memory sources (see _add_memory_trace_step): a list of
-   independent items, each with its own click-to-reveal excerpt -- unlike
-   every other trace step, this one isn't a single fixed-height preview +
-   popup, so no .trace-step-preview here. */
+/* Project-memory sources with individually expandable excerpts. */
 .memory-source-list {
     width: 100%;
 }
@@ -646,9 +629,7 @@ body {
     font-size: .8rem;
 }
 
-/* A fixed-height glimpse of a step's content -- click opens the full text
-   in a popup (see trace-step-dialog) instead of growing the trace itself
-   for one long tool result or reasoning block. */
+/* Clipped preview; clicking opens the full text in a popup. */
 .trace-step-preview {
     position: relative;
     max-height: 5.5rem;

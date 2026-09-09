@@ -1,18 +1,4 @@
-"""Chat backend: the tool registry and the agent loop.
-
-`stream_reply` yields structured `StreamEvent`s (text, tool calls, tool results) so
-callers can both render and persist each one correctly -- see app.py's send_message
-for how they get turned into chat_message widgets and `messages` table rows. It
-consumes whatever context.py's prepare_conversation_context already assembled; this
-module doesn't need to import anything from there to do that.
-
-Project-document retrieval (search_documents) is a tool like any other here,
-not a separate pipeline -- the model decides for itself whether/when to call
-it, inside the same round budget as every other tool. It's the one tool that
-needs a project_id bound at request time rather than left to the model (see
-tools/search_documents.py), which is why stream_reply takes project_id and
-builds one extra, request-scoped tool alongside the static TOOLS registry.
-"""
+"""Tool registry and agent loop yielding text, tool-call, result, and usage events."""
 
 from __future__ import annotations
 
@@ -37,17 +23,10 @@ from intelligent_agents_chat.tools import (
 
 logger = logging.getLogger(__name__)
 
-# Model Reachability Status
 PROFILE_STATUS_POLL_INTERVAL_SECONDS = 15.0
 profile_status: dict[str, bool | None] = {profile.key: None for profile in MODEL_PROFILES}
 
-# Every tool available regardless of which conversation/project is asking,
-# self-registered by its module. Add a new tool by writing a
-# `tools/<name>.py` that exports a `Tool` (see tools/calculator.py), then
-# listing it here -- nothing else in this file needs to change. Not
-# search_documents (needs a project_id bound per request) or
-# recall_tool_output (needs a conversation to scope itself to) -- both are
-# built fresh per turn instead (see stream_reply).
+# Shared tools; project- and conversation-scoped tools are bound per turn.
 TOOLS: dict[str, Tool] = {
     tool.name: tool
     for tool in (
@@ -60,23 +39,17 @@ TOOLS: dict[str, Tool] = {
 
 MAX_TOOL_ROUNDS = 20
 MAX_TOOL_CALLS_PER_ROUND = 5
-# Once this few tool call rounds are left warn the model to wrap up
+# Warn the model to finish when this many tool-call rounds remain.
 TOOL_ROUNDS_WARNING_AT = 2
 
 gateway = VLLMGateway()
-# Tracked here (not in context.py) -- purely a UI concurrency guard ("this
-# chat is already generating in another tab"), unrelated to context assembly.
+# Prevent concurrent generation in the same conversation across browser tabs.
 active_generations: set[str] = set()
-
-
-#
-# Main Agent Loop: Generating - Toolcall - Tool Result - Generating
-#
 
 
 @dataclass(frozen=True, slots=True)
 class TextChunk:
-    """A fragment of visible model text. Can be reasoning or the part of the final answer"""
+    """A fragment of model reasoning or answer text."""
 
     text: str
     is_reasoning: bool = False
@@ -100,30 +73,11 @@ class ToolResultEvent:
 
 @dataclass(frozen=True, slots=True)
 class UsageEvent:
-    """Real token usage for the whole turn, straight from the model server --
-    not the chars/3 estimate context.py uses for budgeting. Yielded once, at
-    most, right before the turn ends -- omitted entirely if the server never
-    reported usage.
+    """Server-reported token usage, yielded at most once at the end of a turn.
 
-    prompt_tokens: from the turn's first (initial) request only -- the one
-    directly comparable to ContextPlan.estimated_input_tokens. Every later
-    round's prompt also includes everything from earlier rounds (their
-    replies get appended before the next request), so "real input tokens for
-    the whole turn" isn't a meaningful single number beyond round 0.
-
-    completion_tokens: summed across every request the turn made (the
-    initial one plus any tool-call rounds, each of which is its own separate
-    completion with its own full output budget -- see stream_reply). This is
-    "how much the model generated in total this turn", not a context-window
-    quantity by itself.
-
-    peak_total_tokens: the largest prompt+completion total any single request
-    this turn reached -- the most the model ever had to hold in context at
-    once. Since the conversation only ever grows across rounds, that's always
-    the *last* round's total, never an earlier one. Compare against the
-    profile's context_window_tokens to see how close a turn came to actually
-    running out of context mid-turn (nothing currently stops that -- see
-    ContextAssembler, which only ever budgets the turn's first request).
+    prompt_tokens counts the first request; completion_tokens sums all rounds.
+    peak_total_tokens uses the last reported round's prompt-plus-completion total.
+    Omitted when initial prompt usage or round totals are unavailable.
     """
 
     prompt_tokens: int
@@ -135,28 +89,14 @@ StreamEvent = TextChunk | ToolCallEvent | ToolResultEvent | UsageEvent
 
 
 async def _execute_tool(name: str, arguments: dict, tools: dict[str, Tool]) -> str:
-    """Await one tool's `run` to completion before returning.
-
-    Tools run asynchronously so none of them block
-    the event loop that serves every other connected browser tab. This is
-    still a sequential await, though - the calling agent loop (below)
-    stops and waits for this to finish before it does anything else; it does
-    not continue on in parallel while a tool (e.g. a sub-agent) is running.
-
-    `tools` is the round's actual tool set (TOOLS plus the request-scoped
-    search_documents, see stream_reply) -- passed in rather than read off the
-    module-level TOOLS directly, since that no longer has everything a given
-    turn can call.
-    """
+    """Await a tool from the supplied registry and return its result or error as text."""
     tool = tools.get(name)
     if tool is None:
         return f"Error: unknown tool '{name}'"
     try:
         return await tool.run(arguments)
     except Exception as error:
-        # A tool is expected to catch its own errors and return them as text
-        # This is a backstop so a badly-written tool
-        # can't take down the whole agent loop.
+        # Keep unexpected tool failures from aborting the agent loop.
         logger.exception(
             "chat.tool.execution_failed",
             extra={"event": "chat.tool.execution_failed", "tool_name": name},
@@ -165,26 +105,14 @@ async def _execute_tool(name: str, arguments: dict, tools: dict[str, Tool]) -> s
 
 
 def format_tool_call_entry(call: dict) -> str:
-    """Plain text (deliberately never Markdown -- see app.py's _add_trace_step
-    `prefix` parameter) for one tool call's name and arguments: a fixed
-    header shown above the result, which does go through Markdown (see
-    format_tool_result_entry) since tool/argument names routinely contain
-    underscores, which Markdown misreads as emphasis.
-    """
+    """Format a tool call's name and arguments as a plain-text header."""
     return f"🔧 {call['name']} {call['arguments']}"
 
 
 def format_tool_result_entry(result: str | None, *, still_running: bool = False) -> str:
-    """Markdown for a tool call's result -- the half of a trace step that can
-    actually contain structure worth rendering (tables, code, ...), unlike
-    the call header (see format_tool_call_entry, plain text on purpose).
+    """Format a tool result as Markdown for live display and replay.
 
-    Used both live (while `result` may still be None, mid-call) and when
-    replaying a finished conversation from the DB -- keeping the formatting
-    in one place is the whole point, so the two views always look identical.
-    still_running distinguishes "still executing" (live) from "the turn was
-    stopped before this call finished" (a genuinely missing result, only
-    possible on replay).
+    For missing results, `still_running` distinguishes pending from interrupted calls.
     """
     if result is not None:
         return result
@@ -202,21 +130,10 @@ async def stream_reply(
     project_id: str,
     conversation_id: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
-    """Stream the assistant's reply, executing any tool calls the model makes.
+    """Stream text and tool events, executing tool calls sequentially within round limits.
 
-    Yields `TextChunk` for visible model text including reasoning,
-    `ToolCallEvent` once per round when the model requests tool calls,
-    `ToolResultEvent` once per executed call, and a final `UsageEvent` (see its
-    docstring) once the turn's real answer is ready.
-
-    project_id scopes the one project-bound tool, search_documents (see its
-    module docstring) -- built fresh here, alongside the static TOOLS, rather
-    than the model ever supplying which project to search itself.
-
-    conversation_id scopes recall_tool_output to this conversation, built
-    fresh for this call only (see tools/recall_tool_output.py) -- optional
-    only so tests that don't care about it can omit it; every real caller
-    (app.py's send_message) always has one.
+    Bind document search to `project_id` and tool-output recall to `conversation_id`.
+    Yield a final usage event when the required server token counts are available.
     """
     tools_for_turn = {**TOOLS, "search_documents": search_documents.build_tool(project_id)}
     if conversation_id is not None:
@@ -225,7 +142,6 @@ async def stream_reply(
         [tool.schema for tool in tools_for_turn.values()] if profile.supports_tools else None
     )
     conversation_messages: list[dict] = list(messages)
-    # See UsageEvent's docstring for what each of these means and why.
     initial_prompt_tokens: int | None = None
     total_completion_tokens = 0
     last_round_total_tokens: int | None = None
@@ -233,16 +149,8 @@ async def stream_reply(
     for round_index in range(MAX_TOOL_ROUNDS):
         rounds_remaining = MAX_TOOL_ROUNDS - round_index
         if rounds_remaining <= TOOL_ROUNDS_WARNING_AT:
-            # A runtime hint for the model to wrap up instead of continuing to
-            # retry. Not persisted in the DB, just a nudge for this one turn.
-            # role: "user", not "system" -- this is appended mid-conversation,
-            # and at least one vLLM chat template in use here rejects any
-            # system message that isn't the very first one in the request
-            # ("System message must be at the beginning"). The bracketed
-            # disclaimer keeps it from reading as something the user said
-            # (see context.py's not_from_user_note, which this mirrors --
-            # small enough not to be worth importing across an otherwise
-            # decoupled pair of modules).
+            # Use a user-role note because chat templates require system messages first.
+            # This round-budget hint is not persisted.
             conversation_messages.append(
                 {
                     "role": "user",
@@ -280,20 +188,12 @@ async def stream_reply(
             initial_prompt_tokens = round_usage.get("prompt_tokens")
         total_completion_tokens += round_usage.get("completion_tokens", 0)
         if "total_tokens" in round_usage:
-            # Overwritten every round on purpose -- conversation_messages only
-            # ever grows, so the last round's total is always the peak (see
-            # UsageEvent's docstring).
+            # Track the latest reported round total as the turn's context usage.
             last_round_total_tokens = round_usage["total_tokens"]
 
         if not pending_tool_calls:
             if not saw_content and reasoning_chunks:
-                # Bug that sometimes happened: The model finished last round
-                # (no more tool calls to make) without ever producing real `content`
-                # instead only producing reasoning text.
-                # Rather than show an empty answer, treat that last
-                # reasoning text as the real answer: still shown in the
-                # collapsible trace as it streamed, but now also persisted
-                # and displayed as the actual response.
+                # Use reasoning as the answer when the final round has no content.
                 fallback = "".join(reasoning_chunks).strip()
                 if fallback:
                     log_event(
@@ -339,16 +239,12 @@ async def stream_reply(
                 max_tool_calls_per_round=MAX_TOOL_CALLS_PER_ROUND,
             )
 
-        # Now the actual tool execution
         for index, call in enumerate(pending_tool_calls):
             if index < MAX_TOOL_CALLS_PER_ROUND:
                 try:
                     arguments = json.loads(call["arguments"]) if call["arguments"] else {}
                 except json.JSONDecodeError:
                     arguments = {}
-                # Each tool call is awaited to completion
-                # before the next one starts (and before the model gets to see any
-                # results), even though tools themselves run async.
                 result = await _execute_tool(call["name"], arguments, tools_for_turn)
             else:
                 result = (
@@ -360,20 +256,13 @@ async def stream_reply(
                 {"role": "tool", "tool_call_id": call["id"], "content": result}
             )
 
-    # MAX_TOOL_ROUNDS was exhausted without the model ever giving a final
-    # answer (see the round-warning nudge above, which is meant to prevent
-    # this) -- still report what was actually spent.
+    # Report usage even when the round limit prevents a final answer.
     if initial_prompt_tokens is not None and last_round_total_tokens is not None:
         yield UsageEvent(
             prompt_tokens=initial_prompt_tokens,
             completion_tokens=total_completion_tokens,
             peak_total_tokens=last_round_total_tokens,
         )
-
-
-#
-# Model Reachability Polling: Check every profile's vLLM endpoint concurrently
-#
 
 
 async def refresh_profile_status() -> None:

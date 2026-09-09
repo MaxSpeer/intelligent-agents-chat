@@ -1,14 +1,4 @@
-"""Everything a project's uploaded documents do: parsing, chunking, reading
-and writing them in SQLite, and the retrieval the search_documents tool
-runs -- the same way memory.py holds all of project memory. Their *schema*
-lives in database.py with every other table, likewise as memory's does.
-
-Reading top to bottom: the storage primitives (BlobStore for the original
-files, DocumentParser, Chunker, DocumentStore for the SQLite and sqlite-vec
-queries), then DocumentService, which is what the UI actually calls to
-upload/reindex/delete, and finally ProjectRAGRetriever, which turns a query
-into ranked, citable passages for tools/search_documents.py.
-"""
+"""Store, parse, chunk, and embed project documents; retrieve citable passages."""
 
 from __future__ import annotations
 
@@ -90,12 +80,7 @@ class Document:
 
 @dataclass(frozen=True, slots=True)
 class ParsedSegment:
-    """One locatable piece of a parsed document -- a PDF page or a Markdown
-    section. `locator` is the human-readable citation ("page 3", "section:
-    Retrieval") the model gets to quote, and it's the only place that
-    structure is kept: nothing downstream needs the page number or heading
-    as separate values.
-    """
+    """A parsed document segment with a human-readable locator, such as a page or section."""
 
     text: str
     locator: str
@@ -119,12 +104,7 @@ class DocumentChunk:
 
 @dataclass(frozen=True, slots=True)
 class DocumentPassage:
-    """One retrieved passage, as search_documents shows it to the model:
-    the text plus what to cite it as. Nothing more -- unlike project memory
-    (see memory.py's MemoryCandidate), a passage never enters the assembled
-    context and is never persisted as provenance, so there is nothing here
-    to carry a score, an id, or a project through.
-    """
+    """Retrieved passage text with a title and locator for citation."""
 
     text: str
     title: str
@@ -395,9 +375,7 @@ class DocumentStore:
             if document is None:
                 raise DocumentError("Document no longer exists")
             project_id = document["project_id"]
-            # document_chunks_vec has no foreign key of its own -- clear its
-            # rows for this document's old chunks by hand before the old
-            # document_chunks rows (and their row_ids) disappear.
+            # Delete vectors before their chunk IDs disappear; vec0 has no foreign keys.
             old_row_ids = [
                 row["row_id"]
                 for row in connection.execute(
@@ -499,13 +477,10 @@ class DocumentStore:
     def vector_search(
         self, project_id: str, query_vector: Sequence[float], limit: int
     ) -> list[tuple[DocumentChunk, float, str]]:
-        """The `limit` nearest chunks to `query_vector`, scoped to one
-        project via vec0's partition key (see initialize) so this never
-        scans another project's vectors. `distance` is cosine distance
-        (smaller = more similar); `document.status = 'indexed'` is a
-        belt-and-braces filter -- a document whose *reindex* failed keeps
-        its previous chunks/vectors in place with status='failed' rather
-        than being cleaned up, so this keeps searches from surfacing them.
+        """Return up to `limit` nearest indexed chunks within the project's vector partition.
+
+        Cosine distance ranks smaller values first. Exclude failed documents,
+        which may retain chunks from a previous indexing attempt.
         """
         if limit <= 0:
             return []
@@ -538,13 +513,7 @@ class UploadResult:
 
 
 class DocumentService:
-    """Coordinate safe blob storage, parsing, chunking, embeddings, and
-    metadata -- the one entry point app.py's document dialog uses for
-    everything a user can do to a project's documents (upload, retry a
-    failed one, delete). The pieces above each do one job and know nothing
-    about each other; this is what puts them in order and keeps the
-    `documents` row's status honest when a step fails halfway.
-    """
+    """Coordinate document uploads, indexing, deletion, and processing status."""
 
     def __init__(
         self,
@@ -710,14 +679,7 @@ class DocumentService:
 
 
 class ProjectRAGRetriever:
-    """Turn a query into ranked, citable passages from one project's
-    documents: embed the query with the same model the chunks were embedded
-    with, then let sqlite-vec find the nearest ones (see
-    DocumentStore.vector_search). Only ever reached through the
-    search_documents tool -- documents are never pulled into a turn's
-    context automatically (see tools/search_documents.py), which is why a
-    passage carries nothing but what the model needs to read and cite it.
-    """
+    """Embed a query and retrieve ranked, citable passages from one project's documents."""
 
     def __init__(self, store: DocumentStore, embedding_gateway: EmbeddingGateway) -> None:
         self.store = store
@@ -878,10 +840,6 @@ def _chunk_from_row(row: sqlite3.Row) -> DocumentChunk:
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
-
-#
-# The one document stack the whole app shares
-#
 
 document_store = DocumentStore(DEFAULT_DATABASE_PATH)
 _document_root = Path(os.environ.get("RAG_DOCUMENT_ROOT", str(DEFAULT_DOCUMENT_ROOT)))

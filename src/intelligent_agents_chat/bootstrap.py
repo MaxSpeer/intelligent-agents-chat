@@ -1,20 +1,7 @@
-"""Application startup: the one place that actually *does* something.
+"""Initialize logging, the database schema, and project memory.
 
-Every other module in this package is safe to import -- importing it defines
-classes and builds objects, but never opens the database, writes a file, or
-talks to the network. That property is worth protecting: it keeps unit tests
-from touching the real database just by importing the module under test, and
-it makes import order irrelevant.
-
-The work those modules avoid at import time has to happen somewhere, though,
-and this is it: create the schema, then bring project memory up to date with
-whatever is already stored. main() calls bootstrap() once, before the server
-starts serving -- so a request can never arrive before the database exists.
-
-Anything else that runs outside main() and needs a working database (a
-script, a REPL session) should call bootstrap() first too. It is safe to call
-more than once: initialize() only creates what is missing, and the memory
-rebuild is idempotent by design (see ProjectMemoryStore.rebuild_conversation).
+Call bootstrap() before serving requests or using storage from scripts.
+Repeated calls are safe; importing application modules does not initialize storage.
 """
 
 from __future__ import annotations
@@ -43,12 +30,7 @@ def bootstrap() -> None:
         )
         raise
 
-    # Memory is derived data: every entry can be rebuilt from the messages
-    # that are already stored. Doing it once at startup means a database that
-    # was written by an older version -- or edited by hand -- still has
-    # complete, current memory before the first question arrives. A failure
-    # here is logged but not raised: chatting without project memory is worth
-    # more than not starting at all.
+    # Rebuild memory from stored messages; a failure must not prevent startup.
     try:
         rebuilt_entry_count = sum(
             memory_store.rebuild_project(project.id) for project in repository.list_projects()

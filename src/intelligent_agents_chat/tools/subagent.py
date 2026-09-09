@@ -1,11 +1,6 @@
-"""A tool that delegates a self-contained task to a separate sub-agent LLM.
+"""Delegate a self-contained task to an isolated LLM completion and await its answer.
 
-The sub-agent is a single, isolated completion: it gets no access to the
-calling conversation's history and no tools of its own (so it can't spawn
-further sub-agents -- no recursion to worry about). The caller must give it
-everything it needs directly in the task text. This tool always awaits the
-sub-agent's full answer before returning -- the main agent loop does not
-continue on in parallel while it runs (see chat.py's stream_reply).
+The sub-agent has no conversation history or tools; include all context in the task.
 """
 
 from __future__ import annotations
@@ -61,8 +56,7 @@ _gateway = VLLMGateway()
 
 
 async def run(arguments: dict) -> str:
-    """Run arguments["task"] through the sub-agent and return its answer, or an
-    error, as text."""
+    """Run the supplied task through the sub-agent and return its answer or error as text."""
     task = (arguments.get("task") or "").strip()
     if not task:
         return "Error: 'task' is required."

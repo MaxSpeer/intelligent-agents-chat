@@ -30,8 +30,7 @@ def _port(env_var: str, default: int) -> int:
         raise ValueError(f"{env_var} must be an integer port") from error
 
 
-# Local ports for the SSH tunnels opened by cluster/tunnel.sh (local port ==
-# remote port).
+# SSH tunnel ports match the remote model-server ports.
 QWEN3_8B_PORT = _port("VLLM_QWEN3_8B_PORT", 8001)
 QWEN35_9B_PORT = _port("VLLM_QWEN35_9B_PORT", 8002)
 
@@ -42,9 +41,7 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:2b")
 
 DEFAULT_PROFILE_KEY = "qwen3.5-9b"
 
-# qwen3-8b and conspiracy are served by the same vLLM process
-# (cluster/run-vllm-qwen3-8b.sbatch's LORA_MODULES); qwen3.5-9b runs on a
-# second, independent vLLM process (cluster/run-vllm-qwen35-9b.sbatch).
+# qwen3-8b and conspiracy share a vLLM process; qwen3.5-9b uses a separate one.
 MODEL_PROFILES: tuple[ModelProfile, ...] = (
     ModelProfile(
         key="qwen3.5-9b",
@@ -73,8 +70,7 @@ MODEL_PROFILES: tuple[ModelProfile, ...] = (
         label=f"{OLLAMA_MODEL} (local Ollama)",
         base_url=OLLAMA_BASE_URL,
         model=OLLAMA_MODEL,
-        # Ollama enables reasoning by default for Qwen3.5. Keeping it disabled
-        # prevents short responses from spending their entire budget on reasoning.
+        # Disable default reasoning so short-response budgets remain available for answers.
         reasoning_effort="none",
     ),
 )
