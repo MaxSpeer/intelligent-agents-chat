@@ -11,14 +11,13 @@ import logging
 from pathlib import Path
 from typing import Protocol
 
-from intelligent_agents_chat.database import PROJECT_ROOT
 from intelligent_agents_chat.logging_config import log_event
 
 
 # English sentence embeddings, 384 dimensions.
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_DIMENSION = 384
-EMBEDDING_CACHE_DIR = PROJECT_ROOT / ".data" / "embedding-models"
+EMBEDDING_CACHE_DIR = Path(__file__).resolve().parents[2] / ".data" / "embedding-models"
 logger = logging.getLogger(__name__)
 
 
@@ -59,6 +58,7 @@ class LocalEmbeddingGateway:
             return self._model
         async with self._load_lock:
             if self._model is None:  # re-check: another call may have won the race
+                # Defer ONNX imports until embeddings are requested.
                 from fastembed import TextEmbedding
 
                 self._cache_dir.mkdir(parents=True, exist_ok=True)

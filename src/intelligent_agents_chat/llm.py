@@ -6,14 +6,13 @@ import asyncio
 from collections import Counter
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from datetime import date
 import logging
 from time import monotonic
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
 from intelligent_agents_chat.logging_config import log_event, sanitized_endpoint
-from intelligent_agents_chat.models import ModelProfile
+from intelligent_agents_chat.models import MODEL_PROFILES, ModelProfile
 
 
 API_KEY = "not-needed"
@@ -22,22 +21,8 @@ HEALTH_CHECK_TIMEOUT_SECONDS = 3.0
 MAX_TOKENS = 1024
 THINKING_MAX_TOKENS = 8192
 TEMPERATURE = 0.2
-SYSTEM_PROMPT = (
-    "You are a helpful assistant. Give clear, accurate, and concise answers. "
-    "When you use tools, don't settle for a thin or inconclusive first result -- if a "
-    "web search's snippets don't clearly answer the question, fetch the most promising "
-    "page for more detail before giving your final answer. "
-    "An earlier tool call from this conversation appears later only as a compact trace line -- "
-    "name, arguments, and a short preview of its result, not the result itself. Before making a "
-    "call that looks like one you already made, check whether an old trace line's preview "
-    "suggests it already covers the new question, and use recall_tool_output with its id to get "
-    "that exact result back in full instead of calling the tool again."
-)
-
-
-def system_prompt_for_today() -> str:
-    """Insert the current date into the system prompt on every call."""
-    return f"Today's date is {date.today().isoformat()}. {SYSTEM_PROMPT}"
+PROFILE_STATUS_POLL_INTERVAL_SECONDS = 15.0
+profile_status: dict[str, bool | None] = {profile.key: None for profile in MODEL_PROFILES}
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +49,41 @@ async def check_model_available(profile: ModelProfile) -> bool:
     finally:
         await client.close()
     return any(model.id == profile.model for model in response.data)
+
+
+async def refresh_profile_status() -> None:
+    """Check every profile's vLLM endpoint concurrently and update `profile_status` in place."""
+    results = await asyncio.gather(
+        *(check_model_available(profile) for profile in MODEL_PROFILES),
+        return_exceptions=True,
+    )
+    for profile, result in zip(MODEL_PROFILES, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.exception(
+                "chat.profile_status.check_failed",
+                exc_info=result,
+                extra={"event": "chat.profile_status.check_failed", "model_profile": profile.key},
+            )
+            is_available = False
+        else:
+            is_available = result
+        previous = profile_status[profile.key]
+        profile_status[profile.key] = is_available
+        if previous is not None and previous != is_available:
+            log_event(
+                logger,
+                logging.INFO if is_available else logging.WARNING,
+                "chat.profile_status.changed",
+                model_profile=profile.key,
+                available=is_available,
+            )
+
+
+async def poll_profile_status() -> None:
+    """Continuously refresh `profile_status` in the background."""
+    while True:
+        await refresh_profile_status()
+        await asyncio.sleep(PROFILE_STATUS_POLL_INTERVAL_SECONDS)
 
 
 @dataclass(frozen=True, slots=True)

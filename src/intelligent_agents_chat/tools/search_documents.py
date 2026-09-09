@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from intelligent_agents_chat import documents
 from intelligent_agents_chat.tools import Tool
 
 DEFAULT_TOP_K = 5
@@ -54,10 +55,8 @@ def build_tool(project_id: str) -> Tool:
         except (TypeError, ValueError):
             limit = DEFAULT_TOP_K
 
-        from intelligent_agents_chat.documents import rag_retriever
-
         try:
-            results = await rag_retriever.retrieve(
+            results = await documents.rag_retriever.retrieve(
                 project_id=project_id, text=query, limit=limit
             )
         except Exception as error:

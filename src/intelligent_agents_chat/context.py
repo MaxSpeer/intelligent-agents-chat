@@ -6,21 +6,30 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import date
 import json
 import logging
 import math
 
 from intelligent_agents_chat.database import Conversation, Message, repository
-from intelligent_agents_chat.llm import (
-    MAX_TOKENS,
-    THINKING_MAX_TOKENS,
-    system_prompt_for_today,
-)
+from intelligent_agents_chat.llm import MAX_TOKENS, THINKING_MAX_TOKENS
 from intelligent_agents_chat.logging_config import log_event
 from intelligent_agents_chat.memory import MemoryCandidate, memory_store
 from intelligent_agents_chat.models import ModelProfile
 from intelligent_agents_chat.tools import subagent
 
+
+SYSTEM_PROMPT = (
+    "You are a helpful assistant. Give clear, accurate, and concise answers. "
+    "When you use tools, don't settle for a thin or inconclusive first result -- if a "
+    "web search's snippets don't clearly answer the question, fetch the most promising "
+    "page for more detail before giving your final answer. "
+    "An earlier tool call from this conversation appears later only as a compact trace line -- "
+    "name, arguments, and a short preview of its result, not the result itself. Before making a "
+    "call that looks like one you already made, check whether an old trace line's preview "
+    "suggests it already covers the new question, and use recall_tool_output with its id to get "
+    "that exact result back in full instead of calling the tool again."
+)
 
 CHARS_PER_TOKEN_FALLBACK = 3
 DEFAULT_RETRIEVAL_BUDGET_TOKENS = 2_048
@@ -31,6 +40,11 @@ RETRIEVAL_GUARD = (
 MessagePayload = dict[str, object]
 # Number of recent turns excluded from rolling-summary compaction.
 COMPACTION_KEEP_RECENT_TURNS = 3
+
+
+def system_prompt_for_today() -> str:
+    """Insert the current date into the system prompt on every call."""
+    return f"Today's date is {date.today().isoformat()}. {SYSTEM_PROMPT}"
 
 
 def not_from_user_note(text: str) -> str:
@@ -487,11 +501,6 @@ async def _summarize_for_compaction(previous_summary: str | None, new_turns_text
             f"{new_turns_text}"
         )
     return await subagent.run({"task": task})
-
-
-def rebuild_conversation_memory(conversation_id: str) -> int:
-    """Refresh the rebuildable memory index for one changed conversation."""
-    return memory_store.rebuild_conversation(conversation_id)
 
 
 def retrieve_project_memory(

@@ -19,18 +19,12 @@ from intelligent_agents_chat.chat import (
     ToolCallEvent,
     ToolResultEvent,
     UsageEvent,
-    active_generations,
-    format_tool_call_entry,
-    format_tool_result_entry,
-    poll_profile_status,
-    profile_status,
     stream_reply,
 )
 from intelligent_agents_chat.context import (
     ContextOverflowError,
     ContextPlan,
     prepare_conversation_context,
-    rebuild_conversation_memory,
 )
 from intelligent_agents_chat.documents import document_service, document_store
 from intelligent_agents_chat.memory import memory_store
@@ -50,6 +44,8 @@ from intelligent_agents_chat.llm import (
     MAX_TOKENS,
     THINKING_MAX_TOKENS,
     ContextLengthExceededError,
+    poll_profile_status,
+    profile_status,
 )
 from intelligent_agents_chat.logging_config import log_event
 from intelligent_agents_chat.models import DEFAULT_PROFILE_KEY, get_profile, profile_options
@@ -63,6 +59,9 @@ logger = logging.getLogger(__name__)
 
 # Compact and retry a turn this many times after a server context-overflow error.
 MAX_CONTEXT_OVERFLOW_RETRIES = 1
+
+# Prevent concurrent generation in the same conversation across browser tabs.
+active_generations: set[str] = set()
 
 CHAT_MARKDOWN_EXTRAS = [
     "break-on-newline",
@@ -123,6 +122,23 @@ def _profile_label(profile_key: str | None) -> str:
         return get_profile(profile_key).label
     except KeyError:
         return profile_key
+
+
+def format_tool_call_entry(call: dict) -> str:
+    """Format a tool call's name and arguments as a plain-text header."""
+    return f"🔧 {call['name']} {call['arguments']}"
+
+
+def format_tool_result_entry(result: str | None, *, still_running: bool = False) -> str:
+    """Format a tool result as Markdown for live display and replay.
+
+    For missing results, `still_running` distinguishes pending from interrupted calls.
+    """
+    if result is not None:
+        return result
+    if still_running:
+        return "*(waiting for the result...)*"
+    return "*(no result -- generation was stopped before this call finished)*"
 
 
 def _chat_markdown(content: str):
@@ -1574,7 +1590,7 @@ def index() -> None:
                         ),
                     )
                 if messages_saved_count:
-                    rebuild_conversation_memory(conversation.id)
+                    memory_store.rebuild_conversation(conversation.id)
                 if stopped:
                     ui.notify(
                         "Generation stopped; the partial response was saved."

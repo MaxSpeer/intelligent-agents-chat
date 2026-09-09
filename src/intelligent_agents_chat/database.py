@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import sqlite_vec
 
+from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION
 from intelligent_agents_chat.logging_config import log_event
 
 
@@ -340,9 +341,6 @@ class ChatRepository:
                 """
             )
             # vec0 requires a literal vector width and manual row_id synchronization with chunks.
-            # Import the dimension here to avoid a circular import; model changes require migration.
-            from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION
-
             connection.execute(
                 f"""
                 CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_vec USING vec0(

@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import json
 import logging
 
-from intelligent_agents_chat.llm import VLLMGateway, check_model_available
+from intelligent_agents_chat.llm import VLLMGateway
 from intelligent_agents_chat.logging_config import log_event
-from intelligent_agents_chat.models import MODEL_PROFILES, ModelProfile
+from intelligent_agents_chat.models import ModelProfile
 from intelligent_agents_chat.tools import (
     Tool,
     calculator,
@@ -22,9 +21,6 @@ from intelligent_agents_chat.tools import (
 )
 
 logger = logging.getLogger(__name__)
-
-PROFILE_STATUS_POLL_INTERVAL_SECONDS = 15.0
-profile_status: dict[str, bool | None] = {profile.key: None for profile in MODEL_PROFILES}
 
 # Shared tools; project- and conversation-scoped tools are bound per turn.
 TOOLS: dict[str, Tool] = {
@@ -43,8 +39,6 @@ MAX_TOOL_CALLS_PER_ROUND = 5
 TOOL_ROUNDS_WARNING_AT = 2
 
 gateway = VLLMGateway()
-# Prevent concurrent generation in the same conversation across browser tabs.
-active_generations: set[str] = set()
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,23 +96,6 @@ async def _execute_tool(name: str, arguments: dict, tools: dict[str, Tool]) -> s
             extra={"event": "chat.tool.execution_failed", "tool_name": name},
         )
         return f"Error: tool '{name}' failed unexpectedly: {error}"
-
-
-def format_tool_call_entry(call: dict) -> str:
-    """Format a tool call's name and arguments as a plain-text header."""
-    return f"🔧 {call['name']} {call['arguments']}"
-
-
-def format_tool_result_entry(result: str | None, *, still_running: bool = False) -> str:
-    """Format a tool result as Markdown for live display and replay.
-
-    For missing results, `still_running` distinguishes pending from interrupted calls.
-    """
-    if result is not None:
-        return result
-    if still_running:
-        return "*(waiting for the result...)*"
-    return "*(no result -- generation was stopped before this call finished)*"
 
 
 async def stream_reply(
@@ -263,38 +240,3 @@ async def stream_reply(
             completion_tokens=total_completion_tokens,
             peak_total_tokens=last_round_total_tokens,
         )
-
-
-async def refresh_profile_status() -> None:
-    """Check every profile's vLLM endpoint concurrently and update `profile_status` in place."""
-    results = await asyncio.gather(
-        *(check_model_available(profile) for profile in MODEL_PROFILES),
-        return_exceptions=True,
-    )
-    for profile, result in zip(MODEL_PROFILES, results, strict=True):
-        if isinstance(result, BaseException):
-            logger.exception(
-                "chat.profile_status.check_failed",
-                exc_info=result,
-                extra={"event": "chat.profile_status.check_failed", "model_profile": profile.key},
-            )
-            is_available = False
-        else:
-            is_available = result
-        previous = profile_status[profile.key]
-        profile_status[profile.key] = is_available
-        if previous is not None and previous != is_available:
-            log_event(
-                logger,
-                logging.INFO if is_available else logging.WARNING,
-                "chat.profile_status.changed",
-                model_profile=profile.key,
-                available=is_available,
-            )
-
-
-async def poll_profile_status() -> None:
-    """Continuously refresh `profile_status` in the background."""
-    while True:
-        await refresh_profile_status()
-        await asyncio.sleep(PROFILE_STATUS_POLL_INTERVAL_SECONDS)
