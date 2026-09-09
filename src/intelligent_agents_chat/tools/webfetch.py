@@ -73,7 +73,7 @@ _CACHE_MAX_ENTRIES = 32
 _SCHEMA: dict = {
     "type": "function",
     "function": {
-        "name": "fetch_page",
+        "name": "web_fetch",
         "description": (
             "Fetch a web page by URL and return its main content as clean text. Short "
             "pages come back in full. Long pages are condensed -- from the top by "

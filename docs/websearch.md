@@ -3,7 +3,7 @@
 [Back to the overview](../README.md#feature-overview)
 
 Websearch gives the agent access to information outside its model weights. We split it into
-two tools: **`web_search` finds sources; `fetch_page` reads a selected source**. The model decides
+two tools: **`web_search` finds sources; `web_fetch` reads a selected source**. The model decides
 when to use them and which results deserve a closer look.
 
 `web_search` uses `ddgs` and returns up to five results with a title, URL, and short snippet.
@@ -14,7 +14,7 @@ enough information to answer the question, so the agent is prompted to fetch a p
 
 ![Page fetching: extract text, return short pages directly, or select and summarize an excerpt](images/web-search-flow.png)
 
-The diagram's `webfetch` step is exposed to the model as `fetch_page`. It downloads the page
+The diagram's `webfetch` step is exposed to the model as `web_fetch`. It downloads the page
 and uses **Trafilatura** to extract readable text. Short pages are returned directly. For longer
 pages, we select a bounded excerpt and ask a [subagent](subagents.md) to condense it.
 

@@ -44,11 +44,20 @@ recent turns outside the summary. Later compactions extend that rolling summary 
 aged-out turns, instead of repeatedly summarizing the entire conversation. The summary and
 its message boundary are stored separately; the original messages remain in SQLite.
 
-Budgeting uses a character-based token estimate, so it is approximate. Tool results can also
-grow the context during a turn, and each model call gets its own output budget. If the server
-reports an actual context overflow, the application attempts compaction and a retry. This
-is not a guarantee that every input will fit: summaries can lose detail, and mandatory input
-or the active turn can still be too large.
+Budgeting uses a character-based token estimate (characters / 3), so it is approximate, and how
+far off depends on what the text actually looks like. From a handful of real replies, not a
+large-scale experiment, just a rough eyeball of the gap:
+
+| Content | Characters / real token | Estimate vs. reality |
+| --- | --- | --- |
+| Flowing English prose | 4.2 – 5.8 | Overestimates (compacts earlier than needed) |
+| Short factual lines (names, years, no markdown) | ~3.0 | Close |
+| Dense Markdown tables (`\|`, `%`, `**`) | 1.4 – 1.5 | Underestimates (real usage can run well ahead) |
+
+Tool results can also grow the context during a turn, and each model call gets its own output
+budget. If the server reports an actual context overflow, the application attempts compaction
+and a retry. This is not a guarantee that every input will fit: summaries can lose detail, and
+mandatory input or the active turn can still be too large.
 
 Code: [context.py](../src/intelligent_agents_chat/context.py) handles assembly and compaction;
 [app.py](../src/intelligent_agents_chat/app.py) connects the context plan and retry to the chat.

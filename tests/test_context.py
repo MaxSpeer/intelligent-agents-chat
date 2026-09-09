@@ -237,7 +237,7 @@ class CompletionMessagesTests(unittest.TestCase):
         self.assertNotIn("[tool:", messages[2]["content"])
 
     def test_a_tool_error_result_is_reported_in_the_trace_line(self) -> None:
-        call = {"id": "call_1", "name": "fetch_page", "arguments": '{"url": "not-a-url"}'}
+        call = {"id": "call_1", "name": "web_fetch", "arguments": '{"url": "not-a-url"}'}
         messages = completion_messages(
             [
                 _message("user", "Fetch that page."),
@@ -264,7 +264,7 @@ class CompletionMessagesTests(unittest.TestCase):
         latest) it wouldn't be collapsed at all -- see
         test_the_latest_turn_is_never_collapsed_even_with_tool_activity.
         """
-        call = {"id": "call_1", "name": "fetch_page", "arguments": '{"url": "https://x"}'}
+        call = {"id": "call_1", "name": "web_fetch", "arguments": '{"url": "https://x"}'}
         messages = completion_messages(
             [
                 _message("user", "Fetch that page."),

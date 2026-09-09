@@ -18,11 +18,7 @@ Users can inspect memories, disable individual entries, and turn retrieval off f
 
 ## Retrieval and design decisions
 
-We use **SQLite FTS5 with BM25 ranking**. SQLite already stores our conversations, so memory
-needs neither another database service nor an embedding model. The tradeoff is lexical matching:
-specific names and terms work well, while differently worded references may be missed.
-
-Before the first model request of each turn, the current user message becomes the search query.
+We use **SQLite FTS5 with BM25 ranking**. Before the first model request of each turn, the current user message becomes the search query.
 We remove common stop words and search enabled entries within the current project, excluding
 the active conversation because it already has its own history. Retrieval is automatic when
 memory is enabled; the model does not have to request a memory tool.

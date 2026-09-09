@@ -36,14 +36,14 @@ class WebSearchToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("History of Stonehenge", result)
 
     async def test_results_include_a_follow_up_reminder(self) -> None:
-        # Nudges the model to fetch_page a promising result instead of
+        # Nudges the model to web_fetch a promising result instead of
         # settling for thin snippets -- see the real case this addresses in
         # the module history: a search alone was treated as sufficient even
         # though its snippets didn't actually answer the question.
         with mock.patch.object(websearch, "_search", return_value=_RESULTS):
             result = await websearch.run({"query": "Stonehenge"})
 
-        self.assertIn("fetch_page", result)
+        self.assertIn("web_fetch", result)
 
     async def test_empty_results_are_a_reported_error(self) -> None:
         with mock.patch.object(websearch, "_search", return_value=[]):
