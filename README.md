@@ -92,7 +92,7 @@ another job. Wait for `Application startup complete`, then open the tunnel below
 After the vLLM job has started, open another terminal on **your own machine**:
 
 ```bash
-bash tunnel.sh qwen3-8b YOUR_HPI_USERNAME
+bash cluster/tunnel.sh qwen3-8b YOUR_HPI_USERNAME
 ```
 
 The script reads the job's `.endpoint` file through the login node, verifies the job is running,
@@ -100,7 +100,7 @@ and forwards its API to local port `8001`. Keep the terminal open. For an intera
 the endpoint filename printed by the server, without `.endpoint`, as the third argument:
 
 ```bash
-bash tunnel.sh qwen3-8b YOUR_HPI_USERNAME YOUR_ENDPOINT_NAME
+bash cluster/tunnel.sh qwen3-8b YOUR_HPI_USERNAME YOUR_ENDPOINT_NAME
 ```
 
 Alternatively, use the exact SSH tunnel command printed by the server. Check
