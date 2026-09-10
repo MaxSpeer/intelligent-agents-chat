@@ -73,20 +73,20 @@ On the cluster, from the prepared checkout:
 
 ```bash
 cd /sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat
+mkdir -p /sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/vllm
 sbatch --account=sci-lippert-intelligent-agents cluster/run-vllm-qwen3-8b.sbatch
 ```
 
 This single server serves all three active choices. If you already have an interactive GPU
 allocation, use `bash cluster/run-vllm-qwen3-8b.sbatch` inside that GPU shell instead of submitting
-another job. Wait for `Application startup complete`. See the
-[interactive startup instructions](cluster/plain-english-chat.md) for the full sequence.
+another job. Wait for `Application startup complete`, then open the tunnel below.
 
 ### 3. Open the SSH tunnel locally
 
 After the vLLM job has started, open another terminal on **your own machine**:
 
 ```bash
-bash cluster/tunnel.sh qwen3-8b YOUR_HPI_USERNAME
+bash tunnel.sh qwen3-8b YOUR_HPI_USERNAME
 ```
 
 The script reads the job's `.endpoint` file through the login node, verifies the job is running,
@@ -94,7 +94,7 @@ and forwards its API to local port `8001`. Keep the terminal open. For an intera
 the endpoint filename printed by the server, without `.endpoint`, as the third argument:
 
 ```bash
-bash cluster/tunnel.sh qwen3-8b YOUR_HPI_USERNAME YOUR_ENDPOINT_NAME
+bash tunnel.sh qwen3-8b YOUR_HPI_USERNAME YOUR_ENDPOINT_NAME
 ```
 
 Alternatively, use the exact SSH tunnel command printed by the server. Check

@@ -3,8 +3,8 @@
 # node/port first. Run this on your LOCAL machine (not on the cluster),
 # while connected to the Scientific Compute VPN.
 #
-#   cluster/tunnel.sh qwen3-8b maximilian.speer
-#   cluster/tunnel.sh qwen3-8b maximilian.speer plain-english
+#   tunnel.sh qwen3-8b maximilian.speer
+#   tunnel.sh qwen3-8b maximilian.speer plain-english
 #
 # The optional third argument is the endpoint filename without .endpoint,
 # printed by the server. Use it for interactive jobs with a custom job name

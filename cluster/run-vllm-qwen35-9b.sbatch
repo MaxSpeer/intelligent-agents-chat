@@ -22,15 +22,6 @@ readonly MODEL_ID="Qwen/Qwen3.5-9B"
 readonly MODEL_REVISION="e0330a142393d4516eca6ab0145ce66ac513e842"
 readonly SERVED_MODEL_NAME="qwen3.5-9b"
 readonly SERVER_HOST="127.0.0.1"
-# Fixed, not chosen per job: this script always serves the same model with
-# the same job name, so it can safely own one specific port -- matches
-# VLLM_9B_DEFAULT_BASE_URL's default port in config.py already. The only
-# collision risk is another job (yours or a labmate's) binding this exact
-# port on the exact same node at the exact same time; if that happens vLLM
-# fails to start immediately with a clear "address already in use" error --
-# just resubmit. See cluster/README.md for the older per-job-random-port
-# scheme this replaced, and why a fixed port is fine now that each model has
-# its own dedicated script instead of one script serving any model.
 readonly SERVER_PORT="8002"
 readonly MAX_MODEL_LEN="32768"
 readonly GPU_MEMORY_UTILIZATION="0.90"
@@ -38,12 +29,6 @@ readonly TENSOR_PARALLEL_SIZE="1"
 readonly REASONING_PARSER="qwen3"
 readonly TOOL_CALL_PARSER="qwen3_coder"
 
-# Deliberately empty and not meant to be filled in here: Qwen3.5-9B's hybrid
-# GDN attention isn't actually usable with LoRA in vLLM (confirmed on v0.23.0
-# and v0.27.0 -- the adapter loads without error but has zero effect on
-# generation, see training/README.md). This script exists to serve the plain
-# base model for comparison/testing; use run-vllm-qwen3-8b.sbatch for the
-# trained conspiracy adapter.
 readonly LORA_MODULES=()
 
 log() {
@@ -78,9 +63,6 @@ readonly SCRATCH_HOME="${RUNTIME_ROOT}/home"
 readonly SCRATCH_TMP="${RUNTIME_ROOT}/tmp"
 readonly SCRATCH_CACHE="${RUNTIME_ROOT}/cache"
 readonly NO_ENTRYPOINT="${RUNTIME_ROOT}/no-entrypoint.sh"
-# Named after the job (not the job ID) and overwritten on every run, so the
-# tunnel lookup is always the same, predictable path -- no need to hunt for
-# the latest job ID first. See cluster/tunnel.sh, which reads this directly.
 readonly ENDPOINT_FILE="${PROJECT_ROOT}/logs/vllm/${SLURM_JOB_NAME}.endpoint"
 
 umask 002
@@ -100,8 +82,6 @@ mkdir -p \
     "${PROJECT_ROOT}/models/huggingface/xet"
 chmod 700 "$RUNTIME_ROOT" "$ENROOT_RUNTIME_PATH"
 
-# The vLLM image has its own Docker entrypoint. This small Enroot command script
-# makes the command after the image name behave like --no-container-entrypoint.
 printf '%s\n' '#!/bin/sh' 'exec "$@"' >"$NO_ENTRYPOINT"
 chmod 700 "$NO_ENTRYPOINT"
 
@@ -172,7 +152,7 @@ base_url=http://${SERVER_HOST}:${SERVER_PORT}/v1
 model=${SERVED_MODEL_NAME}
 EOF
 log "Endpoint file: ${ENDPOINT_FILE}"
-log "Tunnel: cluster/tunnel.sh qwen35-9b (or: ssh -J <you>@hpc.sci.hpi.de -N -L ${SERVER_PORT}:127.0.0.1:${SERVER_PORT} <you>@$(hostname -f))"
+log "Tunnel: tunnel.sh qwen35-9b (or: ssh -J <you>@hpc.sci.hpi.de -N -L ${SERVER_PORT}:127.0.0.1:${SERVER_PORT} <you>@$(hostname -f))"
 
 enroot_args=(
     --rw
@@ -196,7 +176,6 @@ enroot_args=(
     --mount "${SCRATCH_TMP}:/tmp"
 )
 
-# Passing only the variable name keeps secret values out of the process arguments.
 [[ -z "${HF_TOKEN:-}" ]] || enroot_args+=(--env HF_TOKEN)
 [[ -z "${VLLM_API_KEY:-}" ]] || enroot_args+=(--env VLLM_API_KEY)
 

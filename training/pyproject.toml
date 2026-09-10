@@ -4,19 +4,7 @@ version = "0.1.0"
 description = "LoRA SFT training scripts for Qwen3-8B, kept separate from the chat app's dependencies."
 requires-python = ">=3.11"
 dependencies = [
-    # torch<2.11 keeps the PyPI default build on the CUDA 12.8 runtime
-    # (bundles nvidia-cublas-cu12==12.8.4.1). torch>=2.11 defaults to a CUDA
-    # 13.0 build on PyPI, which errors ("CUDA driver is too old") against
-    # this cluster's driver -- and pytorch.org's own wheel index (which
-    # would otherwise let us pin an explicit cuXXX build) isn't reachable
-    # from here. Bump the ceiling only after confirming the driver on the
-    # GPU node you're using actually supports CUDA 13.
     "torch>=2.8,<2.11",
-    # Known-good pin (was originally required for the now-abandoned Qwen3.5
-    # attempt, whose "qwen3_5" architecture needed >=5.15; Qwen3-8B's plain
-    # Qwen3ForCausalLM has been supported for much longer). 5.x renamed/
-    # removed some TrainingArguments fields (e.g. warmup_ratio ->
-    # warmup_steps as a float); train_lora.py already accounts for that.
     "transformers>=5.15,<5.16",
     "accelerate>=1.0",
     "peft>=0.13,<0.14",
@@ -24,13 +12,6 @@ dependencies = [
     "datasets>=3.0",
 ]
 
-# Scripts only, nothing to import as a package -- skip the build step entirely.
 [tool.uv]
 package = false
-# Committed so every checkout uses this automatically -- torch/CUDA downloads
-# are multi-GB, and home-directory quotas here are small. This only relocates
-# uv's shared download cache; it does NOT relocate the venv itself (uv has no
-# pyproject.toml setting for that) -- UV_PROJECT_ENVIRONMENT still needs to be
-# exported per README.md, or `uv sync` creates training/.venv wherever the
-# repo happens to be checked out.
 cache-dir = "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/cache/uv"

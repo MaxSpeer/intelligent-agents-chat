@@ -6,5 +6,5 @@ __pycache__/
 .ruff_cache/
 .data/
 Intelligent Agents Project Prompt-2.pdf
-training/data/
+training/conspiracy/data/
 training/output/

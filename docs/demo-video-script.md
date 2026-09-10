@@ -2,7 +2,7 @@
 
 1. Architektur-Überblick (~30s) — UI, Modellauswahl. Architektur Grafik nochmal zeigen.
 
-2. Fine-Tuning (LoRA) — qwen3-8b vs. qwen3-8b (conspiracy)
+2. Fine-Tuning (LoRA) — Basismodell, Conspiracy und Simple English
 
 Neues Projekt "Flat Earth"
 Neuer Chat
@@ -14,6 +14,41 @@ Who built the pyramids?
 ```
 I think it were just many slaves"
 ```
+
+
+**Simple English — gleicher Prompt, zwei neue Chats**
+
+Je einen frischen Chat mit **Qwen3 8B** und **Qwen3 8B (Simple English)** öffnen.
+
+Worauf achten: Der Adapter soll den Begriff durch konkrete Handlungen erklären
+(z. B. Text abdecken, aus dem Gedächtnis aufschreiben, anschließend prüfen).
+Die Rückfrage soll direkt beantwortet werden. Kürzere Antworten allein reichen nicht.
+
+Zusätzliche Testideen, für dieses Skript formuliert und noch nicht am Adapter ausgeführt:
+
+```text
+My computer says a file is read-only. What does that mean, and what can I do?
+```
+
+Erwartung: „read-only“ erklären, Lesen und Ändern unterscheiden und keine pauschale
+Aufforderung geben, Schutzrechte zu umgehen. Nötigenfalls nach Programm oder Dateityp fragen.
+
+```text
+My camera already has a lens. Do I need to buy another one to take good photos?
+```
+
+Erwartung: keine pauschale Kaufempfehlung; vorhandenes Objektiv, gewünschte Fotos und
+Wechselbarkeit berücksichtigen. Wichtige Bedingungen müssen trotz einfacher Sprache bleiben.
+
+```text
+A weather forecast says there is a 40% chance of rain tomorrow. Does that mean it will rain for 40% of the day?
+```
+
+Erwartung: Wahrscheinlichkeit von Dauer unterscheiden, verständlich und ohne
+scheinbar sichere Vorhersage. Dies prüft zusätzlich, ob die Vereinfachung sachlich korrekt bleibt.
+
+
+
 
 3. Memory — Projekt „Lisbon Trip", zwei fertige Konversationen:
 

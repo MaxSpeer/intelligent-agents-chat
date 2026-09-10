@@ -10,7 +10,7 @@ import textwrap
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "cluster" / "tunnel.sh"
+SCRIPT = Path(__file__).resolve().parents[1] / "tunnel.sh"
 ENDPOINT = "job=12345\nnode=gx27.hpc.sci.hpi.de\nhost=127.0.0.1\nport=8001\nmodel=qwen3-8b\n"
 
 
@@ -19,7 +19,7 @@ def run_tunnel(tmp_path):
     calls_file = tmp_path / "ssh-calls.jsonl"
     fake_ssh = tmp_path / "ssh"
     fake_ssh.write_text(
-        f"#!{sys.executable}\n"
+        "#!/usr/bin/env python3\n"
         + textwrap.dedent(
             """
             import json, os, sys
@@ -43,7 +43,7 @@ def run_tunnel(tmp_path):
     def run(*extra_args, **overrides):
         env = {
             **os.environ,
-            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "PATH": os.pathsep.join((str(tmp_path), str(Path(sys.executable).parent), os.environ["PATH"])),
             "SSH_CALLS": str(calls_file),
             "ENDPOINT": ENDPOINT,
             "JOB_STATE": "RUNNING",

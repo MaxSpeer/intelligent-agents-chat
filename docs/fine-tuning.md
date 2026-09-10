@@ -42,7 +42,7 @@ attention projections, and replaced the fixed epoch count with early stopping on
 
 The accepted dataset, `plain_english_clear_v2`, contains **2,000 training, 100 validation, and
 100 test dialogues**. The target style uses short sentences and familiar words, with technical
-terms explained in simple language. The [dataset README](../training/datasets/plain_english_clear_v2/README.md)
+terms explained in simple language. The [training overview](../training/README.md)
 documents the sources, answer revisions, licences, and quality checks.
 
 Training supervises each assistant answer separately and masks preceding context, using the
@@ -50,10 +50,11 @@ non-thinking chat template. The run starts from the pinned Qwen3 8B base; it doe
 from the Conspiracy adapter. Each saved epoch is compared against base-model validation answers.
 
 The accepted run is `qwen3-8b-plain-english-clear-v2-retry1`. The chat serves **checkpoint 193**,
-chosen after [reviewing the validation answers](../training/evaluations/plain_english_clear_v2_retry1_2527052/REVIEW.md),
+chosen after [reviewing the validation answers](../training/simple_english/validation_comparison.jsonl),
 under the API name `plain-english-clear-v2` and display label **Qwen3 8B (Simple English)**.
 The final epoch remains available in the run directory; it is not the selected serving adapter.
-Historical runs are archived, with paths recorded in [model-artifacts.md](../cluster/model-artifacts.md).
+The selected run and weight checksum are recorded in
+[selection.json](../training/simple_english/selection.json); earlier repository artifacts remain in Git history.
 
 Training commands and experiment details are in [training/README.md](../training/README.md).
 The shared serving setup is shown in the [architecture overview](../README.md#architecture).

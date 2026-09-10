@@ -1,0 +1,81 @@
+{
+  "language": "en",
+  "system_message": {
+    "role": "system",
+    "content": "You are a helpful assistant. Answer the user's question directly and clearly."
+  },
+  "split_counts": {
+    "train": 2000,
+    "validation": 100,
+    "test": 100
+  },
+  "base_model": "Qwen/Qwen3-8B",
+  "base_model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+  "max_sequence_length": 1024,
+  "validation_generation_ids": [
+    "plain2k-everyday-train_sft-0993-qa2",
+    "plain2k-everyday-train_sft-0515-dialogue",
+    "plain2k-everyday-train_sft-0842-dialogue",
+    "plain2k-everyday-train_sft-0546-dialogue",
+    "plain2k-everyday-train_sft-0618-qa4",
+    "plain2k-everyday-train_sft-1500-qa4",
+    "plain2k-everyday-train_sft-0316-dialogue",
+    "plain2k-everyday-train_sft-1878-qa2",
+    "plain2k-everyday-train_sft-1683-qa4",
+    "plain2k-everyday-train_sft-0994-dialogue"
+  ],
+  "tokenizer": {
+    "source": "Pinned tokenizer inherited from parent; current validation uses a local tokenizer only.",
+    "source_path": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-conspiracy",
+    "transformers_version_used": "5.15.1",
+    "file_sha256": {
+      "chat_template.jinja": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8",
+      "tokenizer.json": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506",
+      "tokenizer_config.json": "04b1682c59acbd057f4c9072297faa73d56fc9de053094c659cdb4c464f58f86"
+    }
+  },
+  "objective": "Short sentences, familiar words, explained terms, concrete examples and preserved meaning. Whole answers may be longer.",
+  "split_statistics": {
+    "train": {
+      "dialogue_examples": 2000,
+      "source_conversations": 1393,
+      "assistant_answers": 3085,
+      "multi_turn_dialogues": 662,
+      "mean_answer_words": 33.989
+    },
+    "validation": {
+      "dialogue_examples": 100,
+      "source_conversations": 65,
+      "assistant_answers": 160,
+      "multi_turn_dialogues": 37,
+      "mean_answer_words": 42.438
+    },
+    "test": {
+      "dialogue_examples": 100,
+      "source_conversations": 81,
+      "assistant_answers": 198,
+      "multi_turn_dialogues": 56,
+      "mean_answer_words": 27.682
+    }
+  },
+  "review_scope": {
+    "all_training_and_validation_answers_have_editorial_decisions": true,
+    "training_answer_decisions": 3085,
+    "validation_answer_decisions": 160,
+    "test_answers_rewritten": 0,
+    "human_reviewed": false,
+    "complete_external_fact_check": false
+  },
+  "test_policy": "Existing test files byte-for-byte unchanged. Inherited topic overlap remains; not an independent new human benchmark.",
+  "dataset_name": "simple_english",
+  "original_release": "plain_english_clear_v2",
+  "file_sha256": {
+    "train.jsonl": "ef4d54923de48075a362a7157141fd2fb504afd2d53d0e6370aa360ba80fe261",
+    "validation.jsonl": "4c3b94b282b1e12b3f9b6f6ceed16339f05961e82e47810b50637635e1f21113",
+    "test.jsonl": "1309699fa8cb0522958278150f7f2f4e71e64e869d52abb3600eda545722e341",
+    "provenance.jsonl": "9997bd64e46581c5c0415670349ac678f2493c9b8b830df379820023b4b8713c",
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "NOTICE": "701626a857ca2c5fd6025ab322fc28d0f0f994928455cf1537476a4b28aebeb8"
+  },
+  "validation_scope": "Final file integrity, chat structure and retained source provenance; historical editorial revisions are available in Git history."
+}

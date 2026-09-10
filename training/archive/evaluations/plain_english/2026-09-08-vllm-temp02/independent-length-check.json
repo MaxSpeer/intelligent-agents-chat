@@ -1,9 +1,0 @@
-{
-  "method": "Whitespace split of raw API content, first answers only",
-  "total_words": {
-    "qwen3-8b": 2416,
-    "plain-english": 3142
-  },
-  "adapter_growth_percent": 30.049668874172177,
-  "note": "Independent sensitivity check; headline statistics use the documented regex count."
-}

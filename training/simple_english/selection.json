@@ -1,0 +1,64 @@
+{
+  "display_name": "Qwen3 8B (Simple English)",
+  "api_model": "plain-english-clear-v2",
+  "base_model": "Qwen/Qwen3-8B",
+  "base_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+  "run": "qwen3-8b-plain-english-clear-v2-retry1",
+  "training_job_id": "2527052",
+  "selected_checkpoint": 193,
+  "adapter_path": "adapters/qwen3-8b-plain-english-clear-v2-retry1/checkpoint-193",
+  "adapter_sha256": "ed7eb9a2866a418780701e8d62ac543009751efe8de5c0e77a757b1e37b026d0",
+  "selection_basis": "Manual validation-answer comparison and user acceptance; not a claim of best overall checkpoint.",
+  "dataset_path": "training/simple_english/data",
+  "verification": "Recorded selection and checksum from the completed run; cluster weights are not accessible in this checkout.",
+  "training": {
+    "settings": {
+      "BASE_MODEL": "Qwen/Qwen3-8B",
+      "REVISION": "b968826d9c46dd6066d109eabc6255188de91218",
+      "NUM_EPOCHS": 3.0,
+      "PER_DEVICE_BATCH_SIZE": 1,
+      "GRAD_ACCUM_STEPS": 16,
+      "LEARNING_RATE": 0.0001,
+      "LORA_R": 8,
+      "LORA_ALPHA": 16,
+      "LORA_DROPOUT": 0.05,
+      "TARGET_MODULES": [
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj"
+      ],
+      "MAX_SEQ_LEN": 1024,
+      "WARMUP_RATIO": 0.03,
+      "SEED": 42,
+      "USE_4BIT": true,
+      "USE_GRADIENT_CHECKPOINTING": true,
+      "LOGGING_STEPS": 1,
+      "CHECKPOINT_STRATEGY": "epoch",
+      "SAVE_TOTAL_LIMIT": 3,
+      "LOAD_BEST_MODEL_AT_END": false
+    },
+    "started_at": "2026-09-09T21:26:45.253449+00:00",
+    "finished_at": "2026-09-09T22:29:54.755122+00:00",
+    "gpu": "NVIDIA A40",
+    "train_conversations": 2000,
+    "train_answer_examples": 3085,
+    "validation_conversations": 100,
+    "expected_optimizer_steps": 579
+  },
+  "validation": {
+    "dialogues": 10,
+    "answers": 19,
+    "eval_loss": 1.4692469835281372,
+    "mean_first_answer_words": 35.6,
+    "mean_all_answer_words": 34.2,
+    "baseline_mean_all_answer_words": 219.2,
+    "conditions": "Saved 4-bit training-model outputs, temperature 0.2, seed 42, non-thinking, neutral prompt; follow-ups use each model's own answers.",
+    "limitations": [
+      "Development validation questions; not an independent test benchmark.",
+      "No human comprehension study or complete factual verification.",
+      "Checkpoint 193 has a known incorrect definition of whole grains.",
+      "Selection is a manual style preference, not proof of the best checkpoint."
+    ]
+  }
+}
