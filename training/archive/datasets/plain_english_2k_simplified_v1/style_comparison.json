@@ -1,0 +1,98 @@
+{
+  "method": "Whitespace word counts. Sentence proxy splits on punctuation followed by whitespace or newlines. Not a reading-level or correctness score.",
+  "splits": {
+    "train": {
+      "before": {
+        "answers": 3085,
+        "mean_answer_words": 30.86,
+        "mean_sentence_words_proxy": 13.53,
+        "sentences_over_25_words_proxy": 275,
+        "answers_under_15_words": 108
+      },
+      "after": {
+        "answers": 3085,
+        "mean_answer_words": 29.96,
+        "mean_sentence_words_proxy": 12.62,
+        "sentences_over_25_words_proxy": 131,
+        "answers_under_15_words": 120
+      },
+      "changed_answers": 660,
+      "changed_subset_before": {
+        "answers": 660,
+        "mean_answer_words": 35.59,
+        "mean_sentence_words_proxy": 14.81,
+        "sentences_over_25_words_proxy": 152,
+        "answers_under_15_words": 1
+      },
+      "changed_subset_after": {
+        "answers": 660,
+        "mean_answer_words": 31.37,
+        "mean_sentence_words_proxy": 11.07,
+        "sentences_over_25_words_proxy": 8,
+        "answers_under_15_words": 13
+      }
+    },
+    "validation": {
+      "before": {
+        "answers": 160,
+        "mean_answer_words": 29.25,
+        "mean_sentence_words_proxy": 13.93,
+        "sentences_over_25_words_proxy": 19,
+        "answers_under_15_words": 8
+      },
+      "after": {
+        "answers": 160,
+        "mean_answer_words": 28.29,
+        "mean_sentence_words_proxy": 12.75,
+        "sentences_over_25_words_proxy": 8,
+        "answers_under_15_words": 8
+      },
+      "changed_answers": 34,
+      "changed_subset_before": {
+        "answers": 34,
+        "mean_answer_words": 32.12,
+        "mean_sentence_words_proxy": 16.3,
+        "sentences_over_25_words_proxy": 12,
+        "answers_under_15_words": 0
+      },
+      "changed_subset_after": {
+        "answers": 34,
+        "mean_answer_words": 27.59,
+        "mean_sentence_words_proxy": 10.91,
+        "sentences_over_25_words_proxy": 1,
+        "answers_under_15_words": 0
+      }
+    },
+    "test": {
+      "before": {
+        "answers": 198,
+        "mean_answer_words": 28.98,
+        "mean_sentence_words_proxy": 13.8,
+        "sentences_over_25_words_proxy": 19,
+        "answers_under_15_words": 4
+      },
+      "after": {
+        "answers": 198,
+        "mean_answer_words": 27.7,
+        "mean_sentence_words_proxy": 12.64,
+        "sentences_over_25_words_proxy": 9,
+        "answers_under_15_words": 7
+      },
+      "changed_answers": 50,
+      "changed_subset_before": {
+        "answers": 50,
+        "mean_answer_words": 30.06,
+        "mean_sentence_words_proxy": 14.74,
+        "sentences_over_25_words_proxy": 10,
+        "answers_under_15_words": 0
+      },
+      "changed_subset_after": {
+        "answers": 50,
+        "mean_answer_words": 24.98,
+        "mean_sentence_words_proxy": 10.41,
+        "sentences_over_25_words_proxy": 0,
+        "answers_under_15_words": 3
+      }
+    }
+  }
+}

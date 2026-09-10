@@ -1,0 +1,103 @@
+{
+  "status": "training_complete_checkpoint_selection_pending",
+  "settings": {
+    "BASE_MODEL": "Qwen/Qwen3-8B",
+    "REVISION": "b968826d9c46dd6066d109eabc6255188de91218",
+    "NUM_EPOCHS": 3.0,
+    "PER_DEVICE_BATCH_SIZE": 1,
+    "GRAD_ACCUM_STEPS": 16,
+    "LEARNING_RATE": 0.0001,
+    "LORA_R": 8,
+    "LORA_ALPHA": 16,
+    "LORA_DROPOUT": 0.05,
+    "TARGET_MODULES": [
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "o_proj"
+    ],
+    "MAX_SEQ_LEN": 1024,
+    "WARMUP_RATIO": 0.03,
+    "SEED": 42,
+    "USE_4BIT": true,
+    "USE_GRADIENT_CHECKPOINTING": true,
+    "LOGGING_STEPS": 1,
+    "CHECKPOINT_STRATEGY": "epoch",
+    "SAVE_TOTAL_LIMIT": 3,
+    "LOAD_BEST_MODEL_AT_END": false
+  },
+  "output_dir": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-plain-english-v2",
+  "tokenizer_path": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-conspiracy",
+  "tokenizer_only_from_snapshot": true,
+  "model_initialization": "fresh pinned base; no existing adapter is loaded",
+  "dataset_file_sha256": {
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "NOTICE": "04a7bae4d4b5c8649c78199bd8348238eb23ecf0c8f54fcbf8204049e0ffa24f",
+    "README.md": "ae7f33a89ddce9e9337d21fa37d5f7b8736b5d73f182b24d217f3871e54ffdef",
+    "provenance.jsonl": "65ba397cfe164832e49bb2a61b6a4824b31abbac1a4fa4ceb92a5f1246f5e3ca",
+    "review_report.json": "86ee52c0917576825fc7e9eab1357b605fa5ef9e0735ac446c1057897e5d7bac",
+    "test.jsonl": "96956d56eb40b6c56dc6cde68f0f73d6e0190937f1b2568cd0cf9ed4c4dc04fa",
+    "test_prompts.jsonl": "28a9fbfdc9719752bcc9642e724ea08029c6f3aee46b0b84bf17cd6c743eb4b3",
+    "train.jsonl": "6a154802088938eced43180192950f19a9020e925269c5626a8bec0de409ef6f",
+    "validate.py": "9d1f628a53fa3f97a84237fc6a4fc66afc38d3723c3520ff828759b42f07aefc",
+    "validation.jsonl": "8579a0164b4ed13729e77bfc6d0af3e680e4c651ed5c8b2ff348aca7feefc31e",
+    "validation_report.json": "abe751b6afc19888ea525477858875a751483d14b11e16449cb74cbf3bca1c47"
+  },
+  "train_conversations": 80,
+  "train_answer_examples": 93,
+  "validation_conversations": 10,
+  "expected_optimizer_steps_per_epoch": 6,
+  "expected_optimizer_steps": 18,
+  "checkpoint_selection": "manual after reviewing validation answers; root is final epoch",
+  "validation_sampling": "base with neutral/style prompt, then each saved epoch",
+  "test_generations": false,
+  "validation_report": {
+    "structure_and_provenance": "passed",
+    "split_counts": {
+      "train": 80,
+      "validation": 10,
+      "test": 10
+    },
+    "total_conversations": 100,
+    "assistant_turns": 118,
+    "multi_turn_conversations": 18,
+    "source_conversations_disjoint": true,
+    "recorded_topic_groups_disjoint": true,
+    "normalized_initial_questions_unique": true,
+    "original_user_messages_preserved": true,
+    "tokenizer_validation": "passed",
+    "masking_version": "one_answer_per_example_non_thinking_v2",
+    "answer_examples": 118,
+    "all_supervised_text_matches_reference_answer_and_end_marker": true,
+    "all_context_tokens_masked": true,
+    "min_tokens": 99,
+    "max_tokens": 338,
+    "mean_tokens": 170.64,
+    "min_assistant_training_tokens": 58,
+    "truncated_conversations": 0,
+    "tokenizer_class": "Qwen2Tokenizer"
+  },
+  "code_sha256": {
+    "train_plain_english_v2.py": "44b54cb174b42d779c05bc9c2ef0d5975c508f6718c169fb016141abdc975a4f",
+    "train_lora.py": "d1faafeb5d267c716de203a97e03d3b8b1a04cdbcfa0ba925ac23b3ec721b0a0",
+    "chat_examples.py": "7875bba0d5b19ab063c50c81cb647cf4f15bbfbd6f452fb1c0ed34bd90078163",
+    "validation_samples.py": "2b3e4c2cfb57a49edd035314266ea8ac74d0c657864c3ef364e64a817035b94e",
+    "evaluate_plain_english.py": "777885766bd1927b156234f7f5d95f6d4068be8926b60945b2fde3751b52112d",
+    "datasets/plain_english/validate.py": "9d1f628a53fa3f97a84237fc6a4fc66afc38d3723c3520ff828759b42f07aefc"
+  },
+  "packages": {
+    "torch": "2.10.0",
+    "transformers": "5.15.0",
+    "peft": "0.13.2",
+    "bitsandbytes": "0.50.0"
+  },
+  "job_id": "2522643",
+  "started_at": "2026-09-09T07:02:06.415646+00:00",
+  "gpu": "NVIDIA A40",
+  "checkpoints": [
+    "checkpoint-6",
+    "checkpoint-12",
+    "checkpoint-18"
+  ],
+  "finished_at": "2026-09-09T07:34:24.494593+00:00"
+}

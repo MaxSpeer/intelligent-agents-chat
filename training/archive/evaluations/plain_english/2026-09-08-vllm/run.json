@@ -1,0 +1,46 @@
+{
+  "status": "complete",
+  "created_at": "2026-09-08T18:52:00.745566+00:00",
+  "base_url": "http://127.0.0.1:8001/v1",
+  "models": [
+    "qwen3-8b",
+    "plain-english"
+  ],
+  "base_model": "Qwen/Qwen3-8B",
+  "base_model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+  "dataset_sha256": "96956d56eb40b6c56dc6cde68f0f73d6e0190937f1b2568cd0cf9ed4c4dc04fa",
+  "runner_sha256": "c800eadd3be8507874ece54db7d68a3953e3db1de2ef2aad7bbf89fe462a62b3",
+  "system_message": {
+    "role": "system",
+    "content": "You are a helpful assistant. Answer the user's question directly and clearly."
+  },
+  "settings": {
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "top_k": -1,
+    "min_p": 0.0,
+    "repetition_penalty": 1.0,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "seed": 42,
+    "max_tokens": 2048,
+    "stream": false,
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    }
+  },
+  "conversations": 10,
+  "answers_per_model": 12,
+  "max_concurrent_conversations": 2,
+  "memory_tools_rag": "disabled; API requests contain only the recorded dialogue",
+  "reference_assistant_answers_in_input": false,
+  "primary_comparison": "10 first answers with identical inputs; 2 follow-ups separately",
+  "rubric": {
+    "accessibility": "Everyday words, explained terms, directness, manageable sentences, useful examples; choose A/B/tie.",
+    "content": "Independently note factual errors, misleading simplifications, and missing essential requested information.",
+    "shorter_is_not_automatically_better": true
+  },
+  "answers_saved": 24,
+  "truncated_answers": 1,
+  "finished_at": "2026-09-08T18:54:52.648576+00:00"
+}

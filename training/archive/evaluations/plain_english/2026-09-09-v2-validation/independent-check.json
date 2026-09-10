@@ -1,0 +1,114 @@
+{
+  "status": "passed",
+  "method": "Independent character-scanning word count, raw sums and sorted medians; no regex or audit module imported",
+  "answers_checked": 65,
+  "results": {
+    "base-neutral": {
+      "first_answers": {
+        "sum_words": 2227,
+        "answers": 10,
+        "mean_words": 222.7,
+        "median_words": 243.0
+      },
+      "followups": {
+        "sum_words": 890,
+        "answers": 3,
+        "mean_words": 296.6666666666667,
+        "median_words": 267
+      },
+      "all_answers": {
+        "sum_words": 3117,
+        "answers": 13,
+        "mean_words": 239.76923076923077,
+        "median_words": 248
+      }
+    },
+    "base-style-prompt": {
+      "first_answers": {
+        "sum_words": 1286,
+        "answers": 10,
+        "mean_words": 128.6,
+        "median_words": 122.5
+      },
+      "followups": {
+        "sum_words": 435,
+        "answers": 3,
+        "mean_words": 145.0,
+        "median_words": 112
+      },
+      "all_answers": {
+        "sum_words": 1721,
+        "answers": 13,
+        "mean_words": 132.3846153846154,
+        "median_words": 121
+      }
+    },
+    "checkpoint-12": {
+      "first_answers": {
+        "sum_words": 2235,
+        "answers": 10,
+        "mean_words": 223.5,
+        "median_words": 210.0
+      },
+      "followups": {
+        "sum_words": 986,
+        "answers": 3,
+        "mean_words": 328.6666666666667,
+        "median_words": 309
+      },
+      "all_answers": {
+        "sum_words": 3221,
+        "answers": 13,
+        "mean_words": 247.76923076923077,
+        "median_words": 226
+      }
+    },
+    "checkpoint-18": {
+      "first_answers": {
+        "sum_words": 2343,
+        "answers": 10,
+        "mean_words": 234.3,
+        "median_words": 241.5
+      },
+      "followups": {
+        "sum_words": 1101,
+        "answers": 3,
+        "mean_words": 367.0,
+        "median_words": 300
+      },
+      "all_answers": {
+        "sum_words": 3444,
+        "answers": 13,
+        "mean_words": 264.9230769230769,
+        "median_words": 293
+      }
+    },
+    "checkpoint-6": {
+      "first_answers": {
+        "sum_words": 2418,
+        "answers": 10,
+        "mean_words": 241.8,
+        "median_words": 241.5
+      },
+      "followups": {
+        "sum_words": 915,
+        "answers": 3,
+        "mean_words": 305.0,
+        "median_words": 267
+      },
+      "all_answers": {
+        "sum_words": 3333,
+        "answers": 13,
+        "mean_words": 256.38461538461536,
+        "median_words": 264
+      }
+    }
+  },
+  "math_checks": {
+    "sphere_volume_r10_cm": 4188.790204786391,
+    "normalized_half_length_vector": [
+      1.0,
+      0.0
+    ]
+  }
+}

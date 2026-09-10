@@ -1,0 +1,57 @@
+{
+  "source_root": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-plain-english-v2",
+  "retrieved_at": "2026-09-09T07:35:29.002620+00:00",
+  "files": {
+    "run.json": "d4cf3caaf7721ba50a086df9d923816dfb48aa059841f8ae048180d1e7b37c60",
+    "adapter_config.json": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438",
+    "validation_samples/base-neutral.jsonl": "98e0f43f9018791f8379d56c1e669b4ba88a677d88d0e85c3173d30921e9652e",
+    "validation_samples/base-neutral.md": "91208ae7a76100a4571684ad41cc4595a2ef03365084678484dcdb5bc85f059e",
+    "validation_samples/base-neutral.metadata.json": "7becbdebf6ef50c07e89bc6ccd4d89e0110677a3198202fad9c618341be51068",
+    "validation_samples/base-style-prompt.jsonl": "f8229259fb5e9acb051967704365657cceb8b555e105b767262976c907eaf483",
+    "validation_samples/base-style-prompt.md": "65c69e6a23581130ec8eed427cd10033b83f27f8f70e84b5ab6758ab2f2bef6e",
+    "validation_samples/base-style-prompt.metadata.json": "0face3df48dc04c2b0d406d59079837af4f6f7f82e1ff73625a20e5008b16dc8",
+    "validation_samples/checkpoint-12.jsonl": "0b4e5aa2d8b3dfc61b09530400bbd3bbb9a3970d72f7d0cfbc94336e94198ab1",
+    "validation_samples/checkpoint-12.md": "d2806dd74a0b6c135f3ef87226d0ebeedbe9f4da4a9bf78ae5749f6b68624e64",
+    "validation_samples/checkpoint-12.metadata.json": "b1886dfa563d0d893f92ccaf44b63b1d2da5c275ca2637c9b8a951132c9cdfd7",
+    "validation_samples/checkpoint-18.jsonl": "7a808bc19fe9c70c73b91d6fcf8bb92d3a1240140ce5f4d1c8c4a56cc1627f0b",
+    "validation_samples/checkpoint-18.md": "3b6e291c0c3ca71e4c5a9bace3492295cd4f2d53f388ab1c65bbd8f42eaf8aa7",
+    "validation_samples/checkpoint-18.metadata.json": "a97097f49fae4db443cd62098abb820842cad0665885a79dc2feecbe7bf8b539",
+    "validation_samples/checkpoint-6.jsonl": "6db0e11d6d89fe246a29e97cdefa102f7d1d7809bcc6c86da472e0f2ea94d79d",
+    "validation_samples/checkpoint-6.md": "6746864531ff6540209c66c0914c12742d5cd2a0daf03e616c05518960d14e72",
+    "validation_samples/checkpoint-6.metadata.json": "8822cbb537c972878863d498c0f161408077b70b3ccfd9dd35d4c81f32a3907b",
+    "run-inputs/chat_examples.py": "7875bba0d5b19ab063c50c81cb647cf4f15bbfbd6f452fb1c0ed34bd90078163",
+    "run-inputs/datasets/plain_english/validate.py": "9d1f628a53fa3f97a84237fc6a4fc66afc38d3723c3520ff828759b42f07aefc",
+    "run-inputs/evaluate_plain_english.py": "777885766bd1927b156234f7f5d95f6d4068be8926b60945b2fde3751b52112d",
+    "run-inputs/manifest.json": "2a144f83042e5e3339b0814fa726154e0c7676ac280ed5a29da010d7661e3e99",
+    "run-inputs/train.jsonl": "6a154802088938eced43180192950f19a9020e925269c5626a8bec0de409ef6f",
+    "run-inputs/train_lora.py": "d1faafeb5d267c716de203a97e03d3b8b1a04cdbcfa0ba925ac23b3ec721b0a0",
+    "run-inputs/train_plain_english_v2.py": "44b54cb174b42d779c05bc9c2ef0d5975c508f6718c169fb016141abdc975a4f",
+    "run-inputs/validation.jsonl": "8579a0164b4ed13729e77bfc6d0af3e680e4c651ed5c8b2ff348aca7feefc31e",
+    "run-inputs/validation_samples.py": "2b3e4c2cfb57a49edd035314266ea8ac74d0c657864c3ef364e64a817035b94e",
+    "checkpoint-12/adapter_config.json": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438",
+    "checkpoint-12/trainer_state.json": "44a103a128808a566c7b0864e3ebeefbbe2761e7542f32f53f4c59bbe7574bcb",
+    "checkpoint-18/adapter_config.json": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438",
+    "checkpoint-18/trainer_state.json": "aee6a131e5f6f8a2660377e985c0bed7cf8c7ded692089de83ec88c72e832e03",
+    "checkpoint-6/adapter_config.json": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438",
+    "checkpoint-6/trainer_state.json": "5c15ff44159e2a6388a209241a894e2917e7ff40f2fc9b350d181fff405915cc"
+  },
+  "weights": {
+    "adapter_model.safetensors": {
+      "bytes": 30709192,
+      "sha256": "f0967aca9005da133626e66d7a3bfc6729197329144ddf7a223af45c2ed70dd1"
+    },
+    "checkpoint-12/adapter_model.safetensors": {
+      "bytes": 30709192,
+      "sha256": "ece5dda66936c1875783f1704949f99a4c834aee68700e90aacfa4bd927a73b7"
+    },
+    "checkpoint-18/adapter_model.safetensors": {
+      "bytes": 30709192,
+      "sha256": "f0967aca9005da133626e66d7a3bfc6729197329144ddf7a223af45c2ed70dd1"
+    },
+    "checkpoint-6/adapter_model.safetensors": {
+      "bytes": 30709192,
+      "sha256": "5d9c13e038123bd932d93fcab8e47c7245dc1f0c10e0d0f3aab755efbb30ea13"
+    }
+  },
+  "cluster_operations": "Read existing files only; no model execution or jobs started"
+}

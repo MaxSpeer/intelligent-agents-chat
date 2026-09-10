@@ -1,0 +1,433 @@
+{
+  "temperature": 0.0,
+  "source_files": {
+    "requests.jsonl": "a285ffa32b60bd19c9ed832df810703c90b12a2667e751851c76483d100d81b9",
+    "comparison.jsonl": "36787bb0b5b3a38781d33e63e0845ad3dd73ef86c7c1eb43a82c36863686ceba",
+    "qualitative-review.json": "f544336be603c5932ac1fbf428bcc2d37629b8ab125290d7f7d994f83f22b0c1",
+    "blind-key.json": "966a27c390edfcdb6d38f52b4563d7f63e592f2e4c1f7f25ce58d7ed3264bd51"
+  },
+  "checks": {
+    "24_unique_requests": true,
+    "10_dialogues_12_answers_each": true,
+    "identical_initial_prompts_and_sampling_settings": true,
+    "followups_use_own_generated_answers": true,
+    "no_reference_assistant_answers_in_prompts": true,
+    "requested_and_returned_model_ids_match": true,
+    "no_reasoning_output": true
+  },
+  "word_definition": "\\b\\w+(?:['’\\-]\\w+)*\\b",
+  "word_count_caveat": "Includes headings, list numbers and formula symbols matching the regex; measures length, not reading level.",
+  "aggregates": {
+    "first_answers": {
+      "pairs": 10,
+      "models": {
+        "qwen3-8b": {
+          "mean_words": 223.2,
+          "median_words": 191.5,
+          "total_words": 2232,
+          "mean_completion_tokens": 336.2
+        },
+        "plain-english": {
+          "mean_words": 415.8,
+          "median_words": 289.5,
+          "total_words": 4158,
+          "mean_completion_tokens": 540.9
+        }
+      },
+      "word_reduction_percent": -86.29032258064515,
+      "median_paired_word_reduction_percent": -27.503886298023538,
+      "adapter_shorter_pairs": 1,
+      "accessibility_wins": {
+        "qwen3-8b": 6,
+        "tie": 4
+      }
+    },
+    "complete_first_answer_pairs": {
+      "pairs": 9,
+      "models": {
+        "qwen3-8b": {
+          "mean_words": 204.55555555555554,
+          "median_words": 184,
+          "total_words": 1841,
+          "mean_completion_tokens": 283.22222222222223
+        },
+        "plain-english": {
+          "mean_words": 264.22222222222223,
+          "median_words": 282,
+          "total_words": 2378,
+          "mean_completion_tokens": 373.44444444444446
+        }
+      },
+      "word_reduction_percent": -29.168929929386202,
+      "median_paired_word_reduction_percent": -26.315789473684205,
+      "adapter_shorter_pairs": 1,
+      "accessibility_wins": {
+        "tie": 4,
+        "qwen3-8b": 5
+      }
+    },
+    "followups": {
+      "pairs": 2,
+      "models": {
+        "qwen3-8b": {
+          "mean_words": 302.5,
+          "median_words": 302.5,
+          "total_words": 605,
+          "mean_completion_tokens": 425
+        },
+        "plain-english": {
+          "mean_words": 338,
+          "median_words": 338.0,
+          "total_words": 676,
+          "mean_completion_tokens": 503
+        }
+      },
+      "word_reduction_percent": -11.735537190082646,
+      "median_paired_word_reduction_percent": -21.733601226423854,
+      "adapter_shorter_pairs": 1,
+      "accessibility_wins": {
+        "qwen3-8b": 1,
+        "tie": 1
+      }
+    },
+    "all_answers": {
+      "pairs": 12,
+      "models": {
+        "qwen3-8b": {
+          "mean_words": 236.41666666666666,
+          "median_words": 214.0,
+          "total_words": 2837,
+          "mean_completion_tokens": 351
+        },
+        "plain-english": {
+          "mean_words": 402.8333333333333,
+          "median_words": 300.0,
+          "total_words": 4834,
+          "mean_completion_tokens": 534.5833333333334
+        }
+      },
+      "word_reduction_percent": -70.3912583715192,
+      "median_paired_word_reduction_percent": -27.503886298023538,
+      "adapter_shorter_pairs": 2,
+      "accessibility_wins": {
+        "qwen3-8b": 7,
+        "tie": 5
+      }
+    }
+  },
+  "rows": [
+    {
+      "id": "plain-en-0084",
+      "turn": 1,
+      "question": "I am not a native English speaker and I am having trouble pronouncing the \"th\" sound in a lot of English words, like \"three\", and \"breathe\". Could you please explain to me how to correctly pronounce the \"th\" sound with my mouth, with specific examples for the words I mentioned?",
+      "accessibility_winner": "qwen3-8b",
+      "review_reason": "A gerät in eine sehr lange Wiederholung. B ist abgeschlossen und dadurch besser nutzbar, bleibt aber lang und verwendet Fachbegriffe. Dieser Vergleich ist durch den Abbruch von A verzerrt.",
+      "qwen3-8b": {
+        "words": 391,
+        "completion_tokens": 813,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 1780,
+        "completion_tokens": 2048,
+        "finish_reason": "length"
+      },
+      "word_reduction_percent": -355.2429667519181,
+      "both_complete": false,
+      "content_issues": [
+        {
+          "label": "A",
+          "severity": "material",
+          "detail": "Endlose Wiederholung eines Zungenbrechers; am Tokenlimit abgeschnitten.",
+          "model": "plain-english"
+        },
+        {
+          "label": "B",
+          "severity": "material",
+          "detail": "Die Vergleiche mit einem weichen sh bzw. d und die Anweisung, die Zähne nicht zu berühren, können zu falscher th-Aussprache führen. Die Stimmhaftigkeit wird nicht so praktisch erklärt wie durch fühlbare Kehlkopfvibration.",
+          "model": "qwen3-8b"
+        }
+      ]
+    },
+    {
+      "id": "plain-en-0042",
+      "turn": 1,
+      "question": "What happened to schrodinger's cat?",
+      "accessibility_winner": "tie",
+      "review_reason": "Beide erklären das Gedankenexperiment in ähnlich abstrakter Sprache. B stellt den fiktiven Charakter früher klar; A erläutert den Begriff Messproblem. Keiner hat einen eindeutigen Verständlichkeitsvorsprung.",
+      "qwen3-8b": {
+        "words": 182,
+        "completion_tokens": 228,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 215,
+        "completion_tokens": 269,
+        "finish_reason": "stop"
+      },
+      "word_reduction_percent": -18.131868131868135,
+      "both_complete": true,
+      "content_issues": []
+    },
+    {
+      "id": "plain-en-0025",
+      "turn": 1,
+      "question": "How do earthquakes happen?",
+      "accessibility_winner": "qwen3-8b",
+      "review_reason": "A konzentriert sich auf Bewegung, Spannung, Reibung und plötzliche Freisetzung. B fügt viele zusätzliche Begriffe und Arten von Plattengrenzen hinzu. Die wesentliche Erklärung bleibt in A erhalten; Lithosphäre und seismische Wellen bleiben allerdings Fachwörter.",
+      "qwen3-8b": {
+        "words": 80,
+        "completion_tokens": 99,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 282,
+        "completion_tokens": 385,
+        "finish_reason": "stop"
+      },
+      "word_reduction_percent": -252.5,
+      "both_complete": true,
+      "content_issues": [
+        {
+          "label": "B",
+          "severity": "minor",
+          "detail": "Die Darstellung des Untergrunds als semi-fluid ist eine grobe Vereinfachung des langfristig verformbaren, überwiegend festen Mantelgesteins.",
+          "model": "plain-english"
+        }
+      ]
+    },
+    {
+      "id": "plain-en-0092",
+      "turn": 1,
+      "question": "Why can't you see the stars in the city, but you can in the countryside?",
+      "accessibility_winner": "qwen3-8b",
+      "review_reason": "B vermittelt denselben Kern ohne die doppelte Erklärung von light pollution und skyglow und ohne anschließende Wiederholung der Zusammenfassung.",
+      "qwen3-8b": {
+        "words": 104,
+        "completion_tokens": 124,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 157,
+        "completion_tokens": 201,
+        "finish_reason": "stop"
+      },
+      "word_reduction_percent": -50.96153846153846,
+      "both_complete": true,
+      "content_issues": [
+        {
+          "label": "A",
+          "severity": "minor",
+          "detail": "Sauberere Landluft ist eine mögliche Zusatzbedingung, keine allgemeine Garantie.",
+          "model": "plain-english"
+        },
+        {
+          "label": "B",
+          "severity": "minor",
+          "detail": "Die Landatmosphäre wird pauschal als weniger durch Verschmutzung beeinträchtigt dargestellt.",
+          "model": "qwen3-8b"
+        }
+      ]
+    },
+    {
+      "id": "plain-en-0092",
+      "turn": 2,
+      "question": "Can I do anything, short of going to the countryside, to see the starts in the city more clearly?",
+      "accessibility_winner": "qwen3-8b",
+      "review_reason": "B entfernt unter anderem den doppelten Filtertipp und erklärt Rotlicht verständlicher. Die wichtigsten konkreten Handlungen bleiben erhalten; A nennt zusätzlich Mondphase und Wetter.",
+      "qwen3-8b": {
+        "words": 229,
+        "completion_tokens": 297,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 373,
+        "completion_tokens": 535,
+        "finish_reason": "stop"
+      },
+      "word_reduction_percent": -62.882096069868986,
+      "both_complete": true,
+      "content_issues": [
+        {
+          "label": "A",
+          "severity": "qualification_needed",
+          "detail": "Lichtverschmutzungsfilter werden ohne Einschränkung als Hilfe für Sterne empfohlen; ihre Wirkung hängt vom Spektrum und Objekt ab.",
+          "model": "plain-english"
+        },
+        {
+          "label": "B",
+          "severity": "qualification_needed",
+          "detail": "Auch B empfiehlt Filter für Sterne zu pauschal; Spektrum und Beobachtungsobjekt sind entscheidend.",
+          "model": "qwen3-8b"
+        }
+      ]
+    },
+    {
+      "id": "plain-en-0072",
+      "turn": 1,
+      "question": "What is the point of an identity function if it's just the same as the original function?",
+      "accessibility_winner": "tie",
+      "review_reason": "Nahezu gleiche Gliederung und Erklärung. Begriffe wie Funktionskomposition, Monoide und Kategorien bleiben weitgehend unerklärt. Die Multiplikation-mit-1-Analogie hilft in beiden Antworten.",
+      "qwen3-8b": {
+        "words": 184,
+        "completion_tokens": 236,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 203,
+        "completion_tokens": 257,
+        "finish_reason": "stop"
+      },
+      "word_reduction_percent": -10.32608695652173,
+      "both_complete": true,
+      "content_issues": []
+    },
+    {
+      "id": "plain-en-0076",
+      "turn": 1,
+      "question": "How do I initiate an interesting conversation with a stranger I just met? For example, when I'm sitting next to them on the plane?",
+      "accessibility_winner": "tie",
+      "review_reason": "Beide bieten ähnliche sieben Punkte mit vielen Beispielen und ähnlicher Einleitung. B erwähnt deutlicher, dass man fehlendes Interesse respektieren soll; die Sprache selbst wird kaum einfacher.",
+      "qwen3-8b": {
+        "words": 349,
+        "completion_tokens": 539,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 331,
+        "completion_tokens": 516,
+        "finish_reason": "stop"
+      },
+      "word_reduction_percent": 5.157593123209169,
+      "both_complete": true,
+      "content_issues": []
+    },
+    {
+      "id": "plain-en-0076",
+      "turn": 2,
+      "question": "What if they don't speak English?",
+      "accessibility_winner": "tie",
+      "review_reason": "Beide bleiben bei einer langen, ähnlichen Liste. B bietet mehr Beispiele in anderen Sprachen, A einen längeren Beispieldialog. Das ist eher eine Inhaltsvariation als eine klare sprachliche Vereinfachung.",
+      "qwen3-8b": {
+        "words": 376,
+        "completion_tokens": 553,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 303,
+        "completion_tokens": 471,
+        "finish_reason": "stop"
+      },
+      "word_reduction_percent": 19.414893617021278,
+      "both_complete": true,
+      "content_issues": [
+        {
+          "label": "A",
+          "severity": "minor",
+          "detail": "Mehrere vorgeschlagene englische Fragen helfen ohne Übersetzung bei der genannten Sprachbarriere nur eingeschränkt.",
+          "model": "qwen3-8b"
+        }
+      ]
+    },
+    {
+      "id": "plain-en-0093",
+      "turn": 1,
+      "question": "What's a dht node? I saw some people talking about that but I didn't really understood what they were meaning.",
+      "accessibility_winner": "qwen3-8b",
+      "review_reason": "B spart die unerklärte Protokollliste Kademlia/Chord/CAN und einige Wiederholungen. Hash-Funktion und Node bleiben dennoch relativ abstrakt. Die wesentlichen Aufgaben eines DHT-Teilnehmers sind enthalten.",
+      "qwen3-8b": {
+        "words": 237,
+        "completion_tokens": 320,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 305,
+        "completion_tokens": 435,
+        "finish_reason": "stop"
+      },
+      "word_reduction_percent": -28.691983122362874,
+      "both_complete": true,
+      "content_issues": [
+        {
+          "label": "A",
+          "severity": "material",
+          "detail": "Bitcoin wird irreführend als Beispiel für DHT-artige Peer-Suche genannt.",
+          "model": "plain-english"
+        },
+        {
+          "label": "B",
+          "severity": "material",
+          "detail": "Bitcoin wird ebenfalls als DHT-artiges System genannt. Bei BitTorrent wäre Peer-Kontaktinformationen genauer als Dateien.",
+          "model": "qwen3-8b"
+        }
+      ]
+    },
+    {
+      "id": "plain-en-0045",
+      "turn": 1,
+      "question": "Can you please explain the three laws of Newton's mechanics?",
+      "accessibility_winner": "qwen3-8b",
+      "review_reason": "B enthält die drei Gesetze und F=ma mit weniger Wiederholungen. Proportionalität und Beschleunigung bleiben fachsprachlich, und ein anschauliches Alltagsbeispiel fehlt in beiden Antworten.",
+      "qwen3-8b": {
+        "words": 199,
+        "completion_tokens": 271,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 297,
+        "completion_tokens": 424,
+        "finish_reason": "stop"
+      },
+      "word_reduction_percent": -49.24623115577889,
+      "both_complete": true,
+      "content_issues": []
+    },
+    {
+      "id": "plain-en-0002",
+      "turn": 1,
+      "question": "What is the difference between knitting and crocheting?",
+      "accessibility_winner": "qwen3-8b",
+      "review_reason": "A stellt Werkzeuge und Grundtechnik direkt gegenüber. B fügt subjektive Lernschwierigkeit und Begriffe wie afghans/amigurumi hinzu. B ist durch die Aufzählung allerdings leichter zu überfliegen.",
+      "qwen3-8b": {
+        "words": 133,
+        "completion_tokens": 181,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 168,
+        "completion_tokens": 285,
+        "finish_reason": "stop"
+      },
+      "word_reduction_percent": -26.315789473684205,
+      "both_complete": true,
+      "content_issues": [
+        {
+          "label": "A",
+          "severity": "minor",
+          "detail": "Die Behauptung über generell kompakteres, dichteres Häkelgewebe sollte als häufige Tendenz formuliert werden; sie hängt von Muster, Garn und Werkzeug ab.",
+          "model": "qwen3-8b"
+        }
+      ]
+    },
+    {
+      "id": "plain-en-0006",
+      "turn": 1,
+      "question": "What is a Markov chain and how would you use one?",
+      "accessibility_winner": "tie",
+      "review_reason": "Gleiche abstrakte Einleitung, fast gleiche Begriffe und dasselbe Wetterbeispiel. B gibt hilfreichere konkrete Anwendungsschritte, aber keine klare Vereinfachung des Sprachstils.",
+      "qwen3-8b": {
+        "words": 373,
+        "completion_tokens": 551,
+        "finish_reason": "stop"
+      },
+      "plain-english": {
+        "words": 420,
+        "completion_tokens": 589,
+        "finish_reason": "stop"
+      },
+      "word_reduction_percent": -12.600536193029498,
+      "both_complete": true,
+      "content_issues": []
+    }
+  ]
+}

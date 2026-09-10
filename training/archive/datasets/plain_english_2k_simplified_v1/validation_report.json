@@ -1,0 +1,35 @@
+{
+  "structure_and_provenance": "passed",
+  "parent_files_unchanged": true,
+  "parent_validation": "passed",
+  "questions_system_roles_order_and_splits_unchanged": true,
+  "split_statistics": {
+    "train": {
+      "dialogues": 2000,
+      "assistant_answers": 3085,
+      "changed_answers": 660
+    },
+    "validation": {
+      "dialogues": 100,
+      "assistant_answers": 160,
+      "changed_answers": 34
+    },
+    "test": {
+      "dialogues": 100,
+      "assistant_answers": 198,
+      "changed_answers": 50
+    }
+  },
+  "assistant_turns": 3443,
+  "selected_dialogues_reviewed": 716,
+  "editorial_answer_decisions": 1133,
+  "human_reviewed": false,
+  "tokenizer_validation": "passed",
+  "semantic_holdout_independence": "not_established; inherited topic overlap remains",
+  "answer_examples": 3443,
+  "all_context_tokens_masked": true,
+  "all_answer_text_and_end_markers_supervised": true,
+  "min_tokens": 47,
+  "max_tokens": 321,
+  "truncated_conversations": 0
+}

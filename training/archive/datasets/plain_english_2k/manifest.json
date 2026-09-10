@@ -1,0 +1,135 @@
+{
+  "dataset_name": "plain_english_reviewed_2k",
+  "version": "2.0.0",
+  "prepared_on": "2026-09-09",
+  "language": "en",
+  "system_message": {
+    "role": "system",
+    "content": "You are a helpful assistant. Answer the user's question directly and clearly."
+  },
+  "split_counts": {
+    "train": 2000,
+    "validation": 100,
+    "test": 100
+  },
+  "split_statistics": {
+    "train": {
+      "dialogue_examples": 2000,
+      "source_conversations": 1393,
+      "assistant_answers": 3085,
+      "multi_turn_dialogues": 662,
+      "mean_answer_words": 30.86
+    },
+    "validation": {
+      "dialogue_examples": 100,
+      "source_conversations": 65,
+      "assistant_answers": 160,
+      "multi_turn_dialogues": 37,
+      "mean_answer_words": 29.25
+    },
+    "test": {
+      "dialogue_examples": 100,
+      "source_conversations": 81,
+      "assistant_answers": 198,
+      "multi_turn_dialogues": 56,
+      "mean_answer_words": 28.98
+    }
+  },
+  "total_conversations": 2200,
+  "assistant_turns": 3443,
+  "multi_turn_conversations": 755,
+  "base_model": "Qwen/Qwen3-8B",
+  "base_model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+  "max_sequence_length": 1024,
+  "tokenizer": {
+    "source": "Existing cluster adapter tokenizer snapshot (no model weights loaded).",
+    "source_path": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-conspiracy",
+    "transformers_version_used": "5.15.1",
+    "file_sha256": {
+      "chat_template.jinja": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8",
+      "tokenizer.json": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506",
+      "tokenizer_config.json": "04b1682c59acbd057f4c9072297faa73d56fc9de053094c659cdb4c464f58f86"
+    }
+  },
+  "sources": [
+    {
+      "repository": "HuggingFaceTB/everyday-conversations-llama3.1-2k",
+      "revision": "14f543216b9ba42b6b951dc5bd199460d193b162",
+      "license": "Apache-2.0",
+      "generation_model": "Llama-3.1-70B-Instruct",
+      "synthetic": true,
+      "data_files": {
+        "repository": "HuggingFaceTB/everyday-conversations-llama3.1-2k",
+        "revision": "14f543216b9ba42b6b951dc5bd199460d193b162",
+        "files": [
+          {
+            "path": "README.md",
+            "url": "https://huggingface.co/datasets/HuggingFaceTB/everyday-conversations-llama3.1-2k/resolve/14f543216b9ba42b6b951dc5bd199460d193b162/README.md",
+            "bytes": 3033,
+            "sha256": "7c0b4d4c9c8de6651d3646d91e92638d46beb67f867f7200a996b72f2611d95a"
+          },
+          {
+            "path": "data/test_sft-00000-of-00001.parquet",
+            "url": "https://huggingface.co/datasets/HuggingFaceTB/everyday-conversations-llama3.1-2k/resolve/14f543216b9ba42b6b951dc5bd199460d193b162/data/test_sft-00000-of-00001.parquet",
+            "bytes": 123671,
+            "sha256": "9a6dd47c31ce940f36ced9eba2a733a0a0035ef514158c68739073e043382adc"
+          },
+          {
+            "path": "data/train_sft-00000-of-00001.parquet",
+            "url": "https://huggingface.co/datasets/HuggingFaceTB/everyday-conversations-llama3.1-2k/resolve/14f543216b9ba42b6b951dc5bd199460d193b162/data/train_sft-00000-of-00001.parquet",
+            "bytes": 2050609,
+            "sha256": "4750214d12b4b92d07fca953e0b5cc59e313c575282d08b605c639aa87531daa"
+          }
+        ]
+      }
+    },
+    {
+      "repository": "OpenAssistant/oasst1",
+      "revision": "fdf72ae0827c1cda404aff25b6603abec9e3399b",
+      "license": "Apache-2.0",
+      "data_file": {
+        "file": "2023-04-12_oasst_ready.messages.jsonl.gz",
+        "url": "https://huggingface.co/datasets/OpenAssistant/oasst1/resolve/fdf72ae0827c1cda404aff25b6603abec9e3399b/2023-04-12_oasst_ready.messages.jsonl.gz",
+        "bytes": 34196309,
+        "sha256": "286a6e9a5a413b3272ae9c0b5a20d327983dea1c24342ae28cb244a6da65185c"
+      },
+      "derived_from": "unchanged 80 training dialogues of plain_english 1.0.1",
+      "assistant_answers": "prior Codex rewrites"
+    }
+  ],
+  "validation_generation_ids": [
+    "plain2k-everyday-train_sft-0993-qa2",
+    "plain2k-everyday-train_sft-0515-dialogue",
+    "plain2k-everyday-train_sft-0842-dialogue",
+    "plain2k-everyday-train_sft-0546-dialogue",
+    "plain2k-everyday-train_sft-0618-qa4",
+    "plain2k-everyday-train_sft-1500-qa4",
+    "plain2k-everyday-train_sft-0316-dialogue",
+    "plain2k-everyday-train_sft-1878-qa2",
+    "plain2k-everyday-train_sft-1683-qa4",
+    "plain2k-everyday-train_sft-0994-dialogue"
+  ],
+  "split_method": "Connected groups from recorded full topic, same source, exact normalized substantive user questions including short questions, word TF-IDF cosine >= 0.84 or character 3-5-gram TF-IDF cosine >= 0.90 (near matching needs six words). This is not a guarantee of semantic independence.",
+  "fresh_test_note": "Held out from this fine-tuning dataset and previous local adapter evaluations; unknown base-model pretraining exposure. Reference answers are AI-reviewed source targets, not independent human ground truth.",
+  "file_sha256": {
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "NOTICE": "4662ea73776f803f558f13e435abe9acbc552807cd1376c0964edab27e66b133",
+    "README.md": "5b97bf00bb93ff1b47392cad7a9f630b958951dd0af24961b69bfe621b5f6c0f",
+    "build.py": "bb7960b49b8e9b777f3179293af5d71f8962c4b64dd43b166c55233874c79edb",
+    "editorial_overrides.jsonl": "911d9e92be700a3c56b5e02f8820f754112ca72d5a844956bfa698273fbc2e33",
+    "independent_review_report.json": "7c0b0fc60fa07e2504f485cd8316ba4fa3be9c374cc265f391351c6ec1321563",
+    "legacy_dialogues.jsonl": "ef991e7b485cfbdf0728af5376bbd760cec4b4735fae439fd01744b454315b02",
+    "legacy_provenance.jsonl": "65ba397cfe164832e49bb2a61b6a4824b31abbac1a4fa4ceb92a5f1246f5e3ca",
+    "near_question_groups.jsonl": "4abb9ca006eb0e765c1a670557c25f1ac4c55ee566a4630de7f58d658fee685a",
+    "provenance.jsonl": "6bec8a5cde974567abb5e5bf237cd122f03a9780b4138dc9a384dc55984f20b0",
+    "review_decisions.jsonl": "dbdcc5190b05851f9e38e96c20726d0335be05f3b42095c98f0857f050d4789f",
+    "review_report.json": "1d10b547ac58769ccae161228d26f228bdb0ca6512ffb2306b5875d4dd98632c",
+    "source_records.jsonl": "abf3c64533bf98ba5ddada6a0532f5fdae673960f82fc7c85744f951abd63333",
+    "test.jsonl": "c40746b86a3c4f9f501ccb9aec8b78bd78b1c307caf9eae655b76bf580a1190d",
+    "test_prompts.jsonl": "bbb76cbdb0ff14d569b4dd650cbf8267a3ae634a12e890a7f7b510c5511842b7",
+    "train.jsonl": "6d82bdde12894db7ba7866640be49f49ed0237396aa7cf0d174d7eadc0889899",
+    "validate.py": "c8d70e95a8cbb0bbbd0685569821e9271f928305ba988b6abf5c8f4e52125e32",
+    "validation.jsonl": "6bae086247a9fc0d118e26de1bd278b576c05bafba75e6f070a9e0a79379dc5d",
+    "validation_sample_ids.json": "9e953e27954272afb21598c055480a53df12796e41e8a890c00f01ae83a4e6ff"
+  }
+}

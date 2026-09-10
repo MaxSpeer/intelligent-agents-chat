@@ -1,0 +1,446 @@
+{
+  "audit": "passed",
+  "source_snapshot_at": "2026-09-09T14:10:23.875860+00:00",
+  "verified_source_files": 52,
+  "dialogues": 10,
+  "answers_per_variant": 19,
+  "generated_validation_fraction": "10 of 100 validation dialogues",
+  "same_questions_system_and_training_settings": true,
+  "baselines_identical_across_runs": true,
+  "root_weights_match_final_checkpoint": true,
+  "train_validation_ids_and_normalized_initial_questions_disjoint": true,
+  "runs": {
+    "qwen3-8b-plain-english-2k": {
+      "status": "training_complete_checkpoint_selection_pending",
+      "job_id": "2522988",
+      "finished_at": "2026-09-09T10:44:47.056839+00:00",
+      "global_step": 579,
+      "epoch": 3.0,
+      "variants": {
+        "base-neutral": {
+          "first_answers": {
+            "answers": 10,
+            "mean_words": 198.9,
+            "median_words": 215.0,
+            "min_words": 75,
+            "max_words": 366,
+            "mean_output_tokens": 302.4,
+            "truncated_answers": 0
+          },
+          "followups": {
+            "answers": 9,
+            "mean_words": 241.77777777777777,
+            "median_words": 249,
+            "min_words": 33,
+            "max_words": 438,
+            "mean_output_tokens": 391.6666666666667,
+            "truncated_answers": 0
+          },
+          "all_answers": {
+            "answers": 19,
+            "mean_words": 219.21052631578948,
+            "median_words": 219,
+            "min_words": 33,
+            "max_words": 438,
+            "mean_output_tokens": 344.6842105263158,
+            "truncated_answers": 0
+          }
+        },
+        "base-style-prompt": {
+          "first_answers": {
+            "answers": 10,
+            "mean_words": 129.1,
+            "median_words": 134.5,
+            "min_words": 71,
+            "max_words": 202,
+            "mean_output_tokens": 177.6,
+            "truncated_answers": 0
+          },
+          "followups": {
+            "answers": 9,
+            "mean_words": 137.88888888888889,
+            "median_words": 136,
+            "min_words": 42,
+            "max_words": 223,
+            "mean_output_tokens": 206,
+            "truncated_answers": 0
+          },
+          "all_answers": {
+            "answers": 19,
+            "mean_words": 133.26315789473685,
+            "median_words": 135,
+            "min_words": 42,
+            "max_words": 223,
+            "mean_output_tokens": 191.05263157894737,
+            "truncated_answers": 0
+          }
+        },
+        "checkpoint-193": {
+          "first_answers": {
+            "answers": 10,
+            "mean_words": 26,
+            "median_words": 25.5,
+            "min_words": 15,
+            "max_words": 36,
+            "mean_output_tokens": 31.8,
+            "truncated_answers": 0
+          },
+          "followups": {
+            "answers": 9,
+            "mean_words": 30.444444444444443,
+            "median_words": 30,
+            "min_words": 17,
+            "max_words": 43,
+            "mean_output_tokens": 37.22222222222222,
+            "truncated_answers": 0
+          },
+          "all_answers": {
+            "answers": 19,
+            "mean_words": 28.105263157894736,
+            "median_words": 28,
+            "min_words": 15,
+            "max_words": 43,
+            "mean_output_tokens": 34.36842105263158,
+            "truncated_answers": 0
+          }
+        },
+        "checkpoint-386": {
+          "first_answers": {
+            "answers": 10,
+            "mean_words": 26.4,
+            "median_words": 26.5,
+            "min_words": 19,
+            "max_words": 37,
+            "mean_output_tokens": 33,
+            "truncated_answers": 0
+          },
+          "followups": {
+            "answers": 9,
+            "mean_words": 28.666666666666668,
+            "median_words": 30,
+            "min_words": 7,
+            "max_words": 40,
+            "mean_output_tokens": 36.111111111111114,
+            "truncated_answers": 0
+          },
+          "all_answers": {
+            "answers": 19,
+            "mean_words": 27.473684210526315,
+            "median_words": 29,
+            "min_words": 7,
+            "max_words": 40,
+            "mean_output_tokens": 34.473684210526315,
+            "truncated_answers": 0
+          }
+        },
+        "checkpoint-579": {
+          "first_answers": {
+            "answers": 10,
+            "mean_words": 22.6,
+            "median_words": 21.0,
+            "min_words": 18,
+            "max_words": 30,
+            "mean_output_tokens": 29,
+            "truncated_answers": 0
+          },
+          "followups": {
+            "answers": 9,
+            "mean_words": 26.88888888888889,
+            "median_words": 30,
+            "min_words": 7,
+            "max_words": 40,
+            "mean_output_tokens": 34.666666666666664,
+            "truncated_answers": 0
+          },
+          "all_answers": {
+            "answers": 19,
+            "mean_words": 24.63157894736842,
+            "median_words": 26,
+            "min_words": 7,
+            "max_words": 40,
+            "mean_output_tokens": 31.68421052631579,
+            "truncated_answers": 0
+          }
+        }
+      },
+      "validation_losses": [
+        {
+          "step": 193,
+          "epoch": 1.0,
+          "eval_loss": 1.128096580505371
+        },
+        {
+          "step": 386,
+          "epoch": 2.0,
+          "eval_loss": 1.0949469804763794
+        },
+        {
+          "step": 579,
+          "epoch": 3.0,
+          "eval_loss": 1.0890758037567139
+        }
+      ]
+    },
+    "qwen3-8b-plain-english-2k-simplified-v1": {
+      "status": "training_complete_checkpoint_selection_pending",
+      "job_id": "2524288",
+      "finished_at": "2026-09-09T13:46:01.386477+00:00",
+      "global_step": 579,
+      "epoch": 3.0,
+      "variants": {
+        "base-neutral": {
+          "first_answers": {
+            "answers": 10,
+            "mean_words": 198.9,
+            "median_words": 215.0,
+            "min_words": 75,
+            "max_words": 366,
+            "mean_output_tokens": 302.4,
+            "truncated_answers": 0
+          },
+          "followups": {
+            "answers": 9,
+            "mean_words": 241.77777777777777,
+            "median_words": 249,
+            "min_words": 33,
+            "max_words": 438,
+            "mean_output_tokens": 391.6666666666667,
+            "truncated_answers": 0
+          },
+          "all_answers": {
+            "answers": 19,
+            "mean_words": 219.21052631578948,
+            "median_words": 219,
+            "min_words": 33,
+            "max_words": 438,
+            "mean_output_tokens": 344.6842105263158,
+            "truncated_answers": 0
+          }
+        },
+        "base-style-prompt": {
+          "first_answers": {
+            "answers": 10,
+            "mean_words": 129.1,
+            "median_words": 134.5,
+            "min_words": 71,
+            "max_words": 202,
+            "mean_output_tokens": 177.6,
+            "truncated_answers": 0
+          },
+          "followups": {
+            "answers": 9,
+            "mean_words": 137.88888888888889,
+            "median_words": 136,
+            "min_words": 42,
+            "max_words": 223,
+            "mean_output_tokens": 206,
+            "truncated_answers": 0
+          },
+          "all_answers": {
+            "answers": 19,
+            "mean_words": 133.26315789473685,
+            "median_words": 135,
+            "min_words": 42,
+            "max_words": 223,
+            "mean_output_tokens": 191.05263157894737,
+            "truncated_answers": 0
+          }
+        },
+        "checkpoint-193": {
+          "first_answers": {
+            "answers": 10,
+            "mean_words": 25.5,
+            "median_words": 24.0,
+            "min_words": 20,
+            "max_words": 36,
+            "mean_output_tokens": 31.9,
+            "truncated_answers": 0
+          },
+          "followups": {
+            "answers": 9,
+            "mean_words": 27.444444444444443,
+            "median_words": 27,
+            "min_words": 17,
+            "max_words": 41,
+            "mean_output_tokens": 34.333333333333336,
+            "truncated_answers": 0
+          },
+          "all_answers": {
+            "answers": 19,
+            "mean_words": 26.42105263157895,
+            "median_words": 25,
+            "min_words": 17,
+            "max_words": 41,
+            "mean_output_tokens": 33.05263157894737,
+            "truncated_answers": 0
+          }
+        },
+        "checkpoint-386": {
+          "first_answers": {
+            "answers": 10,
+            "mean_words": 28.5,
+            "median_words": 31.0,
+            "min_words": 19,
+            "max_words": 39,
+            "mean_output_tokens": 34.8,
+            "truncated_answers": 0
+          },
+          "followups": {
+            "answers": 9,
+            "mean_words": 27.22222222222222,
+            "median_words": 28,
+            "min_words": 7,
+            "max_words": 41,
+            "mean_output_tokens": 35.44444444444444,
+            "truncated_answers": 0
+          },
+          "all_answers": {
+            "answers": 19,
+            "mean_words": 27.894736842105264,
+            "median_words": 29,
+            "min_words": 7,
+            "max_words": 41,
+            "mean_output_tokens": 35.10526315789474,
+            "truncated_answers": 0
+          }
+        },
+        "checkpoint-579": {
+          "first_answers": {
+            "answers": 10,
+            "mean_words": 25.4,
+            "median_words": 21.0,
+            "min_words": 19,
+            "max_words": 35,
+            "mean_output_tokens": 31.7,
+            "truncated_answers": 0
+          },
+          "followups": {
+            "answers": 9,
+            "mean_words": 27.88888888888889,
+            "median_words": 28,
+            "min_words": 7,
+            "max_words": 42,
+            "mean_output_tokens": 35.666666666666664,
+            "truncated_answers": 0
+          },
+          "all_answers": {
+            "answers": 19,
+            "mean_words": 26.57894736842105,
+            "median_words": 26,
+            "min_words": 7,
+            "max_words": 42,
+            "mean_output_tokens": 33.578947368421055,
+            "truncated_answers": 0
+          }
+        }
+      },
+      "validation_losses": [
+        {
+          "step": 193,
+          "epoch": 1.0,
+          "eval_loss": 1.2497217655181885
+        },
+        {
+          "step": 386,
+          "epoch": 2.0,
+          "eval_loss": 1.21484375
+        },
+        {
+          "step": 579,
+          "epoch": 3.0,
+          "eval_loss": 1.2059564590454102
+        }
+      ]
+    }
+  },
+  "paired_comparisons": {
+    "qwen3-8b-plain-english-2k/checkpoint-579 vs qwen3-8b-plain-english-2k/base-neutral": {
+      "first_answers": {
+        "answers": 10,
+        "mean_word_change_percent": -88.6375062845651,
+        "shorter": 10,
+        "same_length": 0,
+        "longer": 0,
+        "identical_text": 0
+      },
+      "followups": {
+        "answers": 9,
+        "mean_word_change_percent": -88.87867647058823,
+        "shorter": 9,
+        "same_length": 0,
+        "longer": 0,
+        "identical_text": 0
+      },
+      "all_answers": {
+        "answers": 19,
+        "mean_word_change_percent": -88.76350540216087,
+        "shorter": 19,
+        "same_length": 0,
+        "longer": 0,
+        "identical_text": 0
+      }
+    },
+    "qwen3-8b-plain-english-2k-simplified-v1/checkpoint-579 vs qwen3-8b-plain-english-2k/base-neutral": {
+      "first_answers": {
+        "answers": 10,
+        "mean_word_change_percent": -87.22976370035194,
+        "shorter": 10,
+        "same_length": 0,
+        "longer": 0,
+        "identical_text": 0
+      },
+      "followups": {
+        "answers": 9,
+        "mean_word_change_percent": -88.46507352941177,
+        "shorter": 9,
+        "same_length": 0,
+        "longer": 0,
+        "identical_text": 0
+      },
+      "all_answers": {
+        "answers": 19,
+        "mean_word_change_percent": -87.87515006002401,
+        "shorter": 19,
+        "same_length": 0,
+        "longer": 0,
+        "identical_text": 0
+      }
+    },
+    "qwen3-8b-plain-english-2k-simplified-v1/checkpoint-579 vs qwen3-8b-plain-english-2k/checkpoint-579": {
+      "first_answers": {
+        "answers": 10,
+        "mean_word_change_percent": 12.389380530973447,
+        "shorter": 2,
+        "same_length": 2,
+        "longer": 6,
+        "identical_text": 1
+      },
+      "followups": {
+        "answers": 9,
+        "mean_word_change_percent": 3.7190082644628086,
+        "shorter": 5,
+        "same_length": 2,
+        "longer": 2,
+        "identical_text": 1
+      },
+      "all_answers": {
+        "answers": 19,
+        "mean_word_change_percent": 7.9059829059829,
+        "shorter": 7,
+        "same_length": 4,
+        "longer": 8,
+        "identical_text": 2
+      }
+    }
+  },
+  "word_definition": "\\b\\w+(?:['\u2019\\-]\\w+)*\\b",
+  "limitations": [
+    "Word counts measure length, not readability, factual accuracy, or completeness.",
+    "Only 10 fixed validation dialogues; these are not a new independent test set.",
+    "Dialogue IDs and exact initial questions are disjoint from training; semantic independence is not established.",
+    "One seed and one sampling configuration; followups contain each variant's own previous answers.",
+    "Answers were generated with the 4-bit training model, not the vLLM chat deployment.",
+    "Validation reference answers differ between the two training runs; cross-run validation losses are not directly comparable.",
+    "Human comprehension and complete factual correctness were not measured."
+  ]
+}

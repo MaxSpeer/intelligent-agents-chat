@@ -1,0 +1,424 @@
+{
+  "status": "editorial_and_peer_review_complete",
+  "human_reviewed": false,
+  "complete_external_fact_check": false,
+  "review_method": "Each training/validation assistant answer was read in its complete parent dialogue and has an explicit keep/rewrite decision. Independent peer review is additional, not a second full review of every training answer.",
+  "editorial_coverage": {
+    "train_dialogues": 2000,
+    "train_answers": 3085,
+    "validation_dialogues": 100,
+    "validation_answers": 160,
+    "test_answers_rewritten_or_editorially_reviewed": 0
+  },
+  "editor_assignments": [
+    {
+      "reviewer": "codex_editor_a",
+      "train_indices_inclusive": [
+        0,
+        666
+      ],
+      "dialogues": 667,
+      "answers": 1012
+    },
+    {
+      "reviewer": "codex_editor_b",
+      "train_indices_inclusive": [
+        667,
+        1293
+      ],
+      "dialogues": 627,
+      "answers": 943
+    },
+    {
+      "reviewer": "codex_editor_c",
+      "train_indices_inclusive": [
+        1334,
+        1999
+      ],
+      "dialogues": 666,
+      "answers": 1059
+    },
+    {
+      "reviewer": "codex_editor_root",
+      "train_indices_inclusive": [
+        1294,
+        1333
+      ],
+      "dialogues": 40,
+      "answers": 71,
+      "validation_dialogues": 100,
+      "validation_answers": 160
+    }
+  ],
+  "independent_reviews": [
+    {
+      "reviewer": "codex_editor_root",
+      "method": "27 stratified training answer pairs; seed209; full surrounding context read",
+      "answer_keys": [
+        [
+          213,
+          4
+        ],
+        [
+          247,
+          6
+        ],
+        [
+          9,
+          2
+        ],
+        [
+          74,
+          2
+        ],
+        [
+          341,
+          2
+        ],
+        [
+          221,
+          4
+        ],
+        [
+          119,
+          2
+        ],
+        [
+          41,
+          2
+        ],
+        [
+          244,
+          4
+        ],
+        [
+          854,
+          2
+        ],
+        [
+          891,
+          4
+        ],
+        [
+          674,
+          2
+        ],
+        [
+          725,
+          2
+        ],
+        [
+          861,
+          2
+        ],
+        [
+          764,
+          2
+        ],
+        [
+          695,
+          6
+        ],
+        [
+          886,
+          2
+        ],
+        [
+          896,
+          2
+        ],
+        [
+          1687,
+          2
+        ],
+        [
+          1746,
+          2
+        ],
+        [
+          1349,
+          2
+        ],
+        [
+          1444,
+          2
+        ],
+        [
+          1698,
+          4
+        ],
+        [
+          1515,
+          2
+        ],
+        [
+          1390,
+          2
+        ],
+        [
+          1737,
+          2
+        ],
+        [
+          1454,
+          2
+        ]
+      ]
+    },
+    {
+      "reviewer": "codex_editor_c",
+      "method": "All40 root-edited training dialogues, complete context",
+      "train_indices_inclusive": [
+        1294,
+        1333
+      ],
+      "answers": 71
+    },
+    {
+      "reviewer": "codex_editor_a",
+      "method": "40 training dialogues selected with seed9042; all73 assistant answers read in full context",
+      "train_indices": [
+        670,
+        687,
+        711,
+        771,
+        865,
+        900,
+        925,
+        931,
+        965,
+        978,
+        996,
+        1064,
+        1095,
+        1142,
+        1209,
+        1217,
+        1246,
+        1259,
+        1273,
+        1288,
+        1350,
+        1361,
+        1392,
+        1431,
+        1435,
+        1456,
+        1545,
+        1568,
+        1623,
+        1649,
+        1655,
+        1659,
+        1684,
+        1688,
+        1712,
+        1770,
+        1774,
+        1838,
+        1958,
+        1999
+      ],
+      "answers": 73
+    },
+    {
+      "reviewer": "codex_editor_b",
+      "method": "All100 validation dialogues and160 answers in complete parent context",
+      "validation_indices_inclusive": [
+        0,
+        99
+      ],
+      "answers": 160
+    }
+  ],
+  "findings_resolved": [
+    {
+      "split": "train",
+      "key": [
+        764,
+        2
+      ],
+      "resolution": "Avoid assuming that a family outing includes children."
+    },
+    {
+      "split": "train",
+      "key": [
+        896,
+        2
+      ],
+      "resolution": "Explain soil pH without defining acid and alkali circularly."
+    },
+    {
+      "split": "train",
+      "key": [
+        1687,
+        2
+      ],
+      "resolution": "Explain burpee movements concretely."
+    },
+    {
+      "split": "train",
+      "key": [
+        1737,
+        2
+      ],
+      "resolution": "Define vegan baking as avoiding animal ingredients."
+    },
+    {
+      "split": "train",
+      "key": [
+        1299,
+        4
+      ],
+      "resolution": "Preserve separate preparation and serving tools for vegetarian food."
+    },
+    {
+      "split": "train",
+      "key": [
+        1305,
+        2
+      ],
+      "resolution": "Explain label instructions for water, waiting and rinsing explicitly."
+    },
+    {
+      "split": "train",
+      "key": [
+        1322,
+        2
+      ],
+      "resolution": "Remove redundant cooked grilled wording."
+    },
+    {
+      "split": "train",
+      "key": [
+        1333,
+        4
+      ],
+      "resolution": "Describe presses precisely and restore rows with a short definition."
+    },
+    {
+      "split": "train",
+      "key": [
+        996,
+        4
+      ],
+      "resolution": "Distinguish EnergyGuide annual energy figures from ENERGY STAR certification."
+    },
+    {
+      "split": "train",
+      "key": [
+        1064,
+        2
+      ],
+      "resolution": "Replace empty saturated-fat definition with actionable label guidance."
+    },
+    {
+      "split": "train",
+      "key": [
+        1142,
+        2
+      ],
+      "resolution": "Explain tofu and remove unnecessary protein terminology."
+    },
+    {
+      "split": "train",
+      "key": [
+        711,
+        2
+      ],
+      "resolution": "Make the food advice concrete instead of using a vague fat definition."
+    },
+    {
+      "split": "train",
+      "key": [
+        1712,
+        4
+      ],
+      "resolution": "Connect the reclaimed-wood explanation to the suggested material."
+    },
+    {
+      "split": "validation",
+      "key": [
+        1,
+        4
+      ],
+      "resolution": "Describe familiarity from rereading rather than imply vocabulary learning."
+    },
+    {
+      "split": "validation",
+      "key": [
+        2,
+        2
+      ],
+      "resolution": "Use cameras with changeable lenses instead of unexplained DSLR/mirrorless labels."
+    },
+    {
+      "split": "validation",
+      "key": [
+        33,
+        2
+      ],
+      "resolution": "Explain established plants as having settled in and grown roots."
+    },
+    {
+      "split": "validation",
+      "key": [
+        62,
+        2
+      ],
+      "resolution": "Scope dot-density shading to dark dots on light paper."
+    },
+    {
+      "split": "validation",
+      "key": [
+        72,
+        2
+      ],
+      "resolution": "Use tasks or plans instead of circumstances."
+    },
+    {
+      "split": "validation",
+      "key": [
+        64,
+        2
+      ],
+      "resolution": "Explain fibre briefly."
+    },
+    {
+      "split": "train",
+      "key": [
+        1687,
+        2
+      ],
+      "resolution": "Final root check explains the body position rather than leaving plank undefined."
+    }
+  ],
+  "targeted_source_checks": {
+    "answers_with_source_links": 72,
+    "scope": "Selected factual, practical and safety-sensitive statements; source links and repair notes are in answer_changes.jsonl. Source annotation is not a complete independent fact check."
+  },
+  "sentence_proxy_exceptions": [
+    {
+      "train_index": 58,
+      "message_index": 2,
+      "reason": "Sentence-ending punctuation precedes a closing quote; simple regex combines short sentences."
+    },
+    {
+      "train_index": 1414,
+      "message_index": 2,
+      "reason": "Sentence-ending punctuation precedes a closing quote; simple regex combines short sentences."
+    },
+    {
+      "train_index": 1761,
+      "message_index": 2,
+      "reason": "Sentence-ending punctuation precedes a closing quote; simple regex combines short sentences."
+    }
+  ],
+  "limitations": [
+    "AI editorial review; no human comprehension study or certified reading level.",
+    "Inherited synthetic source content and topic overlap remain.",
+    "Existing tests were frozen, not rewritten for the stronger style target.",
+    "No new model trained or evaluated during data preparation.",
+    "Descriptive length metrics cannot measure clarity or factuality alone."
+  ]
+}

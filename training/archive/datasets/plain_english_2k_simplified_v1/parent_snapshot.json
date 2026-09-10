@@ -1,0 +1,26 @@
+{
+  "parent_dataset": "../plain_english_2k",
+  "sha256": {
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "NOTICE": "4662ea73776f803f558f13e435abe9acbc552807cd1376c0964edab27e66b133",
+    "README.md": "5b97bf00bb93ff1b47392cad7a9f630b958951dd0af24961b69bfe621b5f6c0f",
+    "build.py": "bb7960b49b8e9b777f3179293af5d71f8962c4b64dd43b166c55233874c79edb",
+    "editorial_overrides.jsonl": "911d9e92be700a3c56b5e02f8820f754112ca72d5a844956bfa698273fbc2e33",
+    "independent_review_report.json": "7c0b0fc60fa07e2504f485cd8316ba4fa3be9c374cc265f391351c6ec1321563",
+    "legacy_dialogues.jsonl": "ef991e7b485cfbdf0728af5376bbd760cec4b4735fae439fd01744b454315b02",
+    "legacy_provenance.jsonl": "65ba397cfe164832e49bb2a61b6a4824b31abbac1a4fa4ceb92a5f1246f5e3ca",
+    "manifest.json": "ee76b5fe78c1291db949e9d766abf2d8a44a15cc45f382a11fb45823002e6ceb",
+    "near_question_groups.jsonl": "4abb9ca006eb0e765c1a670557c25f1ac4c55ee566a4630de7f58d658fee685a",
+    "provenance.jsonl": "6bec8a5cde974567abb5e5bf237cd122f03a9780b4138dc9a384dc55984f20b0",
+    "review_decisions.jsonl": "dbdcc5190b05851f9e38e96c20726d0335be05f3b42095c98f0857f050d4789f",
+    "review_report.json": "1d10b547ac58769ccae161228d26f228bdb0ca6512ffb2306b5875d4dd98632c",
+    "source_records.jsonl": "abf3c64533bf98ba5ddada6a0532f5fdae673960f82fc7c85744f951abd63333",
+    "test.jsonl": "c40746b86a3c4f9f501ccb9aec8b78bd78b1c307caf9eae655b76bf580a1190d",
+    "test_prompts.jsonl": "bbb76cbdb0ff14d569b4dd650cbf8267a3ae634a12e890a7f7b510c5511842b7",
+    "train.jsonl": "6d82bdde12894db7ba7866640be49f49ed0237396aa7cf0d174d7eadc0889899",
+    "validate.py": "c8d70e95a8cbb0bbbd0685569821e9271f928305ba988b6abf5c8f4e52125e32",
+    "validation.jsonl": "6bae086247a9fc0d118e26de1bd278b576c05bafba75e6f070a9e0a79379dc5d",
+    "validation_report.json": "f203364ab3677e018f81cf96972f56cf3711a7700ba5f777513378a9955315d5",
+    "validation_sample_ids.json": "9e953e27954272afb21598c055480a53df12796e41e8a890c00f01ae83a4e6ff"
+  }
+}

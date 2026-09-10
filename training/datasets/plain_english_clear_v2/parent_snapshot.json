@@ -1,0 +1,32 @@
+{
+  "parent_dataset": "plain_english_2k_simplified_v1",
+  "captured_at": "2026-09-09T14:48:00.381981+00:00",
+  "sha256": {
+    "EVALUATION.md": "6bf0eb22514518f467694c245e0f5b4c366be78aaa9c7f5b93d421dc00273bac",
+    "EXAMPLES.md": "be3e74277e8efd10d2822b5401ee03333d4ba1ef1141cfd779d622bb6c15cd74",
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "NOTICE": "1b1f316dafaccd737e85c2d048b721b6e2db90b7b91aa7b283d113d401d53274",
+    "README.md": "e16c398290bc72f18e377a63363c0552c119107a23b7df4b365aae4ecc7b8356",
+    "answer_changes.jsonl": "31f49005a0316be383e7685b5153d2c1698d2e97aef757a94aaf8ca26c7c28b2",
+    "change_summary.json": "2cbae6440bcab0100e633c223dbf0dc80b7a63efbaa2c10c5f20a6e89c7b7a44",
+    "editor.py": "170da7243ceedf335d65764ce83ccafacea0e5e57773b87a54f7ec1297d0f83b",
+    "manifest.json": "b9569a7ee61756e3cd1aa9f3386269dd7c700deedfa1b0985659b44202ab9b45",
+    "manual_rewrites.jsonl": "aa43797984dc35a0903da902b301e0e0ea71ccb66d1c1acf8ff769fc2e480a29",
+    "parent_manifest.json": "ee76b5fe78c1291db949e9d766abf2d8a44a15cc45f382a11fb45823002e6ceb",
+    "parent_snapshot.json": "11686b1a6ec75e05d05c0dc992c49de17bfe5d742918f1c25a1397cf87dc6e0b",
+    "provenance.jsonl": "94220ebf90df569519a2b1c73da21a900b3a6635900d7ee31439713b477f9635",
+    "release.py": "80b6d0a101dab162a3c213fb70aba4f4f4a1fdf1429e041519b88a1f10eccdc3",
+    "review_queue.jsonl": "ed7e267a00b04827af591d10b81700771b6c8b07692b838b841cd4971219bf6b",
+    "revise.py": "abd1692409c2c0816ebe71525757980119711bef487515fceebee85df47457eb",
+    "style_comparison.json": "93c152dcaa8c78a6286cb5c0f635dad73c9c1f002bcd0ea0ba05bc0723fc07bc",
+    "style_rules.json": "1572ec93182183c5781a53111795d02285cb4459d46571089fd3c541a45fb634",
+    "test.jsonl": "1309699fa8cb0522958278150f7f2f4e71e64e869d52abb3600eda545722e341",
+    "test_prompts.jsonl": "bbb76cbdb0ff14d569b4dd650cbf8267a3ae634a12e890a7f7b510c5511842b7",
+    "test_revision.py": "8f1ca522e7496221d9e25ee2b679eb47f139359d241afc128be35f7f8ddce148",
+    "train.jsonl": "8594aea010d745951d87659eac966c78564ac3d8d6795c564bf1c278fcd6b41b",
+    "validate.py": "99b20e4dcc9f8ac7923e8ab266b2574c2713403be597c9ae33c23d4e0644064b",
+    "validation.jsonl": "0eddb3563424fff00dfade3d27d6b1fc9bf3e8cf79e16317ff31bd11bc27cffb",
+    "validation_report.json": "2d9162fe6431b6578233f1486cbb014b8a2b403188e6a62e8aa013e5b547ad63",
+    "validation_sample_ids.json": "9e953e27954272afb21598c055480a53df12796e41e8a890c00f01ae83a4e6ff"
+  }
+}

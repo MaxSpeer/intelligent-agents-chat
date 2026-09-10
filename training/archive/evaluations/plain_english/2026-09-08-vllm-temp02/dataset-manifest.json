@@ -1,0 +1,89 @@
+{
+  "dataset_name": "plain_english_oasst1_pilot",
+  "version": "1.0.0",
+  "prepared_on": "2026-09-08",
+  "language": "en",
+  "intended_style": "Clear, concise explanations for adult beginners; explain necessary terms, preserve factual meaning, and use examples when helpful.",
+  "system_message": {
+    "role": "system",
+    "content": "You are a helpful assistant. Answer the user's question directly and clearly."
+  },
+  "split_counts": {
+    "train": 80,
+    "validation": 10,
+    "test": 10
+  },
+  "total_conversations": 100,
+  "assistant_turns": 118,
+  "multi_turn_conversations": 18,
+  "base_model": "Qwen/Qwen3-8B",
+  "base_model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+  "max_sequence_length": 1024,
+  "source": {
+    "repository": "OpenAssistant/oasst1",
+    "revision": "fdf72ae0827c1cda404aff25b6603abec9e3399b",
+    "license": "Apache-2.0",
+    "data_file": {
+      "file": "2023-04-12_oasst_ready.messages.jsonl.gz",
+      "url": "https://huggingface.co/datasets/OpenAssistant/oasst1/resolve/fdf72ae0827c1cda404aff25b6603abec9e3399b/2023-04-12_oasst_ready.messages.jsonl.gz",
+      "bytes": 34196309,
+      "sha256": "286a6e9a5a413b3272ae9c0b5a20d327983dea1c24342ae28cb244a6da65185c"
+    }
+  },
+  "split_method": {
+    "assignment": "Explicit topic-group holdouts; all source-tree turns and duplicate semantic topics stay within one split. IDs ordered by source tree ID.",
+    "validation_topic_groups": [
+      "ar_vr_mixed_reality",
+      "cheesemaking",
+      "cornell_notes",
+      "habit_formation",
+      "historical_clothing_materials",
+      "photosynthesis",
+      "reject_synonyms",
+      "sphere_volume",
+      "two_factor_authentication",
+      "vector_normalization"
+    ],
+    "test_topic_groups": [
+      "distributed_hash_table_nodes",
+      "earthquakes",
+      "english_th_pronunciation",
+      "identity_function",
+      "knitting_and_crochet",
+      "light_pollution",
+      "markov_chains",
+      "newtons_laws",
+      "schrodingers_cat",
+      "starting_conversations"
+    ],
+    "topic_aliases": {
+      "mass_and_density": "equal_mass_different_density"
+    },
+    "within_split_shuffle_seed": 42,
+    "test_scope": "Held out from this fine-tuning preparation only; prior inclusion in base-model pretraining is unknown."
+  },
+  "tokenizer": {
+    "source": "Existing cluster adapter tokenizer snapshot (no model weights loaded).",
+    "source_path": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-conspiracy",
+    "transformers_version_used": "5.15.1",
+    "file_sha256": {
+      "chat_template.jinja": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8",
+      "tokenizer.json": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506",
+      "tokenizer_config.json": "04b1682c59acbd057f4c9072297faa73d56fc9de053094c659cdb4c464f58f86"
+    }
+  },
+  "training_started": false,
+  "file_sha256": {
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "NOTICE": "04a7bae4d4b5c8649c78199bd8348238eb23ecf0c8f54fcbf8204049e0ffa24f",
+    "README.md": "a3b2b991948c243afa90b2c79c6376271900ae14702d05695b58e7bfebe576a8",
+    "provenance.jsonl": "65ba397cfe164832e49bb2a61b6a4824b31abbac1a4fa4ceb92a5f1246f5e3ca",
+    "review_report.json": "86ee52c0917576825fc7e9eab1357b605fa5ef9e0735ac446c1057897e5d7bac",
+    "test.jsonl": "96956d56eb40b6c56dc6cde68f0f73d6e0190937f1b2568cd0cf9ed4c4dc04fa",
+    "test_prompts.jsonl": "28a9fbfdc9719752bcc9642e724ea08029c6f3aee46b0b84bf17cd6c743eb4b3",
+    "train.jsonl": "6a154802088938eced43180192950f19a9020e925269c5626a8bec0de409ef6f",
+    "validate.py": "575381e82269125c0ca838944f7a51426c7b07fbf27cbbab7735de0d864eb98d",
+    "validation.jsonl": "8579a0164b4ed13729e77bfc6d0af3e680e4c651ed5c8b2ff348aca7feefc31e",
+    "validation_report.json": "abe751b6afc19888ea525477858875a751483d14b11e16449cb74cbf3bca1c47"
+  }
+}

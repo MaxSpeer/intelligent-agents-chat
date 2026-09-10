@@ -1,0 +1,111 @@
+{
+  "language": "en",
+  "system_message": {
+    "role": "system",
+    "content": "You are a helpful assistant. Answer the user's question directly and clearly."
+  },
+  "split_counts": {
+    "train": 2000,
+    "validation": 100,
+    "test": 100
+  },
+  "total_conversations": 2200,
+  "assistant_turns": 3443,
+  "multi_turn_conversations": 755,
+  "base_model": "Qwen/Qwen3-8B",
+  "base_model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+  "max_sequence_length": 1024,
+  "validation_generation_ids": [
+    "plain2k-everyday-train_sft-0993-qa2",
+    "plain2k-everyday-train_sft-0515-dialogue",
+    "plain2k-everyday-train_sft-0842-dialogue",
+    "plain2k-everyday-train_sft-0546-dialogue",
+    "plain2k-everyday-train_sft-0618-qa4",
+    "plain2k-everyday-train_sft-1500-qa4",
+    "plain2k-everyday-train_sft-0316-dialogue",
+    "plain2k-everyday-train_sft-1878-qa2",
+    "plain2k-everyday-train_sft-1683-qa4",
+    "plain2k-everyday-train_sft-0994-dialogue"
+  ],
+  "tokenizer": {
+    "source": "Pinned tokenizer inherited from parent; current validation uses a local tokenizer only.",
+    "source_path": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-conspiracy",
+    "transformers_version_used": "5.15.1",
+    "file_sha256": {
+      "chat_template.jinja": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8",
+      "tokenizer.json": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506",
+      "tokenizer_config.json": "04b1682c59acbd057f4c9072297faa73d56fc9de053094c659cdb4c464f58f86"
+    }
+  },
+  "dataset_name": "plain_english_clear_v2",
+  "version": "2.0.0",
+  "prepared_at": "2026-09-09T15:16:48.148765+00:00",
+  "parent_dataset": "../plain_english_2k_simplified_v1",
+  "parent_manifest_sha256": "b9569a7ee61756e3cd1aa9f3386269dd7c700deedfa1b0985659b44202ab9b45",
+  "objective": "Short sentences, familiar words, explained terms, concrete examples and preserved meaning. Whole answers may be longer.",
+  "review_scope": {
+    "all_training_and_validation_answers_have_editorial_decisions": true,
+    "training_answer_decisions": 3085,
+    "validation_answer_decisions": 160,
+    "test_answers_rewritten": 0,
+    "human_reviewed": false,
+    "complete_external_fact_check": false
+  },
+  "actions": {
+    "rewrite": 2852,
+    "keep": 393,
+    "frozen_holdout": 198
+  },
+  "split_statistics": {
+    "train": {
+      "dialogue_examples": 2000,
+      "source_conversations": 1393,
+      "assistant_answers": 3085,
+      "multi_turn_dialogues": 662,
+      "mean_answer_words": 33.989
+    },
+    "validation": {
+      "dialogue_examples": 100,
+      "source_conversations": 65,
+      "assistant_answers": 160,
+      "multi_turn_dialogues": 37,
+      "mean_answer_words": 42.438
+    },
+    "test": {
+      "dialogue_examples": 100,
+      "source_conversations": 81,
+      "assistant_answers": 198,
+      "multi_turn_dialogues": 56,
+      "mean_answer_words": 27.682
+    }
+  },
+  "test_policy": "Existing test files byte-for-byte unchanged. Inherited topic overlap remains; not an independent new human benchmark.",
+  "model_evaluation": "No new model was trained or evaluated during dataset preparation.",
+  "file_sha256": {
+    "EXAMPLES.md": "024908b2a5e1c9f7655936cc1b51579ab9b0dadc3f38f2c32493507db89f36fd",
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "NOTICE": "701626a857ca2c5fd6025ab322fc28d0f0f994928455cf1537476a4b28aebeb8",
+    "README.md": "107197490244db303becafd7d6535b659ba784d252d8d5bd32d5e08b6c1c97a6",
+    "answer_changes.jsonl": "7f6dcf8c24837c0bd00af0bdd50d2fecac14506987e58d12177dbc3b30982bb2",
+    "build.py": "162232e97dca8a563b3abd8d26692e4d16e9f1bc6a321ccde310ea522d0c67c5",
+    "decisions/train_a.jsonl": "4b0dccb6b5061d91f94422c47402028651ad10f2be16c780e5dfbd626337522b",
+    "decisions/train_b.jsonl": "cc684c5139f229fa93e9e642ca51f8674cd5a5e38cc50b47f548165b9a074ee6",
+    "decisions/train_c.jsonl": "dea59d5b568df081784ed0148733d0052fc6f921606e96458cb539d28de919fd",
+    "decisions/train_root.jsonl": "416ef028eaf5bd2424a0e7a0f5da66e96977576fbdfa1f28e81b905cedbad64b",
+    "decisions/validation.jsonl": "ba1a4f91c1db80af5ca63a446cfdc53e0275b8cc7a3817f8b1dfc9c65ab1f79d",
+    "editor.py": "9c7946085366cee8d2939d8793829f9fef4b62cc5c892b266ab1474bbf6448fd",
+    "parent_manifest.json": "b9569a7ee61756e3cd1aa9f3386269dd7c700deedfa1b0985659b44202ab9b45",
+    "parent_snapshot.json": "238fc1ee99a0dbb3378163f640704d7582c74289c6e67c91c5491f91a87728c2",
+    "provenance.jsonl": "9997bd64e46581c5c0415670349ac678f2493c9b8b830df379820023b4b8713c",
+    "quality_review.json": "5ff50be159a2e8c6deeac5ebf9e2ba581b343bba79c6779859ea68c9ab6c2676",
+    "rewrite-prompt.txt": "ef229873a6de41caebf3c7e91b12f33d18b0b795b81ed252097dc0dfd4f15b8b",
+    "style-guide.md": "4a18614ee1151ffe7f5c0b32a0cec53b02b5aecd69a5fc812eff9ab44bfb6be9",
+    "style_comparison.json": "dcf337b0b10306c76b25383d23ba2992abc03a012fada1a01808b34a4ff78e2f",
+    "test.jsonl": "1309699fa8cb0522958278150f7f2f4e71e64e869d52abb3600eda545722e341",
+    "test_prompts.jsonl": "bbb76cbdb0ff14d569b4dd650cbf8267a3ae634a12e890a7f7b510c5511842b7",
+    "train.jsonl": "ef4d54923de48075a362a7157141fd2fb504afd2d53d0e6370aa360ba80fe261",
+    "validate.py": "bcb9776dbe084880a448bf02cfdfcfaad359a2bd43fc11303dff950ec81aad56",
+    "validation.jsonl": "4c3b94b282b1e12b3f9b6f6ceed16339f05961e82e47810b50637635e1f21113",
+    "validation_sample_ids.json": "9e953e27954272afb21598c055480a53df12796e41e8a890c00f01ae83a4e6ff"
+  }
+}

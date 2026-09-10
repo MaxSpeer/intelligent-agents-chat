@@ -1,0 +1,39 @@
+{
+  "status": "complete",
+  "created_at": "2026-09-09T10:09:08.926333+00:00",
+  "checkpoint": "checkpoint-193",
+  "global_step": 193,
+  "epoch": 1.0,
+  "split": "validation",
+  "seed": 42,
+  "settings": {
+    "max_new_tokens": 2048,
+    "do_sample": true,
+    "temperature": 0.2,
+    "top_p": 1.0,
+    "top_k": 0,
+    "min_p": 0.0,
+    "repetition_penalty": 1.0,
+    "use_cache": true
+  },
+  "enable_thinking": false,
+  "adapter_enabled": true,
+  "extra_style_instruction": null,
+  "followups_use_own_answers": true,
+  "reference_answers_in_input": false,
+  "inference_quantization": "same 4-bit model as training",
+  "latest_metrics": {
+    "eval_loss": 1.128096580505371,
+    "eval_runtime": 15.2186,
+    "eval_samples_per_second": 10.513,
+    "eval_steps_per_second": 10.513,
+    "epoch": 1.0,
+    "step": 193
+  },
+  "answers": 19,
+  "first_answers": 10,
+  "mean_first_answer_words": 26.0,
+  "truncated_answers": 0,
+  "note": "Length is descriptive; choose the checkpoint after reviewing clarity and facts.",
+  "finished_at": "2026-09-09T10:09:52.794850+00:00"
+}
