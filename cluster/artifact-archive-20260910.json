@@ -1,0 +1,2393 @@
+{
+  "archive": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english",
+  "active_weights_sha256": {
+    "adapters/qwen3-8b-conspiracy/adapter_model.safetensors": "1681eb1c4d3f2ec316aecbdcf3a92c53d3df476773814030a19e8aa7ddc23943",
+    "adapters/qwen3-8b-plain-english-clear-v2-retry1/checkpoint-193/adapter_model.safetensors": "ed7eb9a2866a418780701e8d62ac543009751efe8de5c0e77a757b1e37b026d0"
+  },
+  "moves": [
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-plain-english",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/adapters/qwen3-8b-plain-english",
+      "reason": "Superseded or abandoned run; not referenced by active serving configuration",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": "README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "adapter_config.json",
+          "bytes": 666,
+          "sha256": "78830c3f520d2333d689ee044d2f3fa8372a9d171e41e8047ef010c40fa0bb02"
+        },
+        {
+          "path": "adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "921755883da0ed6da18be5fd67a161c77046995e2cf55ddfa12087cc7667d215"
+        },
+        {
+          "path": "chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-10/README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "checkpoint-10/adapter_config.json",
+          "bytes": 666,
+          "sha256": "78830c3f520d2333d689ee044d2f3fa8372a9d171e41e8047ef010c40fa0bb02"
+        },
+        {
+          "path": "checkpoint-10/adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "e9f0f162baffb770cb3f2385a4bd8f2caa9fb49be28809622e03e585a19ee25b"
+        },
+        {
+          "path": "checkpoint-10/optimizer.pt",
+          "bytes": 15915045,
+          "sha256": "7a1d9301a901bb42f351f53ae5ef3c784ac49492a2c66237a971221c0576bef4"
+        },
+        {
+          "path": "checkpoint-10/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "04a51111ba9abf3579efde655abbd5b8924aeeb360d92662f564dc1e11987707"
+        },
+        {
+          "path": "checkpoint-10/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "e71a0b8ed8b6c7c618051e4768ab92f3487fad3d191e5a75bc155abde574b7d6"
+        },
+        {
+          "path": "checkpoint-10/trainer_state.json",
+          "bytes": 3118,
+          "sha256": "3bc634be5ae3e26c865b22432916b9b536beda74716f60351c317a1aa106aa40"
+        },
+        {
+          "path": "checkpoint-10/training_args.bin",
+          "bytes": 5265,
+          "sha256": "9c13c34d93ad01a7be6d428e665c6ebb53616876534b2d4d8557687833470e67"
+        },
+        {
+          "path": "checkpoint-15/README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "checkpoint-15/adapter_config.json",
+          "bytes": 666,
+          "sha256": "78830c3f520d2333d689ee044d2f3fa8372a9d171e41e8047ef010c40fa0bb02"
+        },
+        {
+          "path": "checkpoint-15/adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "921755883da0ed6da18be5fd67a161c77046995e2cf55ddfa12087cc7667d215"
+        },
+        {
+          "path": "checkpoint-15/optimizer.pt",
+          "bytes": 15915045,
+          "sha256": "bf21a483a3a0072647d1b3914aa59f63434bae40909b7629d8cecdfbddc70302"
+        },
+        {
+          "path": "checkpoint-15/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "45ae9bd89f1cd77b3c3b9ef1b126662b34f8115cc17ea98e529a809e53c63809"
+        },
+        {
+          "path": "checkpoint-15/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "2307a9693e86a51474876468dbee8772ad888b23acb59a9923a02fd7a88179e4"
+        },
+        {
+          "path": "checkpoint-15/trainer_state.json",
+          "bytes": 4154,
+          "sha256": "533daf0216ced852d20edde0743704e25aca3b2e824c3cab53bf59aca36538f4"
+        },
+        {
+          "path": "checkpoint-15/training_args.bin",
+          "bytes": 5265,
+          "sha256": "9c13c34d93ad01a7be6d428e665c6ebb53616876534b2d4d8557687833470e67"
+        },
+        {
+          "path": "tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "bytes": 694,
+          "sha256": "04b1682c59acbd057f4c9072297faa73d56fc9de053094c659cdb4c464f58f86"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-plain-english-v2",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/adapters/qwen3-8b-plain-english-v2",
+      "reason": "Superseded or abandoned run; not referenced by active serving configuration",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": "README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "adapter_config.json",
+          "bytes": 666,
+          "sha256": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438"
+        },
+        {
+          "path": "adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "f0967aca9005da133626e66d7a3bfc6729197329144ddf7a223af45c2ed70dd1"
+        },
+        {
+          "path": "chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-12/README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "checkpoint-12/adapter_config.json",
+          "bytes": 666,
+          "sha256": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438"
+        },
+        {
+          "path": "checkpoint-12/adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "ece5dda66936c1875783f1704949f99a4c834aee68700e90aacfa4bd927a73b7"
+        },
+        {
+          "path": "checkpoint-12/chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-12/optimizer.pt",
+          "bytes": 15915045,
+          "sha256": "50c80a2bc8e755cbf3ae16574a6d4f0daddaf1466bf8f4d1a5aaa83d4969366e"
+        },
+        {
+          "path": "checkpoint-12/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "a6b53f38e61f916e7f11cea15f8fbc46cdfca4ef80734f52fc19fa3426e27b9a"
+        },
+        {
+          "path": "checkpoint-12/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "f2fad962f7d70b366ef9ad46f8f934f3b7ba4e0b25a35f004ac6a2f2983a64af"
+        },
+        {
+          "path": "checkpoint-12/tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "checkpoint-12/tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "checkpoint-12/trainer_state.json",
+          "bytes": 3407,
+          "sha256": "44a103a128808a566c7b0864e3ebeefbbe2761e7542f32f53f4c59bbe7574bcb"
+        },
+        {
+          "path": "checkpoint-12/training_args.bin",
+          "bytes": 5329,
+          "sha256": "80584dba425ac4c23d76c3557836ca2d8fb1751e6f02feb130cac085868a3e1e"
+        },
+        {
+          "path": "checkpoint-18/README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "checkpoint-18/adapter_config.json",
+          "bytes": 666,
+          "sha256": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438"
+        },
+        {
+          "path": "checkpoint-18/adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "f0967aca9005da133626e66d7a3bfc6729197329144ddf7a223af45c2ed70dd1"
+        },
+        {
+          "path": "checkpoint-18/chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-18/optimizer.pt",
+          "bytes": 15915045,
+          "sha256": "b781f8d74faeae5fe4ae0de70e196ba2e5897ae5362cfcc1ed292374f99304a6"
+        },
+        {
+          "path": "checkpoint-18/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "834463a4ba0bcb20f9fe3c286ed72c5d8483858cbd21d95ae886498118349f62"
+        },
+        {
+          "path": "checkpoint-18/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "6275c9f95f6b1f11e36700603bcb7bf3cf0e1bece916ef5b7d9fb14d4ae4ab6e"
+        },
+        {
+          "path": "checkpoint-18/tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "checkpoint-18/tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "checkpoint-18/trainer_state.json",
+          "bytes": 4687,
+          "sha256": "aee6a131e5f6f8a2660377e985c0bed7cf8c7ded692089de83ec88c72e832e03"
+        },
+        {
+          "path": "checkpoint-18/training_args.bin",
+          "bytes": 5329,
+          "sha256": "80584dba425ac4c23d76c3557836ca2d8fb1751e6f02feb130cac085868a3e1e"
+        },
+        {
+          "path": "checkpoint-6/README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "checkpoint-6/adapter_config.json",
+          "bytes": 666,
+          "sha256": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438"
+        },
+        {
+          "path": "checkpoint-6/adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "5d9c13e038123bd932d93fcab8e47c7245dc1f0c10e0d0f3aab755efbb30ea13"
+        },
+        {
+          "path": "checkpoint-6/chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-6/optimizer.pt",
+          "bytes": 15915045,
+          "sha256": "ef8ee54ee3207894dd8f2e3716a419f87a683feac27384adf34e8aef97d43db6"
+        },
+        {
+          "path": "checkpoint-6/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "9127dd809a7412cb0ad3cd44a7e95800265476813a5a3702b9b35ef072fca708"
+        },
+        {
+          "path": "checkpoint-6/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "87e581923a947ef8db4d23eb04ed9a452bbc4e722f6f24f902f99b5b3af1b535"
+        },
+        {
+          "path": "checkpoint-6/tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "checkpoint-6/tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "checkpoint-6/trainer_state.json",
+          "bytes": 2128,
+          "sha256": "5c15ff44159e2a6388a209241a894e2917e7ff40f2fc9b350d181fff405915cc"
+        },
+        {
+          "path": "checkpoint-6/training_args.bin",
+          "bytes": 5329,
+          "sha256": "80584dba425ac4c23d76c3557836ca2d8fb1751e6f02feb130cac085868a3e1e"
+        },
+        {
+          "path": "run-inputs/chat_examples.py",
+          "bytes": 3932,
+          "sha256": "7875bba0d5b19ab063c50c81cb647cf4f15bbfbd6f452fb1c0ed34bd90078163"
+        },
+        {
+          "path": "run-inputs/datasets/plain_english/validate.py",
+          "bytes": 9101,
+          "sha256": "9d1f628a53fa3f97a84237fc6a4fc66afc38d3723c3520ff828759b42f07aefc"
+        },
+        {
+          "path": "run-inputs/evaluate_plain_english.py",
+          "bytes": 10140,
+          "sha256": "777885766bd1927b156234f7f5d95f6d4068be8926b60945b2fde3751b52112d"
+        },
+        {
+          "path": "run-inputs/manifest.json",
+          "bytes": 4142,
+          "sha256": "2a144f83042e5e3339b0814fa726154e0c7676ac280ed5a29da010d7661e3e99"
+        },
+        {
+          "path": "run-inputs/train.jsonl",
+          "bytes": 69636,
+          "sha256": "6a154802088938eced43180192950f19a9020e925269c5626a8bec0de409ef6f"
+        },
+        {
+          "path": "run-inputs/train_lora.py",
+          "bytes": 12030,
+          "sha256": "d1faafeb5d267c716de203a97e03d3b8b1a04cdbcfa0ba925ac23b3ec721b0a0"
+        },
+        {
+          "path": "run-inputs/train_plain_english_v2.py",
+          "bytes": 7234,
+          "sha256": "44b54cb174b42d779c05bc9c2ef0d5975c508f6718c169fb016141abdc975a4f"
+        },
+        {
+          "path": "run-inputs/validation.jsonl",
+          "bytes": 9465,
+          "sha256": "8579a0164b4ed13729e77bfc6d0af3e680e4c651ed5c8b2ff348aca7feefc31e"
+        },
+        {
+          "path": "run-inputs/validation_samples.py",
+          "bytes": 7455,
+          "sha256": "2b3e4c2cfb57a49edd035314266ea8ac74d0c657864c3ef364e64a817035b94e"
+        },
+        {
+          "path": "run.json",
+          "bytes": 4286,
+          "sha256": "d4cf3caaf7721ba50a086df9d923816dfb48aa059841f8ae048180d1e7b37c60"
+        },
+        {
+          "path": "tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "validation_samples/base-neutral.jsonl",
+          "bytes": 48115,
+          "sha256": "98e0f43f9018791f8379d56c1e669b4ba88a677d88d0e85c3173d30921e9652e"
+        },
+        {
+          "path": "validation_samples/base-neutral.md",
+          "bytes": 22696,
+          "sha256": "91208ae7a76100a4571684ad41cc4595a2ef03365084678484dcdb5bc85f059e"
+        },
+        {
+          "path": "validation_samples/base-neutral.metadata.json",
+          "bytes": 876,
+          "sha256": "7becbdebf6ef50c07e89bc6ccd4d89e0110677a3198202fad9c618341be51068"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.jsonl",
+          "bytes": 169976,
+          "sha256": "f8229259fb5e9acb051967704365657cceb8b555e105b767262976c907eaf483"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.md",
+          "bytes": 81517,
+          "sha256": "65c69e6a23581130ec8eed427cd10033b83f27f8f70e84b5ab6758ab2f2bef6e"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.metadata.json",
+          "bytes": 1170,
+          "sha256": "0face3df48dc04c2b0d406d59079837af4f6f7f82e1ff73625a20e5008b16dc8"
+        },
+        {
+          "path": "validation_samples/checkpoint-12.jsonl",
+          "bytes": 47431,
+          "sha256": "0b4e5aa2d8b3dfc61b09530400bbd3bbb9a3970d72f7d0cfbc94336e94198ab1"
+        },
+        {
+          "path": "validation_samples/checkpoint-12.md",
+          "bytes": 22377,
+          "sha256": "d2806dd74a0b6c135f3ef87226d0ebeedbe9f4da4a9bf78ae5749f6b68624e64"
+        },
+        {
+          "path": "validation_samples/checkpoint-12.metadata.json",
+          "bytes": 1062,
+          "sha256": "b1886dfa563d0d893f92ccaf44b63b1d2da5c275ca2637c9b8a951132c9cdfd7"
+        },
+        {
+          "path": "validation_samples/checkpoint-18.jsonl",
+          "bytes": 51908,
+          "sha256": "7a808bc19fe9c70c73b91d6fcf8bb92d3a1240140ce5f4d1c8c4a56cc1627f0b"
+        },
+        {
+          "path": "validation_samples/checkpoint-18.md",
+          "bytes": 24561,
+          "sha256": "3b6e291c0c3ca71e4c5a9bace3492295cd4f2d53f388ab1c65bbd8f42eaf8aa7"
+        },
+        {
+          "path": "validation_samples/checkpoint-18.metadata.json",
+          "bytes": 1062,
+          "sha256": "a97097f49fae4db443cd62098abb820842cad0665885a79dc2feecbe7bf8b539"
+        },
+        {
+          "path": "validation_samples/checkpoint-6.jsonl",
+          "bytes": 51947,
+          "sha256": "6db0e11d6d89fe246a29e97cdefa102f7d1d7809bcc6c86da472e0f2ea94d79d"
+        },
+        {
+          "path": "validation_samples/checkpoint-6.md",
+          "bytes": 24577,
+          "sha256": "6746864531ff6540209c66c0914c12742d5cd2a0daf03e616c05518960d14e72"
+        },
+        {
+          "path": "validation_samples/checkpoint-6.metadata.json",
+          "bytes": 1059,
+          "sha256": "8822cbb537c972878863d498c0f161408077b70b3ccfd9dd35d4c81f32a3907b"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-plain-english-2k",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/adapters/qwen3-8b-plain-english-2k",
+      "reason": "Superseded or abandoned run; not referenced by active serving configuration",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": "README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "adapter_config.json",
+          "bytes": 666,
+          "sha256": "486be4446d63b1bfeb977830eeaf283660a047991bb589ff28d46c3f27840e93"
+        },
+        {
+          "path": "adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "310c3399f47819a5cc7c79c8e2e372cda97eb09cf4648bac703076c9ff148989"
+        },
+        {
+          "path": "chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-193/README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "checkpoint-193/adapter_config.json",
+          "bytes": 666,
+          "sha256": "486be4446d63b1bfeb977830eeaf283660a047991bb589ff28d46c3f27840e93"
+        },
+        {
+          "path": "checkpoint-193/adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "c6aecf2454d119cc21afdfb00d41a90682bbf6cb4570a62b611dd0fbf89f90b8"
+        },
+        {
+          "path": "checkpoint-193/chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-193/optimizer.pt",
+          "bytes": 15915045,
+          "sha256": "43371ae5ee5cfbae0fd20737ef5039498a0b6d537c44f923889552075e6ff494"
+        },
+        {
+          "path": "checkpoint-193/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "822ecb548f5d0dd62b11094e60c03754de4ce9e9b59a94551e4f044511f9c8fe"
+        },
+        {
+          "path": "checkpoint-193/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "1c36dd8963d68828de9e43bdf9492f5c0cb1ee6a926c7fc9367aa57df6a6a125"
+        },
+        {
+          "path": "checkpoint-193/tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "checkpoint-193/tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "checkpoint-193/trainer_state.json",
+          "bytes": 36603,
+          "sha256": "46512d7f42e692bd50e67b0ae016f428bb24361685f732b3e47c8d061146bc3c"
+        },
+        {
+          "path": "checkpoint-193/training_args.bin",
+          "bytes": 5329,
+          "sha256": "3dc5d05cea110355236c4d482b6e4a1ad50ff4557d4588f4c3cf3d1430bf499f"
+        },
+        {
+          "path": "checkpoint-386/README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "checkpoint-386/adapter_config.json",
+          "bytes": 666,
+          "sha256": "486be4446d63b1bfeb977830eeaf283660a047991bb589ff28d46c3f27840e93"
+        },
+        {
+          "path": "checkpoint-386/adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "3740a82327a52218ffb98ef083750c0d1468b46dd0220dc46951b5d817892fbd"
+        },
+        {
+          "path": "checkpoint-386/chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-386/optimizer.pt",
+          "bytes": 15915365,
+          "sha256": "7be6060f64dbb80a92913a7a7ceb7afcd364b8c1ff141d89b07742013028447e"
+        },
+        {
+          "path": "checkpoint-386/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "50264d2d0e69c9eba07b260106ad31a1882a43f5858d92f4f72de2c4ebf76f32"
+        },
+        {
+          "path": "checkpoint-386/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "3b34c03c3f2eab698b3d445db2a76e9751c15ec1d4f597c1aef236feada218d4"
+        },
+        {
+          "path": "checkpoint-386/tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "checkpoint-386/tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "checkpoint-386/trainer_state.json",
+          "bytes": 72415,
+          "sha256": "e06cf56d23476198aaf9e50f16301b98e104b917fae2adec7f5b3a3b51fc4e1c"
+        },
+        {
+          "path": "checkpoint-386/training_args.bin",
+          "bytes": 5329,
+          "sha256": "3dc5d05cea110355236c4d482b6e4a1ad50ff4557d4588f4c3cf3d1430bf499f"
+        },
+        {
+          "path": "checkpoint-579/README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "checkpoint-579/adapter_config.json",
+          "bytes": 666,
+          "sha256": "486be4446d63b1bfeb977830eeaf283660a047991bb589ff28d46c3f27840e93"
+        },
+        {
+          "path": "checkpoint-579/adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "310c3399f47819a5cc7c79c8e2e372cda97eb09cf4648bac703076c9ff148989"
+        },
+        {
+          "path": "checkpoint-579/chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-579/optimizer.pt",
+          "bytes": 15915365,
+          "sha256": "9beaa53cc2235e9feb5a28e9b8e8766252a7ea932fd96c931084a226288e9ad6"
+        },
+        {
+          "path": "checkpoint-579/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "c39703431c5bd51946ba0e1f2fbd2b78f971c16125eb01c155ccaa86ff6a2fca"
+        },
+        {
+          "path": "checkpoint-579/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "3322f8eadf4fc65ee8b8946f1c29e14d0d9c51cbab04891c97853391e84749d8"
+        },
+        {
+          "path": "checkpoint-579/tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "checkpoint-579/tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "checkpoint-579/trainer_state.json",
+          "bytes": 108249,
+          "sha256": "dfbd5cd166680d0190b4f48e579ae97724c555d36b151d63f096fe52d0601bd3"
+        },
+        {
+          "path": "checkpoint-579/training_args.bin",
+          "bytes": 5329,
+          "sha256": "3dc5d05cea110355236c4d482b6e4a1ad50ff4557d4588f4c3cf3d1430bf499f"
+        },
+        {
+          "path": "run-inputs/chat_examples.py",
+          "bytes": 3932,
+          "sha256": "7875bba0d5b19ab063c50c81cb647cf4f15bbfbd6f452fb1c0ed34bd90078163"
+        },
+        {
+          "path": "run-inputs/datasets/plain_english_2k/build.py",
+          "bytes": 22709,
+          "sha256": "bb7960b49b8e9b777f3179293af5d71f8962c4b64dd43b166c55233874c79edb"
+        },
+        {
+          "path": "run-inputs/datasets/plain_english_2k/validate.py",
+          "bytes": 14286,
+          "sha256": "c8d70e95a8cbb0bbbd0685569821e9271f928305ba988b6abf5c8f4e52125e32"
+        },
+        {
+          "path": "run-inputs/evaluate_plain_english.py",
+          "bytes": 10140,
+          "sha256": "777885766bd1927b156234f7f5d95f6d4068be8926b60945b2fde3751b52112d"
+        },
+        {
+          "path": "run-inputs/manifest.json",
+          "bytes": 6808,
+          "sha256": "ee76b5fe78c1291db949e9d766abf2d8a44a15cc45f382a11fb45823002e6ceb"
+        },
+        {
+          "path": "run-inputs/train.jsonl",
+          "bytes": 1362089,
+          "sha256": "6d82bdde12894db7ba7866640be49f49ed0237396aa7cf0d174d7eadc0889899"
+        },
+        {
+          "path": "run-inputs/train_lora.py",
+          "bytes": 12030,
+          "sha256": "d1faafeb5d267c716de203a97e03d3b8b1a04cdbcfa0ba925ac23b3ec721b0a0"
+        },
+        {
+          "path": "run-inputs/train_plain_english_2k.py",
+          "bytes": 8282,
+          "sha256": "e101f2861524231cc0b181215f612330de12a7e819e9e84bdad47f7651d4def5"
+        },
+        {
+          "path": "run-inputs/validation.jsonl",
+          "bytes": 68228,
+          "sha256": "6bae086247a9fc0d118e26de1bd278b576c05bafba75e6f070a9e0a79379dc5d"
+        },
+        {
+          "path": "run-inputs/validation_sample_ids.json",
+          "bytes": 438,
+          "sha256": "9e953e27954272afb21598c055480a53df12796e41e8a890c00f01ae83a4e6ff"
+        },
+        {
+          "path": "run-inputs/validation_samples.py",
+          "bytes": 7455,
+          "sha256": "2b3e4c2cfb57a49edd035314266ea8ac74d0c657864c3ef364e64a817035b94e"
+        },
+        {
+          "path": "run.json",
+          "bytes": 6578,
+          "sha256": "01e4a695a66570f3e9da948ac6e743b73ce5576b550b4915bdba5a25208acc1e"
+        },
+        {
+          "path": "tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "validation_samples/base-neutral.jsonl",
+          "bytes": 63329,
+          "sha256": "1474fab540db1c2f085cd987b591609e554c313f8f654207c15c1c5ef6c0b8f1"
+        },
+        {
+          "path": "validation_samples/base-neutral.md",
+          "bytes": 30414,
+          "sha256": "9002356c35e7f864edaad611ca6c8acd7aee477e609a3dda0712b7b8c423c4ad"
+        },
+        {
+          "path": "validation_samples/base-neutral.metadata.json",
+          "bytes": 876,
+          "sha256": "3d0f47ed680e70af01c614b4e55b5f294e7d7b3de97b37add4d755dc1b29e041"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.jsonl",
+          "bytes": 39654,
+          "sha256": "3eac9e1e116a1822a3d86a72185ec9aa60c4406dac4961f77a19a34d82413dac"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.md",
+          "bytes": 17745,
+          "sha256": "cfb1f94e4d8987cb88a4064de26ea1937eaa8ba1efe52979f619ae7c2ec20299"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.metadata.json",
+          "bytes": 1170,
+          "sha256": "edad9faa0718f2c5e42a68d909b644d0ce6b05a73f0c97433b8c43ef55ceb130"
+        },
+        {
+          "path": "validation_samples/checkpoint-193.jsonl",
+          "bytes": 12190,
+          "sha256": "89d09c1b03b8714eaf07f7137304f6d5c3428a4e8e99651a020353798b9afb9b"
+        },
+        {
+          "path": "validation_samples/checkpoint-193.md",
+          "bytes": 5374,
+          "sha256": "48b11d426e63b4be9ce577227992994c8d0499b27251e3bfa4c0b14558303220"
+        },
+        {
+          "path": "validation_samples/checkpoint-193.metadata.json",
+          "bytes": 1066,
+          "sha256": "adfbbe415eabeb5f828a78c4a382be77c0548866cd12460d4c7f52ebe72df527"
+        },
+        {
+          "path": "validation_samples/checkpoint-386.jsonl",
+          "bytes": 12249,
+          "sha256": "d8b7bcbf179574de3c2956dc40871ed5ecbf48c2e3264ef9e23c957ea8f07675"
+        },
+        {
+          "path": "validation_samples/checkpoint-386.md",
+          "bytes": 5404,
+          "sha256": "5e4ae03bc5a465579a623607cf99baaa743809c688d0d4a0329ff7ed625acbf9"
+        },
+        {
+          "path": "validation_samples/checkpoint-386.metadata.json",
+          "bytes": 1067,
+          "sha256": "1091216a660a3fc5938b5f82f1c16fbd1d20484f4ffe974b44626df80e159f1a"
+        },
+        {
+          "path": "validation_samples/checkpoint-579.jsonl",
+          "bytes": 11689,
+          "sha256": "a6761442e30afea1fe0f8d91eea9c7c228b1cc1175d3960a47490b5c6cf2af7a"
+        },
+        {
+          "path": "validation_samples/checkpoint-579.md",
+          "bytes": 5124,
+          "sha256": "a4fb395f65e243a9b8c2fd3dfc38f769cb13ce2c206c86d8ba1b9db8f831b7c7"
+        },
+        {
+          "path": "validation_samples/checkpoint-579.metadata.json",
+          "bytes": 1066,
+          "sha256": "30dd8f5db3d5be360d6c4cd3d9f71432d13211d97b3c0b2532eb25bcc1446e44"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-plain-english-2k-simplified-v1",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/adapters/qwen3-8b-plain-english-2k-simplified-v1",
+      "reason": "Superseded or abandoned run; not referenced by active serving configuration",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": ".resume.lock",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "adapter_config.json",
+          "bytes": 666,
+          "sha256": "3b5d9d51f3ad0e3213ea370afd61bab985a3cc9ea1172cf0b96e3c4f22a2d520"
+        },
+        {
+          "path": "adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "59699f3369ba4287a789f10d028b35646d75cf6dab8bc3841e7d7d1719d2e275"
+        },
+        {
+          "path": "chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-193/README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "checkpoint-193/adapter_config.json",
+          "bytes": 666,
+          "sha256": "440131741074bde193bd9b07aeb785ae619831644508f33a540811ec2dd851a7"
+        },
+        {
+          "path": "checkpoint-193/adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "3fd9177b1d8872da3c8a805e8f15a6ad7f38c8c46221c14eede361cdd1929a87"
+        },
+        {
+          "path": "checkpoint-193/chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-193/optimizer.pt",
+          "bytes": 15915045,
+          "sha256": "7a709e73cc6dff523c96b5c85657835e061efad85da2598e81c6c2404289fdd3"
+        },
+        {
+          "path": "checkpoint-193/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "d15232e92e772df74f2f5e2051c8434baf370c40646467637093363599042193"
+        },
+        {
+          "path": "checkpoint-193/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "1c36dd8963d68828de9e43bdf9492f5c0cb1ee6a926c7fc9367aa57df6a6a125"
+        },
+        {
+          "path": "checkpoint-193/tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "checkpoint-193/tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "checkpoint-193/trainer_state.json",
+          "bytes": 36598,
+          "sha256": "dea821dbbe8dcaa0163a40f98ca9ad6f3e081f643f71733cf8b4c65d90940923"
+        },
+        {
+          "path": "checkpoint-193/training_args.bin",
+          "bytes": 5329,
+          "sha256": "0cc637d9df7bb0a22134e61cbd4921815baf56f99ece29a21206618c575b95ef"
+        },
+        {
+          "path": "checkpoint-386/README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "checkpoint-386/adapter_config.json",
+          "bytes": 666,
+          "sha256": "3b5d9d51f3ad0e3213ea370afd61bab985a3cc9ea1172cf0b96e3c4f22a2d520"
+        },
+        {
+          "path": "checkpoint-386/adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "2d77abd330143703ac181aabff6c441ccf114c5bedc8b36aad98bbfb8b6e3b3c"
+        },
+        {
+          "path": "checkpoint-386/chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-386/optimizer.pt",
+          "bytes": 16663843,
+          "sha256": "e43d172e6030736a1f1c9949f6d39ed56bfcfdde507a1b795a5459c693db73e5"
+        },
+        {
+          "path": "checkpoint-386/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "74f1ef9adc5eda27ce118e66b6601cf9699502a168bdb5be7f4cf21c9c0dfca0"
+        },
+        {
+          "path": "checkpoint-386/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "3b34c03c3f2eab698b3d445db2a76e9751c15ec1d4f597c1aef236feada218d4"
+        },
+        {
+          "path": "checkpoint-386/tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "checkpoint-386/tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "checkpoint-386/trainer_state.json",
+          "bytes": 72397,
+          "sha256": "08928034929f8873f9de773de798d70c1ed7ddf7e47243ac8351c8922bf26388"
+        },
+        {
+          "path": "checkpoint-386/training_args.bin",
+          "bytes": 5329,
+          "sha256": "0cc637d9df7bb0a22134e61cbd4921815baf56f99ece29a21206618c575b95ef"
+        },
+        {
+          "path": "checkpoint-579/README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "checkpoint-579/adapter_config.json",
+          "bytes": 666,
+          "sha256": "3b5d9d51f3ad0e3213ea370afd61bab985a3cc9ea1172cf0b96e3c4f22a2d520"
+        },
+        {
+          "path": "checkpoint-579/adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "59699f3369ba4287a789f10d028b35646d75cf6dab8bc3841e7d7d1719d2e275"
+        },
+        {
+          "path": "checkpoint-579/chat_template.jinja",
+          "bytes": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "checkpoint-579/optimizer.pt",
+          "bytes": 16663843,
+          "sha256": "1d14e7b29222cd4b9d0c1dde851e12542eb485bb458396c2e72c798be54ecbc4"
+        },
+        {
+          "path": "checkpoint-579/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "ce1bcf03afba4baf6a9309a3166ae151b485dfcd60e6ac82067de913c0388583"
+        },
+        {
+          "path": "checkpoint-579/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "3322f8eadf4fc65ee8b8946f1c29e14d0d9c51cbab04891c97853391e84749d8"
+        },
+        {
+          "path": "checkpoint-579/tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "checkpoint-579/tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "checkpoint-579/trainer_state.json",
+          "bytes": 108230,
+          "sha256": "a6d2b46a5b4fe05959d62b6dc300a3db25a2e00ca7a495bc8abba57b169796cb"
+        },
+        {
+          "path": "checkpoint-579/training_args.bin",
+          "bytes": 5329,
+          "sha256": "0cc637d9df7bb0a22134e61cbd4921815baf56f99ece29a21206618c575b95ef"
+        },
+        {
+          "path": "resume-attempts/job-2524288-za6xlxdb/previous-run.json",
+          "bytes": 6539,
+          "sha256": "b12b04031209403daf79519d254371f1f556aa9d067c8011238d1694a1058cc7"
+        },
+        {
+          "path": "resume-attempts/job-2524288-za6xlxdb/resume.json",
+          "bytes": 2188,
+          "sha256": "52523dbea67fcc1a0ece99b46c0cfb90d0c6bbb7e9f5ce0975064074a8672387"
+        },
+        {
+          "path": "resume-attempts/job-2524288-za6xlxdb/resume_plain_english.py",
+          "bytes": 12535,
+          "sha256": "74a460806a494e2db972ab195563c4f3f1b3a71791f95280a0343df3cb5c1107"
+        },
+        {
+          "path": "run-inputs/__pycache__/chat_examples.cpython-311.pyc",
+          "bytes": 6291,
+          "sha256": "e77dde9828ff294d680cfa9c08e018f1a20fe6dcfebaa509327056067e8140ec"
+        },
+        {
+          "path": "run-inputs/__pycache__/evaluate_plain_english.cpython-311.pyc",
+          "bytes": 19294,
+          "sha256": "7ab0e8a1bbdac7fa24e63b2687e908b367abc9b84be32c96bac4c413d0dff20e"
+        },
+        {
+          "path": "run-inputs/__pycache__/train_lora.cpython-311.pyc",
+          "bytes": 12060,
+          "sha256": "516b046189747408ccfb30f14624fbd8ffc511c50431de4296d97efcb5f8aa28"
+        },
+        {
+          "path": "run-inputs/__pycache__/validation_samples.cpython-311.pyc",
+          "bytes": 12169,
+          "sha256": "701786395e22c9b21484752f84a4a64fd92ab97fffac0605ea6ed7c7e3658e2d"
+        },
+        {
+          "path": "run-inputs/chat_examples.py",
+          "bytes": 3932,
+          "sha256": "7875bba0d5b19ab063c50c81cb647cf4f15bbfbd6f452fb1c0ed34bd90078163"
+        },
+        {
+          "path": "run-inputs/datasets/plain_english_2k/build.py",
+          "bytes": 22709,
+          "sha256": "bb7960b49b8e9b777f3179293af5d71f8962c4b64dd43b166c55233874c79edb"
+        },
+        {
+          "path": "run-inputs/datasets/plain_english_2k/validate.py",
+          "bytes": 14286,
+          "sha256": "c8d70e95a8cbb0bbbd0685569821e9271f928305ba988b6abf5c8f4e52125e32"
+        },
+        {
+          "path": "run-inputs/datasets/plain_english_2k_simplified_v1/revise.py",
+          "bytes": 5414,
+          "sha256": "abd1692409c2c0816ebe71525757980119711bef487515fceebee85df47457eb"
+        },
+        {
+          "path": "run-inputs/datasets/plain_english_2k_simplified_v1/validate.py",
+          "bytes": 8771,
+          "sha256": "99b20e4dcc9f8ac7923e8ab266b2574c2713403be597c9ae33c23d4e0644064b"
+        },
+        {
+          "path": "run-inputs/evaluate_plain_english.py",
+          "bytes": 10140,
+          "sha256": "777885766bd1927b156234f7f5d95f6d4068be8926b60945b2fde3751b52112d"
+        },
+        {
+          "path": "run-inputs/manifest.json",
+          "bytes": 5402,
+          "sha256": "b9569a7ee61756e3cd1aa9f3386269dd7c700deedfa1b0985659b44202ab9b45"
+        },
+        {
+          "path": "run-inputs/train.jsonl",
+          "bytes": 1340012,
+          "sha256": "8594aea010d745951d87659eac966c78564ac3d8d6795c564bf1c278fcd6b41b"
+        },
+        {
+          "path": "run-inputs/train_lora.py",
+          "bytes": 12030,
+          "sha256": "d1faafeb5d267c716de203a97e03d3b8b1a04cdbcfa0ba925ac23b3ec721b0a0"
+        },
+        {
+          "path": "run-inputs/train_plain_english_2k.py",
+          "bytes": 8282,
+          "sha256": "e101f2861524231cc0b181215f612330de12a7e819e9e84bdad47f7651d4def5"
+        },
+        {
+          "path": "run-inputs/train_plain_english_simplified_v1.py",
+          "bytes": 1053,
+          "sha256": "8017cea3513e04eeccc5095b72767c055942b9543bab67a5cfe6ee6e467c0e09"
+        },
+        {
+          "path": "run-inputs/validation.jsonl",
+          "bytes": 67072,
+          "sha256": "0eddb3563424fff00dfade3d27d6b1fc9bf3e8cf79e16317ff31bd11bc27cffb"
+        },
+        {
+          "path": "run-inputs/validation_sample_ids.json",
+          "bytes": 438,
+          "sha256": "9e953e27954272afb21598c055480a53df12796e41e8a890c00f01ae83a4e6ff"
+        },
+        {
+          "path": "run-inputs/validation_samples.py",
+          "bytes": 7455,
+          "sha256": "2b3e4c2cfb57a49edd035314266ea8ac74d0c657864c3ef364e64a817035b94e"
+        },
+        {
+          "path": "run.json",
+          "bytes": 9107,
+          "sha256": "026fb638938c9be189bf6e4d900701f214249d2158538cc530de75728d68a0c7"
+        },
+        {
+          "path": "tokenizer.json",
+          "bytes": 11422650,
+          "sha256": "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "bytes": 692,
+          "sha256": "1cc816812993bff176eb4f7495433b736f06fba9b6e7b05cac7b4a1780650c95"
+        },
+        {
+          "path": "validation_samples/base-neutral.jsonl",
+          "bytes": 63329,
+          "sha256": "1474fab540db1c2f085cd987b591609e554c313f8f654207c15c1c5ef6c0b8f1"
+        },
+        {
+          "path": "validation_samples/base-neutral.md",
+          "bytes": 30414,
+          "sha256": "9002356c35e7f864edaad611ca6c8acd7aee477e609a3dda0712b7b8c423c4ad"
+        },
+        {
+          "path": "validation_samples/base-neutral.metadata.json",
+          "bytes": 876,
+          "sha256": "ea82d9c95fcbde3f3db1e9ef0ba42f2821324e1c2ad14ce68e793642533f834e"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.jsonl",
+          "bytes": 39654,
+          "sha256": "3eac9e1e116a1822a3d86a72185ec9aa60c4406dac4961f77a19a34d82413dac"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.md",
+          "bytes": 17745,
+          "sha256": "cfb1f94e4d8987cb88a4064de26ea1937eaa8ba1efe52979f619ae7c2ec20299"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.metadata.json",
+          "bytes": 1170,
+          "sha256": "549a4844cb7440b5638ad0674ec4d36a6541e1fd8f170e8f541f4886f9963dca"
+        },
+        {
+          "path": "validation_samples/checkpoint-193.jsonl",
+          "bytes": 11826,
+          "sha256": "6d423abd562411a018992ecc90a589ef2b081be4510f890576b0c9bb8dd825eb"
+        },
+        {
+          "path": "validation_samples/checkpoint-193.md",
+          "bytes": 5192,
+          "sha256": "548f133df7b65fd3aff9567607a2a0d22a0fdc7abf5a239265fb898b2a11e9c1"
+        },
+        {
+          "path": "validation_samples/checkpoint-193.metadata.json",
+          "bytes": 1063,
+          "sha256": "48ee5792c85ac7cf096c526e1cbda241a4c4061367fe2182b2cffcee828941bc"
+        },
+        {
+          "path": "validation_samples/checkpoint-386.jsonl",
+          "bytes": 12299,
+          "sha256": "2943d4bc780c07ae0e7b74aa089bacce172391495f98cb93bee98dda6b0843e6"
+        },
+        {
+          "path": "validation_samples/checkpoint-386.md",
+          "bytes": 5429,
+          "sha256": "10259d11768900657322f41d2303e9241ab94360ef673059ceba5ea5bd2112d4"
+        },
+        {
+          "path": "validation_samples/checkpoint-386.metadata.json",
+          "bytes": 1059,
+          "sha256": "5c98269336cd341ea6d61b8c1ae24a3338f61c8863f1a9b325880c1b5fdef459"
+        },
+        {
+          "path": "validation_samples/checkpoint-579.jsonl",
+          "bytes": 11951,
+          "sha256": "dc5bcad33d61094bd5dac2513402e700190308638efdff70710790cb005fb4aa"
+        },
+        {
+          "path": "validation_samples/checkpoint-579.md",
+          "bytes": 5255,
+          "sha256": "45c1ff983218c19575d9bab9c2821a5baf9d8003189cb4432ac1a884be46f869"
+        },
+        {
+          "path": "validation_samples/checkpoint-579.metadata.json",
+          "bytes": 1067,
+          "sha256": "79e13bd58acf2b9e388fc993463161867b82d7aa017b482ae64cfeacecae16e8"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-plain-english-clear-v2",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/adapters/qwen3-8b-plain-english-clear-v2",
+      "reason": "Superseded or abandoned run; not referenced by active serving configuration",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": "run-inputs/chat_examples.py",
+          "bytes": 3932,
+          "sha256": "7875bba0d5b19ab063c50c81cb647cf4f15bbfbd6f452fb1c0ed34bd90078163"
+        },
+        {
+          "path": "run-inputs/datasets/plain_english_2k/build.py",
+          "bytes": 22709,
+          "sha256": "bb7960b49b8e9b777f3179293af5d71f8962c4b64dd43b166c55233874c79edb"
+        },
+        {
+          "path": "run-inputs/datasets/plain_english_2k/validate.py",
+          "bytes": 14286,
+          "sha256": "c8d70e95a8cbb0bbbd0685569821e9271f928305ba988b6abf5c8f4e52125e32"
+        },
+        {
+          "path": "run-inputs/datasets/plain_english_clear_v2/build.py",
+          "bytes": 10252,
+          "sha256": "162232e97dca8a563b3abd8d26692e4d16e9f1bc6a321ccde310ea522d0c67c5"
+        },
+        {
+          "path": "run-inputs/datasets/plain_english_clear_v2/validate.py",
+          "bytes": 9600,
+          "sha256": "bcb9776dbe084880a448bf02cfdfcfaad359a2bd43fc11303dff950ec81aad56"
+        },
+        {
+          "path": "run-inputs/evaluate_plain_english.py",
+          "bytes": 10140,
+          "sha256": "777885766bd1927b156234f7f5d95f6d4068be8926b60945b2fde3751b52112d"
+        },
+        {
+          "path": "run-inputs/manifest.json",
+          "bytes": 5508,
+          "sha256": "e94d6c42cd223e0c5db59d8046ad0590d0b61a3d73b001683a021629186d0147"
+        },
+        {
+          "path": "run-inputs/train.jsonl",
+          "bytes": 1400704,
+          "sha256": "ef4d54923de48075a362a7157141fd2fb504afd2d53d0e6370aa360ba80fe261"
+        },
+        {
+          "path": "run-inputs/train_lora.py",
+          "bytes": 12030,
+          "sha256": "d1faafeb5d267c716de203a97e03d3b8b1a04cdbcfa0ba925ac23b3ec721b0a0"
+        },
+        {
+          "path": "run-inputs/train_plain_english_2k.py",
+          "bytes": 8282,
+          "sha256": "e101f2861524231cc0b181215f612330de12a7e819e9e84bdad47f7651d4def5"
+        },
+        {
+          "path": "run-inputs/train_plain_english_clear_v2.py",
+          "bytes": 861,
+          "sha256": "aa971038cb5efc7314cb25d60eb718aa1c080708789f37d9ede8db36ee77b483"
+        },
+        {
+          "path": "run-inputs/validation.jsonl",
+          "bytes": 78242,
+          "sha256": "4c3b94b282b1e12b3f9b6f6ceed16339f05961e82e47810b50637635e1f21113"
+        },
+        {
+          "path": "run-inputs/validation_sample_ids.json",
+          "bytes": 438,
+          "sha256": "9e953e27954272afb21598c055480a53df12796e41e8a890c00f01ae83a4e6ff"
+        },
+        {
+          "path": "run-inputs/validation_samples.py",
+          "bytes": 7455,
+          "sha256": "2b3e4c2cfb57a49edd035314266ea8ac74d0c657864c3ef364e64a817035b94e"
+        },
+        {
+          "path": "run.json",
+          "bytes": 6898,
+          "sha256": "d8030e70a9ca9798e2ba137d09da69ce4299d0397bbcfa2c3ec22dc63a4a2871"
+        },
+        {
+          "path": "validation_samples/base-neutral.jsonl",
+          "bytes": 63329,
+          "sha256": "1474fab540db1c2f085cd987b591609e554c313f8f654207c15c1c5ef6c0b8f1"
+        },
+        {
+          "path": "validation_samples/base-neutral.md",
+          "bytes": 30414,
+          "sha256": "9002356c35e7f864edaad611ca6c8acd7aee477e609a3dda0712b7b8c423c4ad"
+        },
+        {
+          "path": "validation_samples/base-neutral.metadata.json",
+          "bytes": 876,
+          "sha256": "5ae7b9b2ce28cba7bb725fcbdd6d52295d05c1070d0d19eefaf1541b20cf6a75"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.jsonl",
+          "bytes": 39654,
+          "sha256": "3eac9e1e116a1822a3d86a72185ec9aa60c4406dac4961f77a19a34d82413dac"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.md",
+          "bytes": 17745,
+          "sha256": "cfb1f94e4d8987cb88a4064de26ea1937eaa8ba1efe52979f619ae7c2ec20299"
+        },
+        {
+          "path": "validation_samples/base-style-prompt.metadata.json",
+          "bytes": 1170,
+          "sha256": "47d97123d2702333c911a1879965b4713953d57946a830224e8072b0ae825077"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3.5-9b-conspiracy",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/adapters/qwen3.5-9b-conspiracy",
+      "reason": "Superseded or abandoned run; not referenced by active serving configuration",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": "README.md",
+          "bytes": 5089,
+          "sha256": "4a6047deaa316a26355327a91772690bc97de1799e07128259b99e40fc5dcf6b"
+        },
+        {
+          "path": "adapter_config.json",
+          "bytes": 804,
+          "sha256": "4ae7d042a60633607391d0efedb42743da69d17d9e9cd1ba39ab5f15f4a049bc"
+        },
+        {
+          "path": "adapter_model.safetensors",
+          "bytes": 173181072,
+          "sha256": "cf0d194ba30b46e4b677ce11240b7b0700b9bd3332d42dcd59d744793d5adf31"
+        },
+        {
+          "path": "chat_template.jinja",
+          "bytes": 7756,
+          "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"
+        },
+        {
+          "path": "checkpoint-350/README.md",
+          "bytes": 5089,
+          "sha256": "4a6047deaa316a26355327a91772690bc97de1799e07128259b99e40fc5dcf6b"
+        },
+        {
+          "path": "checkpoint-350/adapter_config.json",
+          "bytes": 804,
+          "sha256": "4ae7d042a60633607391d0efedb42743da69d17d9e9cd1ba39ab5f15f4a049bc"
+        },
+        {
+          "path": "checkpoint-350/adapter_model.safetensors",
+          "bytes": 173181072,
+          "sha256": "e3c934c481cd4b2b39e331df40d8059510b45e1558f4054a6350c440ee7dcc84"
+        },
+        {
+          "path": "checkpoint-350/optimizer.pt",
+          "bytes": 88620229,
+          "sha256": "5b9da75fe4b5e0de7f1304ca7f62d49186f4acf4849ea318e7c6653a2f5ca49b"
+        },
+        {
+          "path": "checkpoint-350/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "f18f8019cdf9b892d8714ab1724cc458ff5fb98fb33569bc38363ab2c2e201ac"
+        },
+        {
+          "path": "checkpoint-350/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "a7fe66716cc8e1fe899b5edbe3f023cb638c116aa820b50d1750061b4a424d54"
+        },
+        {
+          "path": "checkpoint-350/trainer_state.json",
+          "bytes": 8985,
+          "sha256": "79b904d394c6e2db23682997f7d4bbb18e406dc76837169a1276c26650f09cd9"
+        },
+        {
+          "path": "checkpoint-350/training_args.bin",
+          "bytes": 5265,
+          "sha256": "f7516f1d546a69acb9ae60152e10ae03c1aaf446570a0a574c4a66a9f8f06c37"
+        },
+        {
+          "path": "checkpoint-369/README.md",
+          "bytes": 5089,
+          "sha256": "4a6047deaa316a26355327a91772690bc97de1799e07128259b99e40fc5dcf6b"
+        },
+        {
+          "path": "checkpoint-369/adapter_config.json",
+          "bytes": 804,
+          "sha256": "4ae7d042a60633607391d0efedb42743da69d17d9e9cd1ba39ab5f15f4a049bc"
+        },
+        {
+          "path": "checkpoint-369/adapter_model.safetensors",
+          "bytes": 173181072,
+          "sha256": "cf0d194ba30b46e4b677ce11240b7b0700b9bd3332d42dcd59d744793d5adf31"
+        },
+        {
+          "path": "checkpoint-369/optimizer.pt",
+          "bytes": 88620229,
+          "sha256": "43bc482767c83dccaadb97d28351b8687fc3f34ddc6b33f31b7219b2769668fa"
+        },
+        {
+          "path": "checkpoint-369/rng_state.pth",
+          "bytes": 14645,
+          "sha256": "e8ad4f55094a78b896bf9130db2a500cf810c75e841fd19cd2960285d483c101"
+        },
+        {
+          "path": "checkpoint-369/scheduler.pt",
+          "bytes": 1465,
+          "sha256": "ec5baec03a720b77ba8f6e1cc2903c9dbcdd88703fc03d5bc30a80dbb7b84a3b"
+        },
+        {
+          "path": "checkpoint-369/trainer_state.json",
+          "bytes": 9364,
+          "sha256": "be92239924883723729b94e25083ccf86280dfdef9ac2a71e902999667b9a534"
+        },
+        {
+          "path": "checkpoint-369/training_args.bin",
+          "bytes": 5265,
+          "sha256": "f7516f1d546a69acb9ae60152e10ae03c1aaf446570a0a574c4a66a9f8f06c37"
+        },
+        {
+          "path": "tokenizer.json",
+          "bytes": 19989325,
+          "sha256": "06b9509352d2af50381ab2247e083b80d32d5c0aba91c272ca9ff729b6a0e523"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "bytes": 1125,
+          "sha256": "9cf04fffe3d8c3b85e439fb35c7acad0761ab51c422a8c4256d9f887c3a0be7d"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-conspiracy/checkpoint-340",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/adapters/qwen3-8b-conspiracy/checkpoint-340",
+      "reason": "Historical optimizer checkpoint; deployed Conspiracy root adapter is retained",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": "README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "adapter_config.json",
+          "bytes": 666,
+          "sha256": "45d1822a9d5b444f9fd619c5982f57c28b3afbd97d1cc2683679e13055b8c6b1"
+        },
+        {
+          "path": "adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "31b40906af564d3e5f7051be7848abd5b2334f4dff2aa5302df268fa48c8366e"
+        },
+        {
+          "path": "optimizer.pt",
+          "bytes": 15915365,
+          "sha256": "c26f13737bfd8431bca76d80c14c686e14cfab00d0861d5508b8aed034da391d"
+        },
+        {
+          "path": "rng_state.pth",
+          "bytes": 14645,
+          "sha256": "ff6717519d5ae613dc6dbefd4a34dab49702bbf5be013c8fc598daa50630f5d8"
+        },
+        {
+          "path": "scheduler.pt",
+          "bytes": 1465,
+          "sha256": "3d43a35251e4a4ec79cd25ab55f8df4f397d11ee712b4bfc1c188d8cc854ad0f"
+        },
+        {
+          "path": "trainer_state.json",
+          "bytes": 11028,
+          "sha256": "d070b10141694ae7608d4dae9ee8fbaa310a1538951a1124a9f3617ea6bea952"
+        },
+        {
+          "path": "training_args.bin",
+          "bytes": 5265,
+          "sha256": "fe687920e49aec67597d8f25739a3b37bb73c6552b924295376f3040b2129dc9"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/adapters/qwen3-8b-conspiracy/checkpoint-357",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/adapters/qwen3-8b-conspiracy/checkpoint-357",
+      "reason": "Historical optimizer checkpoint; deployed Conspiracy root adapter is retained",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": "README.md",
+          "bytes": 5087,
+          "sha256": "d9c7d31b4105f0870dcf81e9ea8c237b4d105e4c17cfec1ffb1a62fe15254eae"
+        },
+        {
+          "path": "adapter_config.json",
+          "bytes": 666,
+          "sha256": "45d1822a9d5b444f9fd619c5982f57c28b3afbd97d1cc2683679e13055b8c6b1"
+        },
+        {
+          "path": "adapter_model.safetensors",
+          "bytes": 30709192,
+          "sha256": "1681eb1c4d3f2ec316aecbdcf3a92c53d3df476773814030a19e8aa7ddc23943"
+        },
+        {
+          "path": "optimizer.pt",
+          "bytes": 15915365,
+          "sha256": "278f5f9c466316186193ad7cf4bc43568bdf18991a520209612ad1990d839a68"
+        },
+        {
+          "path": "rng_state.pth",
+          "bytes": 14645,
+          "sha256": "f2f08413169d22bf7b02ad3bcf11550b057c84df258a5d558439341aa5ea3a03"
+        },
+        {
+          "path": "scheduler.pt",
+          "bytes": 1465,
+          "sha256": "ef0c86b80405aa0f6fa90df7328b19adf9b91843129b4aaf818aef24ee80977e"
+        },
+        {
+          "path": "trainer_state.json",
+          "bytes": 11398,
+          "sha256": "1e7e1f6819789838809f454d23062cde29e6e5da2ed02b188fd64a8ad25a9f77"
+        },
+        {
+          "path": "training_args.bin",
+          "bytes": 5265,
+          "sha256": "fe687920e49aec67597d8f25739a3b37bb73c6552b924295376f3040b2129dc9"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat/training/datasets/plain_english",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat/training/archive/datasets/plain_english",
+      "reason": "Immutable source lineage required by the final dataset validator",
+      "compatibility_link": "../archive/datasets/plain_english",
+      "files": [
+        {
+          "path": "LICENSE",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "path": "NOTICE",
+          "bytes": 913,
+          "sha256": "04a7bae4d4b5c8649c78199bd8348238eb23ecf0c8f54fcbf8204049e0ffa24f"
+        },
+        {
+          "path": "README.md",
+          "bytes": 7783,
+          "sha256": "ae7f33a89ddce9e9337d21fa37d5f7b8736b5d73f182b24d217f3871e54ffdef"
+        },
+        {
+          "path": "__pycache__/validate.cpython-311.pyc",
+          "bytes": 15714,
+          "sha256": "5a4a9c7a8311cfc9895e0712e8454b8689300717654635a20df370e3aa30ab11"
+        },
+        {
+          "path": "manifest.json",
+          "bytes": 4142,
+          "sha256": "2a144f83042e5e3339b0814fa726154e0c7676ac280ed5a29da010d7661e3e99"
+        },
+        {
+          "path": "provenance.jsonl",
+          "bytes": 233700,
+          "sha256": "65ba397cfe164832e49bb2a61b6a4824b31abbac1a4fa4ceb92a5f1246f5e3ca"
+        },
+        {
+          "path": "review_report.json",
+          "bytes": 5788,
+          "sha256": "86ee52c0917576825fc7e9eab1357b605fa5ef9e0735ac446c1057897e5d7bac"
+        },
+        {
+          "path": "test.jsonl",
+          "bytes": 9290,
+          "sha256": "96956d56eb40b6c56dc6cde68f0f73d6e0190937f1b2568cd0cf9ed4c4dc04fa"
+        },
+        {
+          "path": "test_prompts.jsonl",
+          "bytes": 2742,
+          "sha256": "28a9fbfdc9719752bcc9642e724ea08029c6f3aee46b0b84bf17cd6c743eb4b3"
+        },
+        {
+          "path": "train.jsonl",
+          "bytes": 69636,
+          "sha256": "6a154802088938eced43180192950f19a9020e925269c5626a8bec0de409ef6f"
+        },
+        {
+          "path": "validate.py",
+          "bytes": 9101,
+          "sha256": "9d1f628a53fa3f97a84237fc6a4fc66afc38d3723c3520ff828759b42f07aefc"
+        },
+        {
+          "path": "validation.jsonl",
+          "bytes": 9465,
+          "sha256": "8579a0164b4ed13729e77bfc6d0af3e680e4c651ed5c8b2ff348aca7feefc31e"
+        },
+        {
+          "path": "validation_report.json",
+          "bytes": 598,
+          "sha256": "abe751b6afc19888ea525477858875a751483d14b11e16449cb74cbf3bca1c47"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat/training/datasets/plain_english_2k",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat/training/archive/datasets/plain_english_2k",
+      "reason": "Immutable source lineage required by the final dataset validator",
+      "compatibility_link": "../archive/datasets/plain_english_2k",
+      "files": [
+        {
+          "path": "LICENSE",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "path": "NOTICE",
+          "bytes": 1565,
+          "sha256": "4662ea73776f803f558f13e435abe9acbc552807cd1376c0964edab27e66b133"
+        },
+        {
+          "path": "README.md",
+          "bytes": 7557,
+          "sha256": "5b97bf00bb93ff1b47392cad7a9f630b958951dd0af24961b69bfe621b5f6c0f"
+        },
+        {
+          "path": "__pycache__/build.cpython-311.pyc",
+          "bytes": 45350,
+          "sha256": "c529ad508b36337ef8a74b4037be0395b1b868f86eca96fcc6a3c9ad76e8205d"
+        },
+        {
+          "path": "__pycache__/build.cpython-312.pyc",
+          "bytes": 34599,
+          "sha256": "780a375e06f370ab3c3527fb78468f61a853ef50455937ef4764bb78d57f7308"
+        },
+        {
+          "path": "__pycache__/validate.cpython-311.pyc",
+          "bytes": 24910,
+          "sha256": "e07ce793767c5df5b95258b732bc6fb9eba96f7cc49d630f33dd9f66e628d695"
+        },
+        {
+          "path": "__pycache__/validate.cpython-312.pyc",
+          "bytes": 19436,
+          "sha256": "836ab889da62529584482c4b17ff7bd2fccef7a32f0b522499891dab891bae3c"
+        },
+        {
+          "path": "build.py",
+          "bytes": 22709,
+          "sha256": "bb7960b49b8e9b777f3179293af5d71f8962c4b64dd43b166c55233874c79edb"
+        },
+        {
+          "path": "editorial_overrides.jsonl",
+          "bytes": 4960,
+          "sha256": "911d9e92be700a3c56b5e02f8820f754112ca72d5a844956bfa698273fbc2e33"
+        },
+        {
+          "path": "independent_review_report.json",
+          "bytes": 15585,
+          "sha256": "7c0b0fc60fa07e2504f485cd8316ba4fa3be9c374cc265f391351c6ec1321563"
+        },
+        {
+          "path": "legacy_dialogues.jsonl",
+          "bytes": 90231,
+          "sha256": "ef991e7b485cfbdf0728af5376bbd760cec4b4735fae439fd01744b454315b02"
+        },
+        {
+          "path": "legacy_provenance.jsonl",
+          "bytes": 233700,
+          "sha256": "65ba397cfe164832e49bb2a61b6a4824b31abbac1a4fa4ceb92a5f1246f5e3ca"
+        },
+        {
+          "path": "manifest.json",
+          "bytes": 6808,
+          "sha256": "ee76b5fe78c1291db949e9d766abf2d8a44a15cc45f382a11fb45823002e6ceb"
+        },
+        {
+          "path": "near_question_groups.jsonl",
+          "bytes": 27182,
+          "sha256": "4abb9ca006eb0e765c1a670557c25f1ac4c55ee566a4630de7f58d658fee685a"
+        },
+        {
+          "path": "provenance.jsonl",
+          "bytes": 1261800,
+          "sha256": "6bec8a5cde974567abb5e5bf237cd122f03a9780b4138dc9a384dc55984f20b0"
+        },
+        {
+          "path": "review_decisions.jsonl",
+          "bytes": 827574,
+          "sha256": "dbdcc5190b05851f9e38e96c20726d0335be05f3b42095c98f0857f050d4789f"
+        },
+        {
+          "path": "review_report.json",
+          "bytes": 2031,
+          "sha256": "1d10b547ac58769ccae161228d26f228bdb0ca6512ffb2306b5875d4dd98632c"
+        },
+        {
+          "path": "source_records.jsonl",
+          "bytes": 2788506,
+          "sha256": "abf3c64533bf98ba5ddada6a0532f5fdae673960f82fc7c85744f951abd63333"
+        },
+        {
+          "path": "test.jsonl",
+          "bytes": 80227,
+          "sha256": "c40746b86a3c4f9f501ccb9aec8b78bd78b1c307caf9eae655b76bf580a1190d"
+        },
+        {
+          "path": "test_prompts.jsonl",
+          "bytes": 28385,
+          "sha256": "bbb76cbdb0ff14d569b4dd650cbf8267a3ae634a12e890a7f7b510c5511842b7"
+        },
+        {
+          "path": "train.jsonl",
+          "bytes": 1362089,
+          "sha256": "6d82bdde12894db7ba7866640be49f49ed0237396aa7cf0d174d7eadc0889899"
+        },
+        {
+          "path": "validate.py",
+          "bytes": 14286,
+          "sha256": "c8d70e95a8cbb0bbbd0685569821e9271f928305ba988b6abf5c8f4e52125e32"
+        },
+        {
+          "path": "validation.jsonl",
+          "bytes": 68228,
+          "sha256": "6bae086247a9fc0d118e26de1bd278b576c05bafba75e6f070a9e0a79379dc5d"
+        },
+        {
+          "path": "validation_report.json",
+          "bytes": 1579,
+          "sha256": "f203364ab3677e018f81cf96972f56cf3711a7700ba5f777513378a9955315d5"
+        },
+        {
+          "path": "validation_sample_ids.json",
+          "bytes": 438,
+          "sha256": "9e953e27954272afb21598c055480a53df12796e41e8a890c00f01ae83a4e6ff"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat/training/datasets/plain_english_2k_simplified_v1",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat/training/archive/datasets/plain_english_2k_simplified_v1",
+      "reason": "Immutable source lineage required by the final dataset validator",
+      "compatibility_link": "../archive/datasets/plain_english_2k_simplified_v1",
+      "files": [
+        {
+          "path": "EVALUATION.md",
+          "bytes": 3872,
+          "sha256": "6bf0eb22514518f467694c245e0f5b4c366be78aaa9c7f5b93d421dc00273bac"
+        },
+        {
+          "path": "EXAMPLES.md",
+          "bytes": 2433,
+          "sha256": "be3e74277e8efd10d2822b5401ee03333d4ba1ef1141cfd779d622bb6c15cd74"
+        },
+        {
+          "path": "LICENSE",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "path": "NOTICE",
+          "bytes": 2166,
+          "sha256": "1b1f316dafaccd737e85c2d048b721b6e2db90b7b91aa7b283d113d401d53274"
+        },
+        {
+          "path": "README.md",
+          "bytes": 5470,
+          "sha256": "e16c398290bc72f18e377a63363c0552c119107a23b7df4b365aae4ecc7b8356"
+        },
+        {
+          "path": "__pycache__/revise.cpython-311.pyc",
+          "bytes": 10379,
+          "sha256": "78ee0955d286388ec94cf56a6aa4537a1e94e8091649e89f7d4a410453db082c"
+        },
+        {
+          "path": "__pycache__/revise.cpython-312.pyc",
+          "bytes": 9046,
+          "sha256": "2c531b71154cd7182d12b59bc5a2d87288c62d58d9c41b0dce2605562f0f8425"
+        },
+        {
+          "path": "__pycache__/validate.cpython-311.pyc",
+          "bytes": 16271,
+          "sha256": "0d3a2fbbbc2986a4e97c6918e2981bc7f4e215bf048656edf2eed9ffe72a5b3f"
+        },
+        {
+          "path": "__pycache__/validate.cpython-312.pyc",
+          "bytes": 13430,
+          "sha256": "72ecada78053f468e9d9bde1ad3441a1dcbd810011f0ab6f2a0ce9a24b6662f4"
+        },
+        {
+          "path": "answer_changes.jsonl",
+          "bytes": 2410066,
+          "sha256": "31f49005a0316be383e7685b5153d2c1698d2e97aef757a94aaf8ca26c7c28b2"
+        },
+        {
+          "path": "change_summary.json",
+          "bytes": 108,
+          "sha256": "2cbae6440bcab0100e633c223dbf0dc80b7a63efbaa2c10c5f20a6e89c7b7a44"
+        },
+        {
+          "path": "editor.py",
+          "bytes": 1817,
+          "sha256": "170da7243ceedf335d65764ce83ccafacea0e5e57773b87a54f7ec1297d0f83b"
+        },
+        {
+          "path": "manifest.json",
+          "bytes": 5402,
+          "sha256": "b9569a7ee61756e3cd1aa9f3386269dd7c700deedfa1b0985659b44202ab9b45"
+        },
+        {
+          "path": "manual_rewrites.jsonl",
+          "bytes": 597868,
+          "sha256": "aa43797984dc35a0903da902b301e0e0ea71ccb66d1c1acf8ff769fc2e480a29"
+        },
+        {
+          "path": "parent_manifest.json",
+          "bytes": 6808,
+          "sha256": "ee76b5fe78c1291db949e9d766abf2d8a44a15cc45f382a11fb45823002e6ceb"
+        },
+        {
+          "path": "parent_snapshot.json",
+          "bytes": 2019,
+          "sha256": "11686b1a6ec75e05d05c0dc992c49de17bfe5d742918f1c25a1397cf87dc6e0b"
+        },
+        {
+          "path": "provenance.jsonl",
+          "bytes": 1678102,
+          "sha256": "94220ebf90df569519a2b1c73da21a900b3a6635900d7ee31439713b477f9635"
+        },
+        {
+          "path": "release.py",
+          "bytes": 6054,
+          "sha256": "80b6d0a101dab162a3c213fb70aba4f4f4a1fdf1429e041519b88a1f10eccdc3"
+        },
+        {
+          "path": "review_queue.jsonl",
+          "bytes": 571363,
+          "sha256": "ed7e267a00b04827af591d10b81700771b6c8b07692b838b841cd4971219bf6b"
+        },
+        {
+          "path": "revise.py",
+          "bytes": 5414,
+          "sha256": "abd1692409c2c0816ebe71525757980119711bef487515fceebee85df47457eb"
+        },
+        {
+          "path": "style_comparison.json",
+          "bytes": 2956,
+          "sha256": "93c152dcaa8c78a6286cb5c0f635dad73c9c1f002bcd0ea0ba05bc0723fc07bc"
+        },
+        {
+          "path": "style_rules.json",
+          "bytes": 2358,
+          "sha256": "1572ec93182183c5781a53111795d02285cb4459d46571089fd3c541a45fb634"
+        },
+        {
+          "path": "test.jsonl",
+          "bytes": 78318,
+          "sha256": "1309699fa8cb0522958278150f7f2f4e71e64e869d52abb3600eda545722e341"
+        },
+        {
+          "path": "test_prompts.jsonl",
+          "bytes": 28385,
+          "sha256": "bbb76cbdb0ff14d569b4dd650cbf8267a3ae634a12e890a7f7b510c5511842b7"
+        },
+        {
+          "path": "test_revision.py",
+          "bytes": 2125,
+          "sha256": "8f1ca522e7496221d9e25ee2b679eb47f139359d241afc128be35f7f8ddce148"
+        },
+        {
+          "path": "train.jsonl",
+          "bytes": 1340012,
+          "sha256": "8594aea010d745951d87659eac966c78564ac3d8d6795c564bf1c278fcd6b41b"
+        },
+        {
+          "path": "validate.py",
+          "bytes": 8771,
+          "sha256": "99b20e4dcc9f8ac7923e8ab266b2574c2713403be597c9ae33c23d4e0644064b"
+        },
+        {
+          "path": "validation.jsonl",
+          "bytes": 67072,
+          "sha256": "0eddb3563424fff00dfade3d27d6b1fc9bf3e8cf79e16317ff31bd11bc27cffb"
+        },
+        {
+          "path": "validation_report.json",
+          "bytes": 968,
+          "sha256": "2d9162fe6431b6578233f1486cbb014b8a2b403188e6a62e8aa013e5b547ad63"
+        },
+        {
+          "path": "validation_sample_ids.json",
+          "bytes": 438,
+          "sha256": "9e953e27954272afb21598c055480a53df12796e41e8a890c00f01ae83a4e6ff"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat/training/evaluations/plain_english",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat/training/archive/evaluations/plain_english",
+      "reason": "Evaluations of superseded runs",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": "2026-09-08-vllm/blind-key.json",
+          "bytes": 903,
+          "sha256": "966a27c390edfcdb6d38f52b4563d7f63e592f2e4c1f7f25ce58d7ed3264bd51"
+        },
+        {
+          "path": "2026-09-08-vllm/blind-review.md",
+          "bytes": 50685,
+          "sha256": "70752778d58661dd59a430791931a32d37a91ba98147b15643dfe93be52d64e5"
+        },
+        {
+          "path": "2026-09-08-vllm/comparison.jsonl",
+          "bytes": 109508,
+          "sha256": "36787bb0b5b3a38781d33e63e0845ad3dd73ef86c7c1eb43a82c36863686ceba"
+        },
+        {
+          "path": "2026-09-08-vllm/comparison.md",
+          "bytes": 50388,
+          "sha256": "eac9244cd43f0c0b2102dbc465247877704dec792d1effb10e39a84ac8384fe2"
+        },
+        {
+          "path": "2026-09-08-vllm/dataset-manifest.json",
+          "bytes": 3894,
+          "sha256": "9b3ae1294c98714a04d21ef5f50fad6a1570674624606aabf8b973eadf31e394"
+        },
+        {
+          "path": "2026-09-08-vllm/evaluate_plain_english.py",
+          "bytes": 10013,
+          "sha256": "cfa28d0328e8b3431b81fa7a0415523c5546d1e62da889d87115009af2c6e783"
+        },
+        {
+          "path": "2026-09-08-vllm/evaluate_plain_english_vllm.py",
+          "bytes": 8810,
+          "sha256": "c800eadd3be8507874ece54db7d68a3953e3db1de2ef2aad7bbf89fe462a62b3"
+        },
+        {
+          "path": "2026-09-08-vllm/independent-length-check.json",
+          "bytes": 289,
+          "sha256": "1cc646c61a0877d7d21a7a631832471f43b27e246ffe6dd28ffa55827fd9f139"
+        },
+        {
+          "path": "2026-09-08-vllm/models.json",
+          "bytes": 2126,
+          "sha256": "6f5c4df838a62f1f166c9cfbdbc62b30279f8aa33bc04e9b32cb6ddf46ee9078"
+        },
+        {
+          "path": "2026-09-08-vllm/qualitative-review.json",
+          "bytes": 5914,
+          "sha256": "f544336be603c5932ac1fbf428bcc2d37629b8ab125290d7f7d994f83f22b0c1"
+        },
+        {
+          "path": "2026-09-08-vllm/requests.jsonl",
+          "bytes": 87933,
+          "sha256": "a285ffa32b60bd19c9ed832df810703c90b12a2667e751851c76483d100d81b9"
+        },
+        {
+          "path": "2026-09-08-vllm/run.json",
+          "bytes": 1642,
+          "sha256": "be4b71509ce33a62b509bfa1bdfd62cb53a566a05046e5636dce6763fd315820"
+        },
+        {
+          "path": "2026-09-08-vllm/summary.json",
+          "bytes": 15866,
+          "sha256": "d077054f34f22c04034547b72d9fb3340d7b240ec579752d555e80047f41656f"
+        },
+        {
+          "path": "2026-09-08-vllm/training-evidence.json",
+          "bytes": 7202,
+          "sha256": "e1a76a4730a0beadafc1b7f9814baae22d3db0e0f0cb98c4a80a199f91ce0801"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/blind-key.json",
+          "bytes": 903,
+          "sha256": "966a27c390edfcdb6d38f52b4563d7f63e592f2e4c1f7f25ce58d7ed3264bd51"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/blind-review.md",
+          "bytes": 44682,
+          "sha256": "629033e1c8db735862a2cfb403f798a8dc1aa8104d8ce14e2e3731ed109f6db1"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/comparison.jsonl",
+          "bytes": 97491,
+          "sha256": "36824d9b8df5ab8b8c5878b9a1a1b7ddd4c46a4f8641253165f7d253d7990bec"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/comparison.md",
+          "bytes": 44385,
+          "sha256": "013ea113c65cb28dc3921e33da64ad1eb1892cede51ffecde762158a67232994"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/dataset-manifest.json",
+          "bytes": 3894,
+          "sha256": "9b3ae1294c98714a04d21ef5f50fad6a1570674624606aabf8b973eadf31e394"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/evaluate_plain_english.py",
+          "bytes": 10013,
+          "sha256": "cfa28d0328e8b3431b81fa7a0415523c5546d1e62da889d87115009af2c6e783"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/evaluate_plain_english_vllm.py",
+          "bytes": 9196,
+          "sha256": "069481a1e7d1fd82d8d9ba8351deab7d9181d6a9fc32c1e46b10c0f9c7e869a0"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/independent-length-check.json",
+          "bytes": 290,
+          "sha256": "54484dc11e65254ccc5ff9f5b3c2a5e74c81ec590b9f7231e0a79a7a90a220c6"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/models.json",
+          "bytes": 2126,
+          "sha256": "b1c401bf00cb28fdd0df8d0fbfdac9589406bd295f4cec601948ffe2a3daa88f"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/qualitative-review.json",
+          "bytes": 7018,
+          "sha256": "e7114d1689ee16c82214c9f3e681ed5dd2fe2d208b11f9fa1370d0373223b5bd"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/requests.jsonl",
+          "bytes": 82406,
+          "sha256": "f3ded86bfa12408647d6ff96f9e7e18e858f57de4c0267cc1c989e395f172b3d"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/run.json",
+          "bytes": 1642,
+          "sha256": "7eea734eeef574a3e6b9024a148cc542c9af53a911235b6f44d3f298b343191b"
+        },
+        {
+          "path": "2026-09-08-vllm-temp02/summary.json",
+          "bytes": 17385,
+          "sha256": "d75c5f63036b5035770fd88aa6d56de465902d698f2cf0367fb3f184b495537a"
+        },
+        {
+          "path": "2026-09-09-v2-validation/REVIEW.md",
+          "bytes": 10640,
+          "sha256": "58340bd6a08b97402f36b4ea8953b5d477d203af7240ed4f53e2f7b2c453aa62"
+        },
+        {
+          "path": "2026-09-09-v2-validation/audit_validation.py",
+          "bytes": 7877,
+          "sha256": "c3071e310b6bfb723dbe017f9b032217c40c56ce6f8a3d578fce7aa280c9816a"
+        },
+        {
+          "path": "2026-09-09-v2-validation/comparison.jsonl",
+          "bytes": 180684,
+          "sha256": "0f4226dc1060c77d1483b5f269927f6823560f0cb04633a706ae3d3df73ad995"
+        },
+        {
+          "path": "2026-09-09-v2-validation/independent-check.json",
+          "bytes": 2647,
+          "sha256": "7e867f3f1f9ffe8356111281cf1260b1843aca541d6ed9f95635ec623a7d84b8"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/adapter_config.json",
+          "bytes": 666,
+          "sha256": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/checkpoint-12/adapter_config.json",
+          "bytes": 666,
+          "sha256": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/checkpoint-12/trainer_state.json",
+          "bytes": 3407,
+          "sha256": "44a103a128808a566c7b0864e3ebeefbbe2761e7542f32f53f4c59bbe7574bcb"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/checkpoint-18/adapter_config.json",
+          "bytes": 666,
+          "sha256": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/checkpoint-18/trainer_state.json",
+          "bytes": 4687,
+          "sha256": "aee6a131e5f6f8a2660377e985c0bed7cf8c7ded692089de83ec88c72e832e03"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/checkpoint-6/adapter_config.json",
+          "bytes": 666,
+          "sha256": "a7bcfff9fa472d375a8869d8477aeede0aef1811d449f4687cc54c2c6dbcf438"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/checkpoint-6/trainer_state.json",
+          "bytes": 2128,
+          "sha256": "5c15ff44159e2a6388a209241a894e2917e7ff40f2fc9b350d181fff405915cc"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/run-inputs/chat_examples.py",
+          "bytes": 3932,
+          "sha256": "7875bba0d5b19ab063c50c81cb647cf4f15bbfbd6f452fb1c0ed34bd90078163"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/run-inputs/datasets/plain_english/validate.py",
+          "bytes": 9101,
+          "sha256": "9d1f628a53fa3f97a84237fc6a4fc66afc38d3723c3520ff828759b42f07aefc"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/run-inputs/evaluate_plain_english.py",
+          "bytes": 10140,
+          "sha256": "777885766bd1927b156234f7f5d95f6d4068be8926b60945b2fde3751b52112d"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/run-inputs/manifest.json",
+          "bytes": 4142,
+          "sha256": "2a144f83042e5e3339b0814fa726154e0c7676ac280ed5a29da010d7661e3e99"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/run-inputs/train.jsonl",
+          "bytes": 69636,
+          "sha256": "6a154802088938eced43180192950f19a9020e925269c5626a8bec0de409ef6f"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/run-inputs/train_lora.py",
+          "bytes": 12030,
+          "sha256": "d1faafeb5d267c716de203a97e03d3b8b1a04cdbcfa0ba925ac23b3ec721b0a0"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/run-inputs/train_plain_english_v2.py",
+          "bytes": 7234,
+          "sha256": "44b54cb174b42d779c05bc9c2ef0d5975c508f6718c169fb016141abdc975a4f"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/run-inputs/validation.jsonl",
+          "bytes": 9465,
+          "sha256": "8579a0164b4ed13729e77bfc6d0af3e680e4c651ed5c8b2ff348aca7feefc31e"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/run-inputs/validation_samples.py",
+          "bytes": 7455,
+          "sha256": "2b3e4c2cfb57a49edd035314266ea8ac74d0c657864c3ef364e64a817035b94e"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/run.json",
+          "bytes": 4286,
+          "sha256": "d4cf3caaf7721ba50a086df9d923816dfb48aa059841f8ae048180d1e7b37c60"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/base-neutral.jsonl",
+          "bytes": 48115,
+          "sha256": "98e0f43f9018791f8379d56c1e669b4ba88a677d88d0e85c3173d30921e9652e"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/base-neutral.md",
+          "bytes": 22696,
+          "sha256": "91208ae7a76100a4571684ad41cc4595a2ef03365084678484dcdb5bc85f059e"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/base-neutral.metadata.json",
+          "bytes": 876,
+          "sha256": "7becbdebf6ef50c07e89bc6ccd4d89e0110677a3198202fad9c618341be51068"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/base-style-prompt.jsonl",
+          "bytes": 169976,
+          "sha256": "f8229259fb5e9acb051967704365657cceb8b555e105b767262976c907eaf483"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/base-style-prompt.md",
+          "bytes": 81517,
+          "sha256": "65c69e6a23581130ec8eed427cd10033b83f27f8f70e84b5ab6758ab2f2bef6e"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/base-style-prompt.metadata.json",
+          "bytes": 1170,
+          "sha256": "0face3df48dc04c2b0d406d59079837af4f6f7f82e1ff73625a20e5008b16dc8"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/checkpoint-12.jsonl",
+          "bytes": 47431,
+          "sha256": "0b4e5aa2d8b3dfc61b09530400bbd3bbb9a3970d72f7d0cfbc94336e94198ab1"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/checkpoint-12.md",
+          "bytes": 22377,
+          "sha256": "d2806dd74a0b6c135f3ef87226d0ebeedbe9f4da4a9bf78ae5749f6b68624e64"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/checkpoint-12.metadata.json",
+          "bytes": 1062,
+          "sha256": "b1886dfa563d0d893f92ccaf44b63b1d2da5c275ca2637c9b8a951132c9cdfd7"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/checkpoint-18.jsonl",
+          "bytes": 51908,
+          "sha256": "7a808bc19fe9c70c73b91d6fcf8bb92d3a1240140ce5f4d1c8c4a56cc1627f0b"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/checkpoint-18.md",
+          "bytes": 24561,
+          "sha256": "3b6e291c0c3ca71e4c5a9bace3492295cd4f2d53f388ab1c65bbd8f42eaf8aa7"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/checkpoint-18.metadata.json",
+          "bytes": 1062,
+          "sha256": "a97097f49fae4db443cd62098abb820842cad0665885a79dc2feecbe7bf8b539"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/checkpoint-6.jsonl",
+          "bytes": 51947,
+          "sha256": "6db0e11d6d89fe246a29e97cdefa102f7d1d7809bcc6c86da472e0f2ea94d79d"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/checkpoint-6.md",
+          "bytes": 24577,
+          "sha256": "6746864531ff6540209c66c0914c12742d5cd2a0daf03e616c05518960d14e72"
+        },
+        {
+          "path": "2026-09-09-v2-validation/raw/validation_samples/checkpoint-6.metadata.json",
+          "bytes": 1059,
+          "sha256": "8822cbb537c972878863d498c0f161408077b70b3ccfd9dd35d4c81f32a3907b"
+        },
+        {
+          "path": "2026-09-09-v2-validation/source-manifest.json",
+          "bytes": 4468,
+          "sha256": "5cc08bec68acdf533e0c1ce4a8a9af492a7bb6c1c7b7a754439e4d6e21b8786e"
+        },
+        {
+          "path": "2026-09-09-v2-validation/summary.json",
+          "bytes": 6902,
+          "sha256": "3ad7e5bf2ce13aa139c6798311027dcd84d0470fe88e4af009f9f889b4ca901f"
+        },
+        {
+          "path": "REPORT.md",
+          "bytes": 10646,
+          "sha256": "74df3d61d959b171efcc205cf5746eab5a546d451ffd53893884c7ec53ed31f6"
+        },
+        {
+          "path": "preflight-v2-2026-09-08.json",
+          "bytes": 7239,
+          "sha256": "3107176d2de5b4ca9760ffda3f9e3cbf8af446e07420706d83e2eb67849de1d8"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat/training/train_plain_english.py",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat/training/archive/experiments/train_plain_english.py",
+      "reason": "Original manually created pilot wrapper",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": ".",
+          "bytes": 1731,
+          "sha256": "d49a044f93b95c542bb6cc136457771f6027865fe19e6644e4c8884fe9b10fc3"
+        }
+      ]
+    },
+    {
+      "source": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/training",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/logs/training",
+      "reason": "Historical training logs",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": "lora-augment-qwen3-8b-2458944.out",
+          "bytes": 26071,
+          "sha256": "f716d522992e9580a9dbfb1b813a2186930ec7a267573118a914749851d8e657"
+        },
+        {
+          "path": "lora-sft-qwen3-8b-2458064.out",
+          "bytes": 58584,
+          "sha256": "e32483ab5ab2ddb29e8d6a90255036a6fae7129080ee13c726b04144d9fe8d18"
+        },
+        {
+          "path": "lora-sft-qwen3-8b-2458224.out",
+          "bytes": 50158,
+          "sha256": "97a7145cbbfd59f132f9e969ed8f8a6aee978f3e0dfdf57d7a8dba58176526d7"
+        },
+        {
+          "path": "lora-sft-qwen3-8b-2463088.out",
+          "bytes": 114372,
+          "sha256": "41ae702eff8aee357c415f81fd624cb25bc002261cabf512f83ed392f85f14e2"
+        },
+        {
+          "path": "lora-sft-qwen35-9b-2440716.out",
+          "bytes": 306,
+          "sha256": "100ba01f988041bec3b1bdbf19149bc2bdc6c5527d58624a1670f9eedf5b5ebc"
+        },
+        {
+          "path": "lora-sft-qwen35-9b-2440718.out",
+          "bytes": 69852,
+          "sha256": "9a1cdddaf0f6c8b6328cf5f67f202aa334d61a88f7bbc80be88374a292a3c5fa"
+        }
+      ]
+    },
+    {
+      "source": "/sc/home/maximilian.speer/plain-english-logs/clear-v2-2526397.log",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/home/plain-english-logs/clear-v2-2526397.log",
+      "reason": "Superseded training log",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": ".",
+          "bytes": 43334,
+          "sha256": "24349d898389ea9229476deaf30d3fa241c10b8b2760f4a8a62d4972bd691b95"
+        }
+      ]
+    },
+    {
+      "source": "/sc/home/maximilian.speer/plain-english-logs/clear-v2-retry1-2527052.log",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/training/clear-v2-retry1-2527052.log",
+      "reason": "Keep final training log on project storage",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": ".",
+          "bytes": 184320,
+          "sha256": "e3763be8991741ea099661549c9decf73bf0961a9d710746756c9f036d8a7dae"
+        }
+      ]
+    },
+    {
+      "source": "/sc/home/maximilian.speer/plain-english-logs/plain-english-2k-2522988.log",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/home/plain-english-logs/plain-english-2k-2522988.log",
+      "reason": "Superseded training log",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": ".",
+          "bytes": 181615,
+          "sha256": "647b98004515eb5bc2125579639d5840e38d00803963f0c5a33e15b9940e7199"
+        }
+      ]
+    },
+    {
+      "source": "/sc/home/maximilian.speer/plain-english-logs/plain-english-resume-2524288.log",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/home/plain-english-logs/plain-english-resume-2524288.log",
+      "reason": "Superseded training log",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": ".",
+          "bytes": 122807,
+          "sha256": "04d095cd0fc502ae7dc4e0bb70575ba8bd654b32138844def8a5bad495577789"
+        }
+      ]
+    },
+    {
+      "source": "/sc/home/maximilian.speer/plain-english-logs/plain-english-simplified-v1-2522988.log",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/home/plain-english-logs/plain-english-simplified-v1-2522988.log",
+      "reason": "Superseded training log",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": ".",
+          "bytes": 71408,
+          "sha256": "aad1e458be5c7d237aa323d28524227eea47965ba1a3107037457e3b124858eb"
+        }
+      ]
+    },
+    {
+      "source": "/sc/home/maximilian.speer/plain-english-logs/v2-2522643.log",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/home/plain-english-logs/v2-2522643.log",
+      "reason": "Superseded training log",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": ".",
+          "bytes": 28161,
+          "sha256": "581c2987639e07bd03d2ad3b65bf053a039aa7791e508da159ebebc12980d640"
+        }
+      ]
+    },
+    {
+      "source": "/sc/home/maximilian.speer/train_plain_english.py",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/home/train_plain_english.py",
+      "reason": "Superseded pilot artifact",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": ".",
+          "bytes": 1731,
+          "sha256": "d49a044f93b95c542bb6cc136457771f6027865fe19e6644e4c8884fe9b10fc3"
+        }
+      ]
+    },
+    {
+      "source": "/sc/home/maximilian.speer/vllm-qwen3-8b-2521106.log",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/archive/2026-09-10-simple-english/home/vllm-qwen3-8b-2521106.log",
+      "reason": "Superseded pilot artifact",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": ".",
+          "bytes": 84923,
+          "sha256": "f1d28ac6a87cfb1a753fa0e9da2dc9d4d39ea8ec758580324203f20be82f0670"
+        }
+      ]
+    },
+    {
+      "source": "/sc/home/maximilian.speer/vllm-clear-english-2527052.log",
+      "destination": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/logs/vllm/vllm-clear-english-2527052.log",
+      "reason": "Keep final run serving log on project storage",
+      "compatibility_link": null,
+      "files": [
+        {
+          "path": ".",
+          "bytes": 33603,
+          "sha256": "86891b45f8a103e2dc03734c76d50f362d9b0ba1fd995c01b62bfcbd3e258c22"
+        }
+      ]
+    }
+  ],
+  "status": "complete",
+  "compatibility_helper": {
+    "path": "/sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat/training/archive/chat_examples.py",
+    "target": "../chat_examples.py"
+  }
+}

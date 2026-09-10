@@ -13,6 +13,9 @@ The project root is
 `/sc/projects/sci-lippert/intelligent-agents/project_matthias_max`.
 All three use the pinned `Qwen/Qwen3-8B` base model.
 
+Active data, run, and archive locations are listed in
+[model-artifacts.md](model-artifacts.md).
+
 **Simple English** is the renamed **Clear English** entry. It continues to use
 checkpoint 193 from the completed `plain-english-clear-v2-retry1` run, selected
 from the saved validation comparisons. The internal profile/API name stays

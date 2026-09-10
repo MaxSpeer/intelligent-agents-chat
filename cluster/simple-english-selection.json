@@ -1,0 +1,15 @@
+{
+  "display_name": "Qwen3 8B (Simple English)",
+  "api_model": "plain-english-clear-v2",
+  "base_model": "Qwen/Qwen3-8B",
+  "base_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+  "run": "qwen3-8b-plain-english-clear-v2-retry1",
+  "training_job_id": "2527052",
+  "selected_checkpoint": 193,
+  "adapter_path": "adapters/qwen3-8b-plain-english-clear-v2-retry1/checkpoint-193",
+  "adapter_sha256": "ed7eb9a2866a418780701e8d62ac543009751efe8de5c0e77a757b1e37b026d0",
+  "dataset_path": "code/intelligent-agents-chat/training/datasets/plain_english_clear_v2",
+  "status": "selected_for_serving",
+  "selection_basis": "Manual validation-answer comparison and user acceptance; not a claim of best overall checkpoint.",
+  "archive_manifest": "archive/2026-09-10-simple-english/manifest.json"
+}
