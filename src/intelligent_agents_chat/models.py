@@ -39,12 +39,17 @@ _QWEN35_9B_BASE_URL = f"http://127.0.0.1:{QWEN35_9B_PORT}/v1"
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1").rstrip("/")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.5:2b")
 
-DEFAULT_PROFILE_KEY = "qwen3-8b"
+DEFAULT_PROFILE_KEY = "qwen3.5-9b"
 
-# The three active choices share one vLLM process and SSH tunnel.
-# Keep the Simple English profile/API key stable for saved settings.
-# Its selected checkpoint is configured in cluster/run-vllm-qwen3-8b.sbatch.
 MODEL_PROFILES: tuple[ModelProfile, ...] = (
+    ModelProfile(
+        key="qwen3.5-9b",
+        label="Qwen3.5 9B",
+        base_url=_QWEN35_9B_BASE_URL,
+        model="qwen3.5-9b",
+        supports_thinking=True,
+        supports_tools=True,
+    ),
     ModelProfile(
         key="qwen3-8b",
         label="Qwen3 8B",
@@ -71,14 +76,6 @@ MODEL_PROFILES: tuple[ModelProfile, ...] = (
 # Keep retired profiles resolvable for labels on saved messages. They are
 # absent from the selector and from the active endpoint health checks.
 _INACTIVE_PROFILES: tuple[ModelProfile, ...] = (
-    ModelProfile(
-        key="qwen3.5-9b",
-        label="Qwen3.5 9B",
-        base_url=_QWEN35_9B_BASE_URL,
-        model="qwen3.5-9b",
-        supports_thinking=True,
-        supports_tools=True,
-    ),
     ModelProfile(
         key="plain-english",
         label="Qwen3 8B (Plain English)",

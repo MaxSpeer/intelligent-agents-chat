@@ -28,14 +28,14 @@ class PortEnvironmentOverrideTests(unittest.TestCase):
 
 
 class ModelProfilesTests(unittest.TestCase):
-    def test_default_profile_is_qwen3_8b(self) -> None:
-        self.assertEqual(DEFAULT_PROFILE_KEY, "qwen3-8b")
+    def test_default_profile_is_qwen35_9b(self) -> None:
+        self.assertEqual(DEFAULT_PROFILE_KEY, "qwen3.5-9b")
         self.assertIn(DEFAULT_PROFILE_KEY, profile_options())
 
-    def test_only_three_profiles_are_active(self) -> None:
+    def test_main_agent_and_three_finetuning_choices_are_active(self) -> None:
         self.assertEqual(
             [profile.key for profile in MODEL_PROFILES],
-            ["qwen3-8b", "conspiracy", "plain-english-clear-v2"],
+            ["qwen3.5-9b", "qwen3-8b", "conspiracy", "plain-english-clear-v2"],
         )
 
     def test_qwen3_8b_and_its_adapters_share_the_same_backend(self) -> None:
@@ -76,6 +76,7 @@ class ModelProfilesTests(unittest.TestCase):
         self.assertEqual(
             profile_options(),
             {
+                "qwen3.5-9b": "Qwen3.5 9B",
                 "qwen3-8b": "Qwen3 8B",
                 "conspiracy": "Qwen3 8B (Conspiracy)",
                 "plain-english-clear-v2": "Qwen3 8B (Simple English)",
@@ -84,7 +85,6 @@ class ModelProfilesTests(unittest.TestCase):
 
     def test_inactive_profiles_keep_history_labels_but_are_not_selectable(self) -> None:
         historical_labels = {
-            "qwen3.5-9b": "Qwen3.5 9B",
             "plain-english": "Qwen3 8B (Plain English)",
             "plain-english-2k": "Qwen3 8B (Plain English 2k)",
             "plain-english-2k-simplified-v1": "Qwen3 8B (Plain English 2k simplified)",

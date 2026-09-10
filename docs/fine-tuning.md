@@ -10,8 +10,9 @@ Training runs separately in its own `uv` environment under `training/`.
 
 We chose Qwen3 8B after an initial Qwen3.5 adapter worked in Transformers/PEFT but had no effect
 in our tested vLLM setup (seems to be a bug in vLLM, see https://github.com/vllm-project/vllm/issues/49354).
-The current selector exposes the Qwen3 8B base and both adapters. The Qwen3.5 9B profile used for
-earlier agent experiments remains available in the code but is inactive in the selector.
+The default main agent is **Qwen3.5 9B**, with tool use and optional thinking on port `8002`.
+The selector also exposes the Qwen3 8B base and both adapters on port `8001` for fine-tuning
+comparisons; these three profiles have tools and thinking disabled.
 
 
 ## Conspiracy adapter

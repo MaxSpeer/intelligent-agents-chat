@@ -152,7 +152,7 @@ base_url=http://${SERVER_HOST}:${SERVER_PORT}/v1
 model=${SERVED_MODEL_NAME}
 EOF
 log "Endpoint file: ${ENDPOINT_FILE}"
-log "Tunnel: tunnel.sh qwen35-9b (or: ssh -J <you>@hpc.sci.hpi.de -N -L ${SERVER_PORT}:127.0.0.1:${SERVER_PORT} <you>@$(hostname -f))"
+log "Tunnel: cluster/tunnel.sh qwen35-9b (or: ssh -J <you>@hpc.sci.hpi.de -N -L ${SERVER_PORT}:127.0.0.1:${SERVER_PORT} <you>@$(hostname -f))"
 
 enroot_args=(
     --rw

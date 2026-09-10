@@ -10,7 +10,7 @@ import textwrap
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "tunnel.sh"
+SCRIPT = Path(__file__).resolve().parents[1] / "cluster" / "tunnel.sh"
 ENDPOINT = "job=12345\nnode=gx27.hpc.sci.hpi.de\nhost=127.0.0.1\nport=8001\nmodel=qwen3-8b\n"
 
 
