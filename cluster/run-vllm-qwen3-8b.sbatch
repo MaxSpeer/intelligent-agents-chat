@@ -36,12 +36,13 @@ readonly MAX_MODEL_LEN="32768"
 readonly GPU_MEMORY_UTILIZATION="0.90"
 readonly TENSOR_PARALLEL_SIZE="1"
 
-# Serves the LoRA adapter trained by training/train_lora.py alongside the
-# base model -- this is the one Qwen model LoRA actually works with in vLLM
-# (see training/README.md). Empty this array to serve the base model only.
-# Request the adapter with "model": "conspiracy" instead of "qwen3-8b".
+# Serves the trained LoRA adapters alongside the pinned base model.
+# All listed adapters must have finished saving before this server is started.
+# Empty this array to serve the base model only; see cluster/plain-english-chat.md.
+# The names before "=" must match the chat UI profiles in models.py.
 readonly LORA_MODULES=(
     "conspiracy=/project/adapters/qwen3-8b-conspiracy"
+    "plain-english-clear-v2=/project/adapters/qwen3-8b-plain-english-clear-v2-retry1/checkpoint-193"
 )
 
 log() {
@@ -53,7 +54,7 @@ fail() {
     exit 2
 }
 
-[[ -n "${SLURM_JOB_ID:-}" ]] || fail "This script must run through sbatch."
+[[ -n "${SLURM_JOB_ID:-}" ]] || fail "This script must run inside a Slurm GPU allocation."
 [[ -r "$IMAGE" ]] || fail "Container image is missing or unreadable: ${IMAGE}"
 command -v enroot >/dev/null 2>&1 || fail "enroot is not available on $(hostname -f)."
 command -v nvidia-smi >/dev/null 2>&1 || fail "nvidia-smi is not available on $(hostname -f)."
@@ -76,10 +77,11 @@ readonly SCRATCH_HOME="${RUNTIME_ROOT}/home"
 readonly SCRATCH_TMP="${RUNTIME_ROOT}/tmp"
 readonly SCRATCH_CACHE="${RUNTIME_ROOT}/cache"
 readonly NO_ENTRYPOINT="${RUNTIME_ROOT}/no-entrypoint.sh"
-# Named after the job (not the job ID) and overwritten on every run, so the
-# tunnel lookup is always the same, predictable path -- no need to hunt for
-# the latest job ID first. See cluster/tunnel.sh, which reads this directly.
-readonly ENDPOINT_FILE="${PROJECT_ROOT}/logs/vllm/${SLURM_JOB_NAME}.endpoint"
+# Batch jobs use their name so cluster/tunnel.sh can find a stable endpoint.
+# A fresh SSH shell on an allocated node may have a job ID but no job name;
+# use a job-specific file in that case. The printed tunnel command works for both.
+readonly ENDPOINT_NAME="${SLURM_JOB_NAME:-vllm-${SERVED_MODEL_NAME}-${SLURM_JOB_ID}}"
+readonly ENDPOINT_FILE="${PROJECT_ROOT}/logs/vllm/${ENDPOINT_NAME}.endpoint"
 
 umask 002
 mkdir -p \
@@ -92,7 +94,7 @@ mkdir -p \
     "${SCRATCH_CACHE}/cuda" \
     "${SCRATCH_CACHE}/torchinductor" \
     "${SCRATCH_CACHE}/triton" \
-    "${PROJECT_ROOT}/cache/vllm/xdg" \
+    "${PROJECT_ROOT}/cache/vllm/${UID}/xdg" \
     "${PROJECT_ROOT}/logs/vllm" \
     "${PROJECT_ROOT}/models/huggingface/hub" \
     "${PROJECT_ROOT}/models/huggingface/xet"
@@ -169,7 +171,7 @@ base_url=http://${SERVER_HOST}:${SERVER_PORT}/v1
 model=${SERVED_MODEL_NAME}
 EOF
 log "Endpoint file: ${ENDPOINT_FILE}"
-log "Tunnel: cluster/tunnel.sh qwen3-8b (or: ssh -J <you>@hpc.sci.hpi.de -N -L ${SERVER_PORT}:127.0.0.1:${SERVER_PORT} <you>@$(hostname -f))"
+log "Tunnel from your Mac: ssh -J ${USER}@hpc.sci.hpi.de -N -o ExitOnForwardFailure=yes -L 127.0.0.1:${SERVER_PORT}:127.0.0.1:${SERVER_PORT} ${USER}@$(hostname -f)"
 
 enroot_args=(
     --rw
@@ -179,8 +181,8 @@ enroot_args=(
     --env "HF_HOME=/project/models/huggingface"
     --env "HF_HUB_CACHE=/project/models/huggingface/hub"
     --env "HF_XET_CACHE=/project/models/huggingface/xet"
-    --env "VLLM_CACHE_ROOT=/project/cache/vllm"
-    --env "XDG_CACHE_HOME=/project/cache/vllm/xdg"
+    --env "VLLM_CACHE_ROOT=/project/cache/vllm/${UID}"
+    --env "XDG_CACHE_HOME=/project/cache/vllm/${UID}/xdg"
     --env "CUDA_CACHE_PATH=/scratch/cache/cuda"
     --env "TORCHINDUCTOR_CACHE_DIR=/scratch/cache/torchinductor"
     --env "TRITON_CACHE_DIR=/scratch/cache/triton"
@@ -209,10 +211,16 @@ server_args=(
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
     --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
     --generation-config vllm
+    # Match the non-thinking chat template used for adapter training.
+    --default-chat-template-kwargs '{"enable_thinking": false}'
 )
 
 if ((${#LORA_MODULES[@]} > 0)); then
-    server_args+=(--enable-lora --lora-modules "${LORA_MODULES[@]}")
+    server_args+=(
+        --enable-lora
+        --max-loras "${#LORA_MODULES[@]}"
+        --lora-modules "${LORA_MODULES[@]}"
+    )
 fi
 
 log "Starting vLLM; the job remains active until cancellation or the time limit."

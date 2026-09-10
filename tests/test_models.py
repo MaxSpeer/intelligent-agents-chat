@@ -28,27 +28,29 @@ class PortEnvironmentOverrideTests(unittest.TestCase):
 
 
 class ModelProfilesTests(unittest.TestCase):
-    def test_default_profile_is_qwen35_9b(self) -> None:
-        self.assertEqual(DEFAULT_PROFILE_KEY, "qwen3.5-9b")
+    def test_default_profile_is_qwen3_8b(self) -> None:
+        self.assertEqual(DEFAULT_PROFILE_KEY, "qwen3-8b")
         self.assertIn(DEFAULT_PROFILE_KEY, profile_options())
 
-    def test_four_profiles_are_configured(self) -> None:
+    def test_only_three_profiles_are_active(self) -> None:
         self.assertEqual(
-            {profile.key for profile in MODEL_PROFILES},
-            {"qwen3.5-9b", "qwen3-8b", "conspiracy", "ollama-local"},
+            [profile.key for profile in MODEL_PROFILES],
+            ["qwen3-8b", "conspiracy", "plain-english-clear-v2"],
         )
 
-    def test_qwen3_8b_and_conspiracy_share_the_same_backend(self) -> None:
+    def test_qwen3_8b_and_its_adapters_share_the_same_backend(self) -> None:
         qwen3_8b = get_profile("qwen3-8b")
-        conspiracy = get_profile("conspiracy")
 
-        self.assertEqual(qwen3_8b.base_url, conspiracy.base_url)
         self.assertEqual(qwen3_8b.base_url, "http://127.0.0.1:8001/v1")
-        self.assertEqual(conspiracy.model, "conspiracy")
         self.assertFalse(qwen3_8b.supports_thinking)
-        self.assertFalse(conspiracy.supports_thinking)
         self.assertFalse(qwen3_8b.supports_tools)
-        self.assertFalse(conspiracy.supports_tools)
+        for key in ("conspiracy", "plain-english-clear-v2"):
+            with self.subTest(adapter=key):
+                adapter = get_profile(key)
+                self.assertEqual(qwen3_8b.base_url, adapter.base_url)
+                self.assertEqual(adapter.model, key)
+                self.assertFalse(adapter.supports_thinking)
+                self.assertFalse(adapter.supports_tools)
 
     def test_qwen35_9b_runs_on_a_separate_backend(self) -> None:
         profile = get_profile("qwen3.5-9b")
@@ -74,12 +76,24 @@ class ModelProfilesTests(unittest.TestCase):
         self.assertEqual(
             profile_options(),
             {
-                "qwen3.5-9b": "Qwen3.5 9B",
                 "qwen3-8b": "Qwen3 8B",
-                "conspiracy": "Qwen3 8B (conspiracy)",
-                "ollama-local": "qwen3.5:2b (local Ollama)",
+                "conspiracy": "Qwen3 8B (Conspiracy)",
+                "plain-english-clear-v2": "Qwen3 8B (Simple English)",
             },
         )
+
+    def test_inactive_profiles_keep_history_labels_but_are_not_selectable(self) -> None:
+        historical_labels = {
+            "qwen3.5-9b": "Qwen3.5 9B",
+            "plain-english": "Qwen3 8B (Plain English)",
+            "plain-english-2k": "Qwen3 8B (Plain English 2k)",
+            "plain-english-2k-simplified-v1": "Qwen3 8B (Plain English 2k simplified)",
+            "ollama-local": "qwen3.5:2b (local Ollama)",
+        }
+        for key, label in historical_labels.items():
+            with self.subTest(profile=key):
+                self.assertNotIn(key, profile_options())
+                self.assertEqual(get_profile(key).label, label)
 
 
 if __name__ == "__main__":
