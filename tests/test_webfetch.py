@@ -1,4 +1,4 @@
-"""Tests for the fetch_page tool, against a small local HTTP server (same
+"""Tests for the web_fetch tool, against a small local HTTP server (same
 pattern as test_llm.py's fake vLLM server -- no network access needed)."""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

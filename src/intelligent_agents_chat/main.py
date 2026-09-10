@@ -15,10 +15,7 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     """Start the NiceGUI development server."""
-    # Before ui.run(), so the database exists and project memory is current
-    # by the time the first request can arrive. Importing app above only
-    # registers the page function; nothing it does touches storage until a
-    # request actually runs it.
+    # Initialize storage before serving requests.
     bootstrap()
     log_event(
         logger,

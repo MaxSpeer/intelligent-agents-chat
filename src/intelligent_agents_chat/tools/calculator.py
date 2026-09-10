@@ -63,9 +63,7 @@ def run(arguments: dict) -> str:
 
 
 async def _run_async(arguments: dict) -> str:
-    """Thin async wrapper to fit the `Tool.run` contract -- this is pure CPU
-    and fast enough that it doesn't need a thread hop, unlike e.g. the
-    sub-agent tool's LLM call."""
+    """Adapt the synchronous calculator to the async tool interface."""
     return run(arguments)
 
 

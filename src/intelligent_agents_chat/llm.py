@@ -6,14 +6,13 @@ import asyncio
 from collections import Counter
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from datetime import date
 import logging
 from time import monotonic
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 
 from intelligent_agents_chat.logging_config import log_event, sanitized_endpoint
-from intelligent_agents_chat.models import ModelProfile
+from intelligent_agents_chat.models import MODEL_PROFILES, ModelProfile
 
 
 API_KEY = "not-needed"
@@ -22,23 +21,8 @@ HEALTH_CHECK_TIMEOUT_SECONDS = 3.0
 MAX_TOKENS = 1024
 THINKING_MAX_TOKENS = 8192
 TEMPERATURE = 0.2
-SYSTEM_PROMPT = (
-    "You are a helpful assistant. Give clear, accurate, and concise answers. "
-    "When you use tools, don't settle for a thin or inconclusive first result -- if a "
-    "web search's snippets don't clearly answer the question, fetch the most promising "
-    "page for more detail before giving your final answer."
-)
-
-
-def system_prompt_for_today() -> str:
-    """SYSTEM_PROMPT with today's real date spliced in, computed fresh on
-    every call (never cached) so each request tells the model what day it
-    actually is. Without this, a model doesn't reach for a tool to check --
-    it isn't *unsure* what day it is, it's *confidently wrong* (its training
-    cutoff), so nothing prompts it to ever question that. The date has to be
-    stated unconditionally, not offered as something optional to look up.
-    """
-    return f"Today's date is {date.today().isoformat()}. {SYSTEM_PROMPT}"
+PROFILE_STATUS_POLL_INTERVAL_SECONDS = 15.0
+profile_status: dict[str, bool | None] = {profile.key: None for profile in MODEL_PROFILES}
 
 logger = logging.getLogger(__name__)
 
@@ -48,16 +32,7 @@ class LLMError(RuntimeError):
 
 
 class ContextLengthExceededError(LLMError):
-    """This one request's prompt plus requested output tokens exceeded the
-    model's actual context window -- distinct from other LLMErrors so a
-    caller can react by compacting history and retrying instead of just
-    reporting failure (see app.py's send_message). This can happen even
-    right after ContextAssembler judged everything would fit: that's a
-    chars/3 estimate, not the model's real tokenizer, and a tool-calling
-    turn keeps growing after that one check (see ContextAssembler's
-    docstring) -- so this is the real, authoritative signal, checked here
-    instead of trying to predict it upfront.
-    """
+    """Server context-window overflow, allowing callers to compact history and retry."""
 
 
 async def check_model_available(profile: ModelProfile) -> bool:
@@ -76,12 +51,46 @@ async def check_model_available(profile: ModelProfile) -> bool:
     return any(model.id == profile.model for model in response.data)
 
 
+async def refresh_profile_status() -> None:
+    """Check every profile's vLLM endpoint concurrently and update `profile_status` in place."""
+    results = await asyncio.gather(
+        *(check_model_available(profile) for profile in MODEL_PROFILES),
+        return_exceptions=True,
+    )
+    for profile, result in zip(MODEL_PROFILES, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.exception(
+                "chat.profile_status.check_failed",
+                exc_info=result,
+                extra={"event": "chat.profile_status.check_failed", "model_profile": profile.key},
+            )
+            is_available = False
+        else:
+            is_available = result
+        previous = profile_status[profile.key]
+        profile_status[profile.key] = is_available
+        if previous is not None and previous != is_available:
+            log_event(
+                logger,
+                logging.INFO if is_available else logging.WARNING,
+                "chat.profile_status.changed",
+                model_profile=profile.key,
+                available=is_available,
+            )
+
+
+async def poll_profile_status() -> None:
+    """Continuously refresh `profile_status` in the background."""
+    while True:
+        await refresh_profile_status()
+        await asyncio.sleep(PROFILE_STATUS_POLL_INTERVAL_SECONDS)
+
 
 @dataclass(frozen=True, slots=True)
 class ContentDelta:
-    """One fragment of visible model text, tagged so callers can tell reasoning
-    (show it, but never feed it back as conversation history) from the model's
-    actual answer content (show it, and it belongs in history).
+    """A text fragment tagged as reasoning or answer content.
+
+    Reasoning is displayed but excluded from conversation history.
     """
     text: str
     is_reasoning: bool = False
@@ -101,15 +110,10 @@ class VLLMGateway:
         tool_calls: list[dict] | None = None,
         usage: dict[str, int] | None = None,
     ) -> AsyncIterator[ContentDelta]:
-        """Stream the reply as tagged text fragments; if `tool_calls` is given, append
-        the fully reconstructed tool calls to it (id, name, arguments) once the stream
-        completes. If `usage` is given, it's filled in with the server's own real
-        prompt_tokens/completion_tokens/total_tokens for this one request -- the
-        chars/3 estimate context.py uses for budgeting is a planning tool, this is
-        what actually happened, straight from the model's own tokenizer. Left empty
-        if the server doesn't report it (stream_options.include_usage isn't
-        universally supported), so callers should treat a missing key as "unknown",
-        not "zero".
+        """Stream tagged text and collect reconstructed tool calls when requested.
+
+        Fill `usage` with server-reported token counts if available; missing keys
+        mean unknown usage, not zero. Tool calls are complete when the stream ends.
         """
         started_at = monotonic()
         chunk_count = 0
@@ -172,9 +176,7 @@ class VLLMGateway:
             async for chunk in stream:
                 if chunk.id:
                     server_response_id = chunk.id
-                # The usage-carrying chunk (last, if stream_options.include_usage
-                # worked) has no choices of its own -- checked before the
-                # choices guard below, or it'd never be seen.
+                # Read usage before skipping chunks with no choices.
                 if chunk.usage is not None and usage is not None:
                     usage["prompt_tokens"] = chunk.usage.prompt_tokens
                     usage["completion_tokens"] = chunk.usage.completion_tokens
@@ -208,9 +210,7 @@ class VLLMGateway:
                     chunk_count += 1
                     output_chars += len(content)
                     yield ContentDelta(content)
-                # Reconstruct tool-call deltas (id, name, arguments) for the caller to
-                # execute -- no decorative text here; chat.py renders tool calls/results
-                # from this structured data instead, since it persists them structurally.
+                # Reconstruct tool-call IDs, names, and arguments from streaming deltas.
                 for tool_call_delta in getattr(choice.delta, "tool_calls", None) or []:
                     buffer = tool_call_buffers.setdefault(
                         tool_call_delta.index, {"id": None, "name": None, "arguments": ""}
@@ -253,8 +253,7 @@ class VLLMGateway:
                     "http_status": error.status_code,
                 },
             )
-            # No distinct error code for this across OpenAI-compatible
-            # servers -- matching the message text is the pragmatic option.
+            # Compatible servers lack a shared context-overflow error code.
             if error.status_code == 400 and "maximum context length" in str(error).lower():
                 outcome = "context_length_exceeded"
                 raise ContextLengthExceededError(

@@ -58,14 +58,7 @@ class MemoryEntry:
 
 @dataclass(frozen=True, slots=True)
 class MemoryCandidate:
-    """One retrieved entry on its way into a turn's context: the text to
-    quote plus what to cite it as. That's all anything downstream reads --
-    ContextAssembler renders exactly these three into the prompt's retrieval
-    block, and app.py persists the same three as the answer's provenance
-    (see ContextSourceInput in database.py and the trace step it feeds).
-    Ranking lives in the result order, not in a field: retrieve() already
-    returns the best match first.
-    """
+    """Retrieved turn text with a title and locator for citation; results are ranked by order."""
 
     text: str
     title: str
@@ -137,15 +130,7 @@ class ProjectMemoryStore:
                     connection.execute("DELETE FROM memory_entries WHERE id = ?", (existing["id"],))
 
             for start_id, end_id, content in chunks:
-                # rebuild_conversation reprocesses the whole conversation on every
-                # call (see the module docstring's rationale), so most chunks here
-                # are unchanged from the previous rebuild. The WHERE guard keeps
-                # that a true no-op -- without it, every unchanged chunk would
-                # still get its updated_at bumped and its FTS row deleted and
-                # reinserted (see the sync triggers in database.py), which would
-                # make "most recently updated" meaningless (it'd really mean
-                # "this conversation had any activity recently") and cause
-                # needless FTS churn on every turn.
+                # Skip unchanged chunks to preserve timestamps and avoid FTS reindexing.
                 connection.execute(
                     """
                     INSERT INTO memory_entries (
@@ -190,12 +175,7 @@ class ProjectMemoryStore:
         exclude_conversation_id: str | None = None,
         limit: int = DEFAULT_RETRIEVAL_LIMIT,
     ) -> list[MemoryCandidate]:
-        """The turns from this project most relevant to `text`.
-
-        exclude_conversation_id skips the conversation being answered right
-        now: its own messages are already in the history that gets sent, so
-        quoting them back as "memory" would just be noise.
-        """
+        """Retrieve relevant turns within a project, optionally excluding the current conversation."""
         if not project_id.strip():
             raise ValueError("Project-scoped retrieval requires a project ID")
         if limit <= 0:
@@ -312,14 +292,7 @@ class ProjectMemoryStore:
 
 
 def _conversation_chunks(title: str, rows: list[sqlite3.Row]) -> list[tuple[int, int, str]]:
-    """One chunk per turn: a user message plus that turn's final assistant
-    answer. A turn can contain several tool-call rounds (extra assistant rows
-    -- e.g. narration like "let me check that page" right before a tool call;
-    tool results themselves are already excluded by the caller's query), but
-    those rounds don't close the chunk early or leak into it -- only the next
-    user message starts a new turn, mirroring the UI's own trace-vs-answer
-    distinction (see _format_chunk).
-    """
+    """Build one chunk per user turn using its final assistant answer."""
     chunks: list[tuple[int, int, str]] = []
     current: list[sqlite3.Row] = []
     for row in rows:
@@ -337,12 +310,9 @@ def _conversation_chunks(title: str, rows: list[sqlite3.Row]) -> list[tuple[int,
 
 
 def _format_chunk(title: str, rows: list[sqlite3.Row]) -> tuple[int, int, str] | None:
-    """Render one turn as its user message plus its final assistant answer,
-    skipping any assistant rows in between (tool calls and reasoning). Returns None for a
-    turn that has no answer yet (e.g. the pre-emptive rebuild right after the
-    user message is saved, before generation finishes, or a turn stopped
-    before producing any content) -- the next rebuild fills it in once an
-    answer exists.
+    """Format the user message and final answer, skipping intermediate tool-calling rows.
+
+    Return None when the turn has no answer yet.
     """
     user_row = next((row for row in rows if row["role"] == "user"), None)
     final_answer = next(
@@ -363,9 +333,7 @@ def _format_chunk(title: str, rows: list[sqlite3.Row]) -> tuple[int, int, str] |
     return rows[0]["id"], rows[-1]["id"], "\n".join(lines)
 
 
-# Decimal numbers are matched whole (not split into two tokens on the ".")
-# before falling back to plain word characters. A lone "3" or "878" is useless search
-# signal, but "3.878" is specific enough to matter.
+# Keep decimal numbers as whole search tokens.
 _TOKEN_PATTERN = re.compile(r"\d+\.\d+|[^\W_]+", flags=re.UNICODE)
 
 

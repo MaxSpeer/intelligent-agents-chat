@@ -2,7 +2,7 @@
 pipeline that feeds it (shared by memory and future RAG).
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -13,15 +13,16 @@ from unittest import mock
 from intelligent_agents_chat import context
 from intelligent_agents_chat.context import (
     RETRIEVAL_GUARD,
+    SYSTEM_PROMPT,
     ContextAssembler,
     ContextOverflowError,
     _compact_conversation_history,
     _history_messages,
     completion_messages,
     prepare_conversation_context,
+    system_prompt_for_today,
 )
 from intelligent_agents_chat.database import ChatRepository, Conversation, Message
-from intelligent_agents_chat.llm import SYSTEM_PROMPT
 from intelligent_agents_chat.memory import MemoryCandidate
 from intelligent_agents_chat.models import ModelProfile
 
@@ -237,7 +238,7 @@ class CompletionMessagesTests(unittest.TestCase):
         self.assertNotIn("[tool:", messages[2]["content"])
 
     def test_a_tool_error_result_is_reported_in_the_trace_line(self) -> None:
-        call = {"id": "call_1", "name": "fetch_page", "arguments": '{"url": "not-a-url"}'}
+        call = {"id": "call_1", "name": "web_fetch", "arguments": '{"url": "not-a-url"}'}
         messages = completion_messages(
             [
                 _message("user", "Fetch that page."),
@@ -264,7 +265,7 @@ class CompletionMessagesTests(unittest.TestCase):
         latest) it wouldn't be collapsed at all -- see
         test_the_latest_turn_is_never_collapsed_even_with_tool_activity.
         """
-        call = {"id": "call_1", "name": "fetch_page", "arguments": '{"url": "https://x"}'}
+        call = {"id": "call_1", "name": "web_fetch", "arguments": '{"url": "https://x"}'}
         messages = completion_messages(
             [
                 _message("user", "Fetch that page."),
@@ -341,6 +342,20 @@ class CompletionMessagesTests(unittest.TestCase):
         self.assertEqual(
             messages[5], {"role": "user", "content": "Third question, not answered yet."}
         )
+
+
+class SystemPromptForTodayTests(unittest.TestCase):
+    """Real case this addresses: a model confidently believes today is its
+    training cutoff's date and gets confused by "future" search results --
+    it isn't unsure what day it is, so nothing prompts it to ever check.
+    The date has to be stated unconditionally, every request.
+    """
+
+    def test_includes_the_base_system_prompt(self) -> None:
+        self.assertIn(SYSTEM_PROMPT, system_prompt_for_today())
+
+    def test_includes_todays_real_date(self) -> None:
+        self.assertIn(date.today().isoformat(), system_prompt_for_today())
 
 
 class PrepareConversationContextWiringTests(unittest.IsolatedAsyncioTestCase):

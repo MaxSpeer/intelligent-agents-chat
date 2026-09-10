@@ -1,13 +1,6 @@
-"""Local text embeddings, run in-process on this same server -- never routed
-through vLLM or any remote endpoint.
+"""Local text embeddings using fastembed and ONNX Runtime.
 
-Uses fastembed (ONNX Runtime), not sentence-transformers/transformers: the
-latter drags in a full CUDA-targeted torch installation even for CPU-only
-use, which is the opposite of "lightweight". fastembed runs a small,
-well-known sentence-embedding model directly via ONNX, with a much smaller
-dependency footprint. The model is downloaded once, on first use (needs
-network for that one time only), and cached under EMBEDDING_CACHE_DIR --
-every embed() call after that is fully local and offline.
+The model downloads on first use and is cached under EMBEDDING_CACHE_DIR.
 """
 
 from __future__ import annotations
@@ -18,14 +11,13 @@ import logging
 from pathlib import Path
 from typing import Protocol
 
-from intelligent_agents_chat.database import PROJECT_ROOT
 from intelligent_agents_chat.logging_config import log_event
 
 
-# A small, general-purpose sentence embedding model, English only, 384 dimensions
+# English sentence embeddings, 384 dimensions.
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_DIMENSION = 384
-EMBEDDING_CACHE_DIR = PROJECT_ROOT / ".data" / "embedding-models"
+EMBEDDING_CACHE_DIR = Path(__file__).resolve().parents[2] / ".data" / "embedding-models"
 logger = logging.getLogger(__name__)
 
 
@@ -34,9 +26,7 @@ class EmbeddingError(RuntimeError):
 
 
 class EmbeddingGateway(Protocol):
-    """Common seam for turning text into vectors -- a Protocol (not a base
-    class) so tests can supply a fake without depending on fastembed at all.
-    """
+    """Protocol for converting text to embedding vectors."""
 
     @property
     def model_name(self) -> str: ...
@@ -45,13 +35,7 @@ class EmbeddingGateway(Protocol):
 
 
 class LocalEmbeddingGateway:
-    """Wraps fastembed's TextEmbedding. The model loads lazily, on the first
-    embed() call, and every call (including that first load) runs in a
-    worker thread via asyncio.to_thread -- both model loading and ONNX
-    inference are CPU-bound and would otherwise block the event loop
-    serving every other connected browser tab (the same reasoning already
-    applied to PDF parsing in documents.py).
-    """
+    """Lazily load fastembed and run model loading and inference in worker threads."""
 
     def __init__(
         self,
@@ -62,8 +46,7 @@ class LocalEmbeddingGateway:
         self._model_name = model_name
         self._cache_dir = cache_dir
         self._model = None
-        # Guards first-load against two concurrent embed() calls both
-        # deciding the model isn't loaded yet and racing to load it twice.
+        # Prevent concurrent calls from loading the model twice.
         self._load_lock = asyncio.Lock()
 
     @property
@@ -75,6 +58,7 @@ class LocalEmbeddingGateway:
             return self._model
         async with self._load_lock:
             if self._model is None:  # re-check: another call may have won the race
+                # Defer ONNX imports until embeddings are requested.
                 from fastembed import TextEmbedding
 
                 self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -116,9 +100,5 @@ class LocalEmbeddingGateway:
 
 
 def create_embedding_gateway() -> EmbeddingGateway:
-    """The one embedding gateway the whole app shares -- always local and
-    always available. Unlike the old remote-endpoint gateway this replaces,
-    there's no "unconfigured, fall back to lexical search" state any more
-    (see documents.py, which now requires embeddings for every retrieval).
-    """
+    """Create a local embedding gateway."""
     return LocalEmbeddingGateway()

@@ -25,6 +25,8 @@ Documents belong to exactly one project. The vector table is partitioned by proj
 project is bound by the server rather than passed by the model, so a chat cannot read another
 project's documents by asking for it.
 
+![adaptive RAG as a tool](images/rag-flow.png)
+
 ## Why this is adaptive RAG
 
 The pipeline from the lecture chains several LLM steps in a fixed order: a **judge** decides

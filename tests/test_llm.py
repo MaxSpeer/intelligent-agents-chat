@@ -1,7 +1,6 @@
 """Integration-style test for the OpenAI-compatible streaming gateway."""
 
 import asyncio
-from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from threading import Thread
@@ -10,13 +9,11 @@ import unittest
 
 from intelligent_agents_chat.llm import (
     MAX_TOKENS,
-    SYSTEM_PROMPT,
     THINKING_MAX_TOKENS,
     ContextLengthExceededError,
     LLMError,
     VLLMGateway,
     check_model_available,
-    system_prompt_for_today,
 )
 from intelligent_agents_chat.models import ModelProfile
 
@@ -548,20 +545,6 @@ class CheckModelAvailableTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertFalse(await check_model_available(profile))
-
-
-class SystemPromptForTodayTests(unittest.TestCase):
-    """Real case this addresses: a model confidently believes today is its
-    training cutoff's date and gets confused by "future" search results --
-    it isn't unsure what day it is, so nothing prompts it to ever check.
-    The date has to be stated unconditionally, every request.
-    """
-
-    def test_includes_the_base_system_prompt(self) -> None:
-        self.assertIn(SYSTEM_PROMPT, system_prompt_for_today())
-
-    def test_includes_todays_real_date(self) -> None:
-        self.assertIn(date.today().isoformat(), system_prompt_for_today())
 
 
 if __name__ == "__main__":

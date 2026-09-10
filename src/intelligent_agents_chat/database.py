@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import sqlite_vec
 
+from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION
 from intelligent_agents_chat.logging_config import log_event
 
 
@@ -52,20 +53,17 @@ class Message:
     content: str
     model_profile: str | None
     created_at: datetime
-    # Set only on assistant messages that made tool calls: [{"id", "name", "arguments"}, ...].
+    # Assistant tool calls: {"id", "name", "arguments"}.
     tool_calls: tuple[dict, ...] | None = None
-    # Set only on role="tool" messages: which tool_calls entry this is the result of.
+    # Matching call ID for tool-result messages.
     tool_call_id: str | None = None
-    # Set only on assistant messages that reasoned before this action
+    # Assistant reasoning preceding this action.
     reasoning: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ContextSourceInput:
-    """One retrieval source supplied while generating an assistant message --
-    exactly what the answer's trace step later shows about it (see app.py's
-    _add_memory_trace_step), and nothing beyond that.
-    """
+    """A retrieved source and citation metadata supplied to an assistant message."""
 
     source_title: str
     source_locator: str
@@ -89,21 +87,14 @@ class MessageContextSource:
 
 @dataclass(frozen=True, slots=True)
 class ContextRunInput:
-    """The token-budget outcome of assembling one request, for the context
-    inspector -- estimated (chars/3, from ContextAssembler) alongside real
-    (from the model server's own usage report, may be unavailable).
-    """
+    """Estimated input budget and optional server-reported usage for the context inspector."""
 
     context_window_tokens: int
     input_budget_tokens: int
     estimated_input_tokens: int
     real_prompt_tokens: int | None
     real_completion_tokens: int | None
-    # The turn's peak prompt+completion total (its last round -- see
-    # chat.py's UsageEvent docstring for why that's always the peak), i.e.
-    # the most the model ever held in context at once this turn. Compare
-    # against context_window_tokens to see how close a turn came to actually
-    # running out mid-turn.
+    # Last reported round's prompt-plus-completion total.
     real_peak_total_tokens: int | None
 
 
@@ -123,11 +114,7 @@ class MessageContextRun:
 
 @dataclass(frozen=True, slots=True)
 class AppSettings:
-    """Generation preferences (model, thinking, memory) shared by the whole
-    app rather than any one conversation -- a single row, upserted in place,
-    so switching chats or starting a new one never resets them (see
-    get_app_settings/set_app_settings).
-    """
+    """App-wide model, thinking, and memory preferences stored in a single row."""
 
     model_profile: str
     thinking_enabled: bool
@@ -137,11 +124,7 @@ class AppSettings:
 
 @dataclass(frozen=True, slots=True)
 class ConversationCompaction:
-    """A rolling summary standing in for everything in one conversation older
-    than its most recent kept-raw turns (see chat.py's
-    COMPACTION_KEEP_RECENT_TURNS) -- one row per conversation, extended in
-    place rather than re-summarized from scratch as more history ages out.
-    """
+    """A conversation's rolling summary and the last message it covers."""
 
     conversation_id: str
     compacted_through_message_id: int
@@ -357,21 +340,7 @@ class ChatRepository:
                     ON document_chunks(project_id, document_id);
                 """
             )
-            # Separate from the script above because the vector column's width
-            # has to be interpolated: `vec0` takes it as literal DDL, not as a
-            # parameter. `row_id` deliberately shares values with
-            # document_chunks.row_id (kept in sync by hand in
-            # DocumentStore.replace_chunks) so a plain JOIN recovers a chunk's
-            # content/locator after a vector search -- vec0 has no foreign keys
-            # or content_rowid-style linkage of its own.
-            #
-            # Imported here rather than at module level: embeddings.py imports
-            # PROJECT_ROOT from this module, so importing it back at module
-            # level would be a cycle. The constant lives there because the
-            # pinned model decides the width -- changing the model means
-            # migrating this column.
-            from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION
-
+            # vec0 requires a literal vector width and manual row_id synchronization with chunks.
             connection.execute(
                 f"""
                 CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_vec USING vec0(
@@ -564,15 +533,11 @@ class ChatRepository:
         )
         return renamed
 
-    # Fixed id for the one app_settings row -- there's only ever a single,
-    # shared set of generation preferences, not one per conversation.
+    # Fixed ID for the single app-wide settings row.
     APP_SETTINGS_ID = "global"
 
     def get_app_settings(self) -> AppSettings | None:
-        """None means the row has never been written -- callers fall back to
-        their own defaults (see app.py's current_settings), same as get_project
-        returning None before the default project exists.
-        """
+        """Return app-wide settings, or None if they have not been saved."""
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -587,9 +552,7 @@ class ChatRepository:
     def set_app_settings(
         self, *, model_profile: str, thinking_enabled: bool, memory_enabled: bool
     ) -> AppSettings:
-        """Replace the one app_settings row -- create or update, never a
-        second row (see APP_SETTINGS_ID).
-        """
+        """Create or update the single app-wide settings row."""
         if not model_profile.strip():
             raise ValueError("Model profile cannot be empty")
         now = _timestamp()
@@ -648,9 +611,7 @@ class ChatRepository:
     ) -> Message:
         if role not in VALID_ROLES:
             raise ValueError(f"Unsupported message role: {role}")
-        # An assistant message that only made tool calls (or only reasoned, e.g. a
-        # round that got stopped mid-thought) has no natural-language content --
-        # that's valid as long as it has tool calls or reasoning attached.
+        # Assistant messages may have empty content when tool calls or reasoning are present.
         if not content.strip() and not tool_calls and not reasoning:
             raise ValueError("Message content cannot be empty")
 
@@ -850,9 +811,7 @@ class ChatRepository:
         compacted_through_message_id: int,
         summary: str,
     ) -> None:
-        """Create or extend the one compaction row for a conversation --
-        never a second row, since there's only ever one current boundary.
-        """
+        """Create or update the conversation's summary and compaction boundary."""
         now = _timestamp()
         with self._connect() as connection:
             connection.execute(
@@ -882,14 +841,7 @@ class ChatRepository:
 
 
 def connect_database(database_path: Path) -> sqlite3.Connection:
-    """Open one consistently configured SQLite connection for repository services.
-
-    Loads the sqlite-vec extension on every connection -- it's the one
-    shared factory used by ChatRepository, DocumentStore, and
-    ProjectMemoryStore, so this is the one place that guarantees
-    document_chunks_vec (see documents.py) is queryable regardless of which
-    of those opens the connection.
-    """
+    """Open a SQLite connection with sqlite-vec, foreign keys, and a busy timeout."""
     connection = sqlite3.connect(database_path, timeout=5.0)
     connection.row_factory = sqlite3.Row
     connection.enable_load_extension(True)
@@ -905,7 +857,7 @@ def _column_exists(connection: sqlite3.Connection, table: str, column: str) -> b
 
 
 def _migrate_context_run_schema(connection: sqlite3.Connection) -> bool:
-    """Replace the older detailed inspector table with PR 14's usage table."""
+    """Ensure the context-usage table has the required columns, preserving usage data."""
     desired_columns = (
         "assistant_message_id",
         "context_window_tokens",
@@ -967,7 +919,7 @@ def _migrate_context_run_schema(connection: sqlite3.Connection) -> bool:
 
 
 def _migrate_messages_schema(connection: sqlite3.Connection) -> bool:
-    """Upgrade pre-tool-calling databases without losing messages or provenance."""
+    """Ensure tool-call and reasoning support while preserving messages and provenance."""
     columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(messages)")}
     table_row = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'"
@@ -1134,12 +1086,5 @@ def _conversation_compaction_from_row(row: sqlite3.Row) -> ConversationCompactio
     )
 
 
-#
-# The one repository the whole app shares
-#
-
-# Constructed here, initialized nowhere near here: building it only stores a
-# path, so importing this module still does nothing at all. Creating and
-# migrating the schema is an application-startup step -- see bootstrap.py,
-# which main() calls once before the server starts serving.
+# Constructing the shared repository does not open or initialize the database.
 repository = ChatRepository()

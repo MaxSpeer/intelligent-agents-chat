@@ -29,7 +29,7 @@ class RecallToolOutputTests(unittest.IsolatedAsyncioTestCase):
             self.conversation.id,
             "assistant",
             "",
-            tool_calls=[{"id": "call_1", "name": "fetch_page", "arguments": "{}"}],
+            tool_calls=[{"id": "call_1", "name": "web_fetch", "arguments": "{}"}],
         )
         self.tool_result = self.repository.add_message(
             self.conversation.id,
