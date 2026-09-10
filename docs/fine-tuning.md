@@ -9,8 +9,9 @@ the base or an adapter by model name, so switching does not require another full
 Training runs separately in its own `uv` environment under `training/`.
 
 We chose Qwen3 8B after an initial Qwen3.5 adapter worked in Transformers/PEFT but had no effect
-in our tested vLLM setup (seems to be a bug in vLLM, see https://github.com/vllm-project/vllm/issues/49354). Qwen3.5 9B remains our main model for agent skills; fine-tuning uses
-the independent Qwen3 8B instance.
+in our tested vLLM setup (seems to be a bug in vLLM, see https://github.com/vllm-project/vllm/issues/49354).
+The current selector exposes the Qwen3 8B base and both adapters. The Qwen3.5 9B profile used for
+earlier agent experiments remains available in the code but is inactive in the selector.
 
 
 ## Conspiracy adapter
@@ -37,9 +38,22 @@ regardless of the actual question asked. Training loss had already collapsed wit
 one epoch. We reduced adapter capacity and learning rate, restricted the target modules to the
 attention projections, and replaced the fixed epoch count with early stopping on validation loss.
 
-## Second fine-tuning
+## Simple English adapter
 
-Work in progress.
+The accepted dataset, `plain_english_clear_v2`, contains **2,000 training, 100 validation, and
+100 test dialogues**. The target style uses short sentences and familiar words, with technical
+terms explained in simple language. The [dataset README](../training/datasets/plain_english_clear_v2/README.md)
+documents the sources, answer revisions, licences, and quality checks.
+
+Training supervises each assistant answer separately and masks preceding context, using the
+non-thinking chat template. The run starts from the pinned Qwen3 8B base; it does not continue
+from the Conspiracy adapter. Each saved epoch is compared against base-model validation answers.
+
+The accepted run is `qwen3-8b-plain-english-clear-v2-retry1`. The chat serves **checkpoint 193**,
+chosen after [reviewing the validation answers](../training/evaluations/plain_english_clear_v2_retry1_2527052/REVIEW.md),
+under the API name `plain-english-clear-v2` and display label **Qwen3 8B (Simple English)**.
+The final epoch remains available in the run directory; it is not the selected serving adapter.
+Historical runs are archived, with paths recorded in [model-artifacts.md](../cluster/model-artifacts.md).
 
 Training commands and experiment details are in [training/README.md](../training/README.md).
 The shared serving setup is shown in the [architecture overview](../README.md#architecture).

@@ -1,17 +1,22 @@
 # vLLM on HPI Slurm
 
+The current chat uses **Qwen3 8B**, **Conspiracy**, and **Simple English** through one server
+and tunnel on port `8001`. Follow [the current startup guide](plain-english-chat.md), especially
+when reusing an interactive GPU allocation. The Qwen3.5 launcher is retained for earlier
+experiments; its profile is inactive in the current selector.
+
 Two sbatch scripts, each starting one persistent vLLM server with Enroot, intentionally fixed to
 one model each (copy one and change the constants at the top for yet another model -- don't add
 model-selection environment variables back into either):
 
 | Script | Served name | Hugging Face model | Revision | vLLM image | Context | LoRA |
 | --- | --- | --- | --- | --- | --- | --- |
-| `run-vllm-qwen3-8b.sbatch` | `qwen3-8b` | `Qwen/Qwen3-8B` | `b968826d9c46dd6066d109eabc6255188de91218` | `v0.27.0` | 32,768 | yes, `conspiracy` adapter |
+| `run-vllm-qwen3-8b.sbatch` | `qwen3-8b` | `Qwen/Qwen3-8B` | `b968826d9c46dd6066d109eabc6255188de91218` | `v0.27.0` | 32,768 | `conspiracy` and `plain-english-clear-v2` (Simple English, checkpoint 193) |
 | `run-vllm-qwen35-9b.sbatch` | `qwen3.5-9b` | `Qwen/Qwen3.5-9B` | `e0330a142393d4516eca6ab0145ce66ac513e842` | `v0.27.0` | 32,768 | no (see below) |
 
 Qwen3.5-9B's hybrid GDN attention isn't actually usable with LoRA in vLLM yet (confirmed on both
 v0.23.0 and v0.27.0 -- the adapter loads without error but has zero effect on generation, see
-`training/README.md`). `Qwen3-8B` is the plain dense `Qwen3ForCausalLM` architecture, which vLLM
+`training/archive/notes/conspiracy-and-pilot-workflow.md`). `Qwen3-8B` is the plain dense `Qwen3ForCausalLM` architecture, which vLLM
 lists as LoRA-supported and has a long track record of working -- that's why the trained conspiracy
 adapter is only wired into `run-vllm-qwen3-8b.sbatch`. `run-vllm-qwen35-9b.sbatch` exists for
 serving/comparing against the plain base model.
@@ -23,9 +28,9 @@ with `--mem=32G` instead -- see "Import a container image" below -- worked.)
 
 Each script can also serve one or more LoRA adapters alongside its base model -- e.g. one trained
 with `training/train_lora.py` -- via the `LORA_MODULES` constant near the top (empty by default in
-`run-vllm-qwen35-9b.sbatch`, since LoRA doesn't work there; pre-filled with the `conspiracy` adapter
+`run-vllm-qwen35-9b.sbatch`, since LoRA didn't work in our tests there; pre-filled with both active adapters
 in `run-vllm-qwen3-8b.sbatch`). See
-[`training/README.md`](../training/README.md#trying-the-adapter-with-vllm).
+the [serving guide](plain-english-chat.md).
 
 All Slurm commands use the account `sci-lippert-intelligent-agents`. Persistent runtime data lives
 under:
@@ -40,16 +45,19 @@ under:
 ├── logs/training/
 ├── models/huggingface/         # HF_HOME -- base models + datasets
 ├── adapters/                   # trained LoRA adapters (train_lora.py's OUTPUT_DIR)
-│   └── qwen3-8b-conspiracy/
-└── code/intelligent-agents-chat/   # checkout run-vllm-*.sbatch/run-training.sbatch expect
+│   ├── qwen3-8b-conspiracy/
+│   └── qwen3-8b-plain-english-clear-v2-retry1/
+│       └── checkpoint-193/      # selected Simple English adapter
+├── archive/2026-09-10-simple-english/ # superseded weights and logs
+└── code/intelligent-agents-chat/
     └── training/
-        ├── .venv/     # created by `uv sync`, gitignored
-        └── data/      # written by prepare_dataset.py, gitignored
+        ├── datasets/plain_english_clear_v2/
+        └── archive/  # historical datasets and evaluations
 ```
 
 The adapter/model paths are hardcoded absolute paths under `$PROJECT_ROOT`, so they land in the same
-place regardless of where you happen to have this repo checked out; only the two sbatch scripts
-require the fixed `code/intelligent-agents-chat` checkout location shown above.
+place regardless of where you happen to have this repo checked out. The current training
+commands and the retained run are documented in [training/README.md](../training/README.md).
 
 The job binds vLLM to compute-node loopback only, on a **fixed** port per script (`8001` for
 Qwen3-8B, `8002` for Qwen3.5-9B -- see `SERVER_PORT` near the top of each) rather than a random one
@@ -61,16 +69,15 @@ same node at the exact same time, in which case vLLM fails to start immediately 
 "address already in use" error rather than silently misbehaving; just resubmit.
 
 The endpoint is printed in the Slurm log and written to a path named after the *job*, not the job
-ID, and overwritten on every run -- so it's always the same, predictable path, no need to look up
-which job ID was the latest one:
+ID for normal batch jobs, and overwritten on every run:
 
 ```bash
 $PROJECT_ROOT/logs/vllm/vllm-qwen3-8b.endpoint     # or vllm-qwen35-9b.endpoint
 ```
 
-`cluster/tunnel.sh` (see "Connect from the local application" below) reads this file for you over
-SSH and opens the tunnel in one command -- the node Slurm placed the job on is the only thing about
-the endpoint that's still unpredictable ahead of time.
+Interactive jobs use their own job name; a reconnected shell without `SLURM_JOB_NAME` uses
+`vllm-<served-model>-<job-id>.endpoint`. Use the filename printed by the server. Endpoint files
+can survive a stopped job. `cluster/tunnel.sh` checks Slurm state before opening a tunnel.
 
 ## Submit a short validation job
 
@@ -164,7 +171,9 @@ opens the tunnel for you, so the only thing you never have to look up by hand is
 landed on:
 
 ```bash
-cluster/tunnel.sh qwen3-8b     # or: qwen35-9b
+cluster/tunnel.sh qwen3-8b YOUR_HPI_USERNAME
+# For an interactive job, append its endpoint filename without .endpoint:
+cluster/tunnel.sh qwen3-8b YOUR_HPI_USERNAME YOUR_ENDPOINT_NAME
 ```
 
 Keep that terminal open and verify the local endpoint in a second one:
@@ -193,41 +202,27 @@ The port is fixed and always the same as shown above (`8001` for Qwen3-8B, `8002
 see "Run the normal server job" above) -- only the node changes between runs, which is what both the
 script and the manual `cat` step are for.
 
-Start the NiceGUI application against the 9B tunnel:
+Start the NiceGUI application against the Qwen3 8B tunnel:
 
 ```bash
-export CHAT_DEFAULT_PROFILE=qwen3-8b
-export VLLM_9B_BASE_URL=http://127.0.0.1:8001/v1
-export VLLM_9B_MODEL=qwen3-8b
-export VLLM_API_KEY=not-needed
-
 uv run intelligent-agents-chat
 ```
 
-To expose multiple models in the app at once, start one Slurm job per model-specific sbatch script,
-open one SSH tunnel per job, and point each profile at its own local port.
+The base model and both active adapters use this same server and tunnel. The model API names are
+`qwen3-8b`, `conspiracy`, and `plain-english-clear-v2`. Only a different base model needs its own
+server and tunnel.
 
 ## LoRA fine-tuning
 
-LoRA supervised fine-tuning of `Qwen/Qwen3-8B` has nothing to do with vLLM or Enroot -- it just
-needs a GPU and a plain `uv`-managed Python environment (`training/pyproject.toml`), set up the
-same way as this repo's own `.venv`. Two ways to run it, both documented in
-[`training/README.md`](../training/README.md):
+The current Simple English entry point is `training/train_plain_english_clear_v2.py`. It uses
+the existing training environment, performs a preflight by default, and only starts training with
+an explicit `--run` inside your GPU allocation. Use a new `--output-dir` for each run. The full
+preflight command and retained dataset paths are in [training/README.md](../training/README.md).
 
-- **Interactively, no sbatch script**: grab a `gpu-i` allocation with `srun --pty bash` and run
-  `uv sync` + the training scripts by hand. Good for iterating and watching output live.
-- **As a batch job**: `run-training.sbatch` runs the same steps unattended on `gpu-batch`.
-
-```bash
-sbatch --account=sci-lippert-intelligent-agents cluster/run-training.sbatch
-
-tail -f "$PROJECT_ROOT/logs/training/lora-sft-qwen3-8b-<job-id>.out"
-```
-
-The training scripts take no CLI flags -- every setting (dataset size, LoRA rank, epochs, ...) is a
-constant at the top of `training/prepare_dataset.py` / `train_lora.py`; edit those and `git pull`
-the change before submitting a batch run. The trained adapter is written to
-`$PROJECT_ROOT/adapters/qwen3-8b-conspiracy` (see `training/README.md`).
+`run-training.sbatch` is the **legacy Conspiracy launcher**. It still points to Matthias's home
+checkout and the Conspiracy output directory. It is not the Simple English training command.
+Its original workflow is preserved in
+[the archived Conspiracy notes](../training/archive/notes/conspiracy-and-pilot-workflow.md).
 
 ## Import a container image
 

@@ -6,9 +6,9 @@ Required
 - [x] multiple models
 - [x] start / stop / resume chats
 - [x] Cross-Chat Project Memory
-- [ ] Finetuning (1/2)
-  - [x] Finetuning 1
-  - [ ] Finetuning 2 
+- [x] Finetuning (2/2)
+  - [x] Conspiracy
+  - [x] Simple English
 
 Elective
 
@@ -30,12 +30,13 @@ Enroot containers, scheduled with Slurm. SSH tunnels expose those APIs on local 
 
 This separation is deliberately modular: the agent talks to an OpenAI-compatible API and does
 not need to know which compute node or model is behind it. There is no architectural limit of
-two vLLM instances; more can be added as cluster resources allow. We provide two configurations:
+two vLLM instances; more can be added as cluster resources allow. The current chat uses the
+Qwen3 8B configuration; the separate Qwen3.5 launcher remains available for earlier experiments:
 
 | vLLM instance | Purpose | Local tunnel port | Slurm script |
 | --- | --- | --- | --- |
-| Qwen3.5 9B | Main model for agent skills, including tool use and reasoning | `8002` | [run-vllm-qwen35-9b.sbatch](cluster/run-vllm-qwen35-9b.sbatch) |
 | Qwen3 8B + two LoRA adapters | Base model and our two fine-tunings | `8001` | [run-vllm-qwen3-8b.sbatch](cluster/run-vllm-qwen3-8b.sbatch) |
+| Qwen3.5 9B (inactive profile) | Earlier agent experiments with tool use and reasoning | `8002` | [run-vllm-qwen35-9b.sbatch](cluster/run-vllm-qwen35-9b.sbatch) |
 
 ### Model profiles
 
@@ -43,7 +44,10 @@ Profiles in [models.py](src/intelligent_agents_chat/models.py) connect a model n
 endpoint and declare capabilities such as tool use. Switching profiles in the UI sends requests
 to the corresponding port and vLLM instance. Adapters share their base model's endpoint and are
 selected by model name. Adding another server means adding a profile and a tunnel, without
-changing the agent loop. A local Ollama profile is also included for lightweight testing.
+changing the agent loop. The selector currently exposes exactly **Qwen3 8B**, **Qwen3 8B
+(Conspiracy)**, and **Qwen3 8B (Simple English)** on port `8001`. Simple English uses checkpoint
+193 of the retained run. Qwen3.5, Ollama, and intermediate adapters are inactive; their historical
+profiles remain resolvable for saved chats. The active 8B profiles do not enable tool calls.
 
 ## Run with the HPI SCI Compute Cluster
 
@@ -69,26 +73,33 @@ On the cluster, from the prepared checkout:
 
 ```bash
 cd /sc/projects/sci-lippert/intelligent-agents/project_matthias_max/code/intelligent-agents-chat
-sbatch cluster/run-vllm-qwen35-9b.sbatch
+sbatch --account=sci-lippert-intelligent-agents cluster/run-vllm-qwen3-8b.sbatch
 ```
 
-For Qwen3 8B and the LoRA adapters, use `sbatch cluster/run-vllm-qwen3-8b.sbatch` instead,
-or submit both jobs. **Both instances do not have to run at once.** Qwen3.5 9B alone is enough
-for the agent features; Qwen3 8B alone is enough for ordinary chats and testing fine-tunings.
-Select a profile belonging to the running instance in the UI.
+This single server serves all three active choices. If you already have an interactive GPU
+allocation, use `bash cluster/run-vllm-qwen3-8b.sbatch` inside that GPU shell instead of submitting
+another job. Wait for `Application startup complete`. See the
+[interactive startup instructions](cluster/plain-english-chat.md) for the full sequence.
 
 ### 3. Open the SSH tunnel locally
 
 After the vLLM job has started, open another terminal on **your own machine**:
 
 ```bash
-bash cluster/tunnel.sh qwen35-9b YOUR_HPI_USERNAME
+bash cluster/tunnel.sh qwen3-8b YOUR_HPI_USERNAME
 ```
 
-For the other instance, use `bash cluster/tunnel.sh qwen3-8b YOUR_HPI_USERNAME`.
-The script reads the job's `.endpoint` file through the login node, automatically finds the
-compute node, and forwards its API to local port `8002` or `8001`. Keep the terminal open.
-If both instances are running, open one tunnel per instance in separate terminals.
+The script reads the job's `.endpoint` file through the login node, verifies the job is running,
+and forwards its API to local port `8001`. Keep the terminal open. For an interactive job, pass
+the endpoint filename printed by the server, without `.endpoint`, as the third argument:
+
+```bash
+bash cluster/tunnel.sh qwen3-8b YOUR_HPI_USERNAME YOUR_ENDPOINT_NAME
+```
+
+Alternatively, use the exact SSH tunnel command printed by the server. Check
+`curl --fail http://127.0.0.1:8001/v1/models`: it must list `qwen3-8b`, `conspiracy`, and
+`plain-english-clear-v2` (the API name for Simple English).
 
 ## Agent loop
 

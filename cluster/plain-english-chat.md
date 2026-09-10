@@ -48,8 +48,8 @@ bash cluster/run-vllm-qwen3-8b.sbatch 2>&1 | tee "$HOME/vllm-qwen3-8b-${SLURM_JO
 
 Keep this terminal open. Wait for vLLM to finish loading and report
 `Application startup complete`. The script prints the GPU hostname and a tunnel command.
-Logs in your home directory avoid the permissions problem in the shared training log folder.
-vLLM's persistent cache is separated by user ID for the same reason.
+Logs in your home directory are owned by you. vLLM's persistent cache is separated by user ID
+to avoid permissions conflicts between teammates.
 
 The GPU allocation must still be active. Closing it or reaching its time limit stops serving.
 If no GPU allocation remains, request a new one under `sci-lippert-intelligent-agents` first.
@@ -58,11 +58,19 @@ If no GPU allocation remains, request a new one under `sci-lippert-intelligent-a
 
 In a separate Mac terminal, run the tunnel command printed by the server. It forwards local
 port `8001` to port `8001` on the allocated GPU node. Keep this terminal open too.
-The normal `cluster/tunnel.sh qwen3-8b maximilian.speer` helper assumes a batch job named
-`vllm-qwen3-8b`; an interactive job named `plain-english` writes a different endpoint file,
-so use the printed command for that session. After reconnecting by SSH, the job name may
-be absent even though the job ID is set. The script then uses an endpoint filename containing
-the job ID; the printed tunnel command still works. A missing job ID still stops the script.
+Alternatively, the tunnel helper accepts the endpoint filename printed by the server, without
+`.endpoint`, as its third argument. For an interactive job named `plain-english`, for example:
+
+```bash
+bash cluster/tunnel.sh qwen3-8b maximilian.speer plain-english
+```
+
+Omit the third argument for the standard batch job named `vllm-qwen3-8b`. After reconnecting by
+SSH, the job name may be absent even though the job ID is set. The server then uses an endpoint
+filename such as `vllm-qwen3-8b-12345.endpoint`; pass `vllm-qwen3-8b-12345` as the third argument
+with your actual job ID. The helper checks that the recorded job is running under your project
+account and refuses stale endpoints. A running Slurm job alone does not confirm vLLM is ready;
+wait for server startup and check the API below.
 
 In another Mac terminal, verify the available model names without generating an answer:
 
