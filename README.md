@@ -1,24 +1,15 @@
 # Intelligent Agents Chat
 
-## Features
+## Feature Overview
 
-Required
-- [x] multiple models
-- [x] start / stop / resume chats
-- [x] Cross-Chat Project Memory
-- [x] Finetuning (2/2)
-  - [x] Conspiracy
-  - [x] Simple English
-
-Elective
-
-- [x] Sub-Agent
-- [x] Websearch
-- [x] Context Management
-  - [x] Isolation
-  - [x] Selection
-  - [x] Compressing
-- [x] RAG
+| Category | Feature | Idea and design decisions |
+| --- | --- | --- |
+| Required | Memory | [Recall relevant turns from other chats in the same project](docs/memory.md) |
+| Required | Two LoRA fine-tunings | [Adapt one shared base model with separately selectable adapters](docs/fine-tuning.md) |
+| Elective | Websearch | [Search for sources, then read and condense selected pages](docs/websearch.md) |
+| Elective | Subagents | [Delegate focused tasks with isolated context](docs/subagents.md) |
+| Elective | Intelligent context management | [Select, isolate, and compress information within the context window](docs/context-management.md) |
+| Elective | RAG | [Search a project's uploaded documents, decided and queried by the agent itself](docs/rag.md) |
 
 ## Architecture
 
@@ -48,6 +39,21 @@ changing the agent loop. The selector currently exposes exactly **Qwen3 8B**, **
 (Conspiracy)**, and **Qwen3 8B (Simple English)** on port `8001`. Simple English uses checkpoint
 193 of the retained run. Qwen3.5, Ollama, and intermediate adapters are inactive; their historical
 profiles remain resolvable for saved chats. The active 8B profiles do not enable tool calls.
+
+## Agent loop
+
+![Agent loop: retrieve memory, assemble context, generate, execute tools, and repeat](docs/images/agent-loop.png)
+
+For each user message, we retrieve relevant project memories and assemble the model's context.
+The model then generates an answer or requests a tool. The local application executes tool calls,
+appends their results to the context, and asks the model to continue. This repeats until the model
+answers without another tool call or the round limit is reached.
+
+Tool calls run sequentially, including delegated tasks. Limits on rounds and calls keep a turn
+bounded. The UI streams the answer and shows reasoning and tool activity separately; the stored
+conversation can be reopened later. Context preparation lives in
+[context.py](src/intelligent_agents_chat/context.py), while
+[chat.py](src/intelligent_agents_chat/chat.py) implements the loop and tool registry.
 
 ## Run with the HPI SCI Compute Cluster
 
@@ -101,28 +107,5 @@ Alternatively, use the exact SSH tunnel command printed by the server. Check
 `curl --fail http://127.0.0.1:8001/v1/models`: it must list `qwen3-8b`, `conspiracy`, and
 `plain-english-clear-v2` (the API name for Simple English).
 
-## Agent loop
 
-![Agent loop: retrieve memory, assemble context, generate, execute tools, and repeat](docs/images/agent-loop.png)
 
-For each user message, we retrieve relevant project memories and assemble the model's context.
-The model then generates an answer or requests a tool. The local application executes tool calls,
-appends their results to the context, and asks the model to continue. This repeats until the model
-answers without another tool call or the round limit is reached.
-
-Tool calls run sequentially, including delegated tasks. Limits on rounds and calls keep a turn
-bounded. The UI streams the answer and shows reasoning and tool activity separately; the stored
-conversation can be reopened later. Context preparation lives in
-[context.py](src/intelligent_agents_chat/context.py), while
-[chat.py](src/intelligent_agents_chat/chat.py) implements the loop and tool registry.
-
-## Feature overview
-
-| Category | Feature | Idea and design decisions |
-| --- | --- | --- |
-| Required | Memory | [Recall relevant turns from other chats in the same project](docs/memory.md) |
-| Required | Two LoRA fine-tunings | [Adapt one shared base model with separately selectable adapters](docs/fine-tuning.md) |
-| Elective | Websearch | [Search for sources, then read and condense selected pages](docs/websearch.md) |
-| Elective | Subagents | [Delegate focused tasks with isolated context](docs/subagents.md) |
-| Elective | Intelligent context management | [Select, isolate, and compress information within the context window](docs/context-management.md) |
-| Elective | RAG | [Search a project's uploaded documents, decided and queried by the agent itself](docs/rag.md) |
