@@ -1,11 +1,11 @@
 # Demo-Video-Skript
 
-1. Architektur-Überblick (~30s) — UI, Modellauswahl. Architektur Grafik nochmal zeigen.
+### 1. Architektur-Überblick (~30s) — UI, Modellauswahl. Architektur Grafik nochmal zeigen.
 
 **Qwen3.5 9B** als Standard-Hauptmodell mit Tools und optionalem Thinking zeigen.
 Qwen3 8B und seine zwei Adapter dienen dem Fine-Tuning-Vergleich in Punkt 2.
 
-2. Fine-Tuning (LoRA) — Basismodell, Conspiracy und Simple English
+### 2. Fine-Tuning (LoRA) — Basismodell, Conspiracy und Simple English
 
 Neues Projekt "Flat Earth"
 Neuer Chat
@@ -24,10 +24,10 @@ I think it were just many slaves"
 Je einen frischen Chat mit **Qwen3 8B** und **Qwen3 8B (Simple English)** öffnen.
 
 ```text
-How does Attention work in LLMs?```
+How does Attention work in LLMs?
+```
 
-
-3. Memory — Projekt „Lisbon Trip", zwei fertige Konversationen:
+### 3. Memory — Projekt „Lisbon Trip", zwei fertige Konversationen:
 
 Für diesen und alle folgenden Agent-Demos wieder **Qwen3.5 9B** auswählen,
 damit Tools, Websearch, Subagents und RAG verfügbar sind.
@@ -43,7 +43,7 @@ What's a good area to stay in Lisbon for nightlife and easy metro access and acc
 
 Bei dem Prompt memory und auch schon Websearch erklären
 
-4. Websearch — größere Frage.
+### 4. Websearch — größere Frage.
 
 Neuer Chat unter "General"
 
@@ -51,7 +51,7 @@ Neuer Chat unter "General"
 How did the population of Berlin develop after the reunification 1990?"
 ```
 
-5. Subagents 
+### 5. Subagents 
 
 Subagents werden schon im Websearch und in der Compression verwendet. Zusätzlich als tool "delegate_task"
 
@@ -67,7 +67,9 @@ I want to celebrate my birthday. I need different things: A plan for how to orga
 ```
 
 
-6. RAG — Projekt „Bioinformatics" (9 Vorlesungsfolien, fertig indexiert). 
+### 6. RAG — Projekt „Bioinformatics" (9 
+
+Vorlesungsfolien, fertig indexiert). 
 
 Einmal zeigen wie man ein neues dokument und vielleicht ein pdf hochladen kann.
 
@@ -80,7 +82,7 @@ What does the uploaded lecture notes tell about Motifs and how are they used?
 Compare the two approaches of Genome Assembly mentioned in the uploaded slides
 ```
 
-7. Context Management
+### 7. Context Management
 
 Kontext Grafik zeigen
 Memory budget nochmal erwähnen
@@ -96,7 +98,7 @@ zeigen an Beispiel Prompt, selber chat wie population search in "General"
 You fetched the german wikipedia, what did you find there?
 ```
 
-9. Context Compression — Projekt „Computing History", ein langer, echter Chat 
+### 9. Context Compression — Projekt „Computing History", ein langer, echter Chat 
 
 Context Usage Icons zeigen, werden immer mehr. 
 - letzte Nachricht hat ~ 22k verbraucht
