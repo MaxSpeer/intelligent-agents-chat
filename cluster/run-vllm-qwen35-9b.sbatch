@@ -63,7 +63,8 @@ readonly SCRATCH_HOME="${RUNTIME_ROOT}/home"
 readonly SCRATCH_TMP="${RUNTIME_ROOT}/tmp"
 readonly SCRATCH_CACHE="${RUNTIME_ROOT}/cache"
 readonly NO_ENTRYPOINT="${RUNTIME_ROOT}/no-entrypoint.sh"
-readonly ENDPOINT_FILE="${PROJECT_ROOT}/logs/vllm/${SLURM_JOB_NAME}.endpoint"
+readonly ENDPOINT_NAME="${SLURM_JOB_NAME:-vllm-${SERVED_MODEL_NAME}-${SLURM_JOB_ID}}"
+readonly ENDPOINT_FILE="${PROJECT_ROOT}/logs/vllm/${ENDPOINT_NAME}.endpoint"
 
 umask 002
 mkdir -p \
