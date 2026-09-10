@@ -17,25 +17,20 @@ MAX_QUERY_TERMS = 12
 MAX_RETRIEVED_CHARS = 3_000
 DEFAULT_RETRIEVAL_LIMIT = 6
 _STOP_WORDS = {
-    "aber",
-    "auch",
-    "das",
-    "der",
-    "die",
-    "ein",
-    "eine",
-    "einer",
-    "für",
-    "ist",
-    "mit",
-    "oder",
+    "but",
+    "also",
     "the",
-    "und",
-    "von",
-    "was",
-    "wie",
-    "wir",
-    "zu",
+    "a",
+    "an",
+    "for",
+    "is",
+    "with",
+    "or",
+    "and",
+    "by",
+    "what",
+    "how",
+    "we",
 }
 logger = logging.getLogger(__name__)
 
