@@ -5,10 +5,17 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+import sqlite_vec
+
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
-from intelligent_agents_chat.database import ChatRepository
+from intelligent_agents_chat.database import (
+    ChatRepository,
+    ContextRunInput,
+    ContextSourceInput,
+    connect_database,
+)
 from intelligent_agents_chat.documents import (
     BlobStore,
     Chunker,
@@ -19,6 +26,7 @@ from intelligent_agents_chat.documents import (
     ProjectRAGRetriever,
 )
 from intelligent_agents_chat.embeddings import EMBEDDING_DIMENSION, EmbeddingError
+from intelligent_agents_chat.memory import ProjectMemoryStore
 
 
 class SemanticFakeEmbeddingGateway:
@@ -147,6 +155,120 @@ class DocumentRAGTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all("amber" not in result.text for result in private_results))
         self.assertIn("violet", private_results[0].text)
         self.assertEqual(private_results[0].title, "secret.txt")
+
+    async def test_delete_project_removes_its_records_vectors_and_files_only(self) -> None:
+        removed = self.repository.create_project("Remove")
+        kept = self.repository.create_project("Keep")
+        for project, marker in [(removed, "orchid"), (kept, "budget")]:
+            conversation = self.repository.create_conversation(project_id=project.id)
+            self.repository.add_message(conversation.id, "user", f"Remember the {marker}.")
+            answer = self.repository.add_message(conversation.id, "assistant", f"Saved {marker}.")
+            ProjectMemoryStore(self.database_path).rebuild_project(project.id)
+            self.repository.add_message_context_sources(
+                answer.id, [ContextSourceInput(marker, "notes", marker, 1, 5)]
+            )
+            self.repository.add_message_context_run(
+                answer.id, ContextRunInput(32768, 31744, 50, 45, 10, 55)
+            )
+            self.repository.set_conversation_compaction(
+                conversation.id, compacted_through_message_id=answer.id, summary=marker
+            )
+            await self.service.upload(
+                project_id=project.id,
+                display_name="notes.txt",
+                media_type="text/plain",
+                data=f"Facts about the {marker}.".encode(),
+            )
+        kept_document = self.store.list_documents(kept.id)[0]
+        orphan_key = self.blob_store.storage_key(removed.id, "orphan-upload", ".txt")
+        self.blob_store.write(orphan_key, b"A file left by an older upload.")
+        settings = self.repository.set_app_settings(
+            model_profile="qwen3-8b", thinking_enabled=False, memory_enabled=True
+        )
+        with connect_database(self.database_path) as connection:
+            connection.execute(
+                "INSERT INTO document_chunks_vec(row_id, project_id, embedding) VALUES (?, ?, ?)",
+                (
+                    99999,
+                    removed.id,
+                    sqlite_vec.serialize_float32(self.embedding_gateway._vector("orchid")),
+                ),
+            )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM memory_entries").fetchone()[0], 2
+            )
+
+        self.assertTrue(self.repository.delete_project(removed.id))
+        self.blob_store.delete_project(removed.id)
+
+        self.assertIsNone(self.repository.get_project(removed.id))
+        self.assertIsNotNone(self.repository.get_project(kept.id))
+        self.assertEqual(self.repository.get_app_settings(), settings)
+        self.assertEqual(self.store.list_documents(removed.id), [])
+        self.assertFalse((self.blob_store.root / removed.id).exists())
+        self.assertTrue(self.blob_store.exists(kept_document.storage_key))
+        with connect_database(self.database_path) as connection:
+            for table in [
+                "conversations",
+                "memory_entries",
+                "message_context_sources",
+                "message_context_runs",
+                "conversation_compactions",
+                "documents",
+                "document_chunks",
+                "document_chunks_vec",
+            ]:
+                with self.subTest(table=table):
+                    self.assertEqual(
+                        connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 1
+                    )
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 2)
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(
+                connection.execute(
+                    "SELECT rowid FROM memory_entries_fts WHERE memory_entries_fts MATCH 'orchid'"
+                ).fetchall(),
+                [],
+            )
+        hits = await ProjectRAGRetriever(self.store, self.embedding_gateway).retrieve(
+            project_id=kept.id, text="budget", limit=5
+        )
+        self.assertEqual(len(hits), 1)
+        self.assertIn("budget", hits[0].text)
+        self.assertFalse(self.repository.delete_project(removed.id))
+        self.blob_store.delete_project(removed.id)
+
+    async def test_project_deletion_waits_for_indexing(self) -> None:
+        project = self.repository.create_project("Uploading")
+        upload = await self.service.upload(
+            project_id=project.id,
+            display_name="notes.txt",
+            media_type="text/plain",
+            data=b"An orchid fact.",
+        )
+        self.store.mark_processing(upload.document.id)
+        with self.assertRaisesRegex(ValueError, "Wait for document indexing"):
+            self.repository.delete_project(project.id)
+        self.assertIsNotNone(self.repository.get_project(project.id))
+        self.assertTrue(self.blob_store.exists(upload.document.storage_key))
+        with connect_database(self.database_path) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM document_chunks_vec").fetchone()[0], 1
+            )
+
+    def test_project_file_deletion_rejects_path_traversal_and_symlinks(self) -> None:
+        key = self.blob_store.storage_key("keep", "document", ".txt")
+        self.blob_store.write(key, b"Keep this file.")
+        for invalid in ["..", ".", "../keep", "/keep", ""]:
+            with self.subTest(project_id=invalid), self.assertRaises(DocumentValidationError):
+                self.blob_store.delete_project(invalid)
+        (self.blob_store.root / "alias").symlink_to(
+            self.blob_store.root / "keep", target_is_directory=True
+        )
+        with self.assertRaises(OSError):
+            self.blob_store.delete_project("alias")
+        self.assertTrue(self.blob_store.exists(key))
 
     async def test_failed_embedding_is_visible_and_retryable(self) -> None:
         project = self.repository.create_project("Retries")

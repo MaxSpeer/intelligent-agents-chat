@@ -11,6 +11,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 from typing import Literal, Sequence
 from uuid import uuid4
@@ -145,6 +146,14 @@ class BlobStore:
 
     def exists(self, storage_key: str) -> bool:
         return self._resolve(storage_key).is_file()
+
+    def delete_project(self, project_id: str) -> None:
+        """Remove this project's uploads, including any files no longer in the database."""
+        _validate_storage_component(project_id)
+        # Keep the project directory unresolved: rmtree rejects directory symlinks.
+        directory = self.root.resolve() / project_id
+        if directory.exists():
+            shutil.rmtree(directory)
 
     def _resolve(self, storage_key: str) -> Path:
         relative = Path(storage_key)

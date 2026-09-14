@@ -99,6 +99,17 @@ class ChatRepositoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be empty"):
             self.repository.create_project("   ")
 
+    def test_delete_project_preserves_general_and_handles_missing_project(self) -> None:
+        conversation = self.repository.create_conversation()
+        message = self.repository.add_message(conversation.id, "user", "Keep this message.")
+
+        with self.assertRaisesRegex(ValueError, "General project cannot be deleted"):
+            self.repository.delete_project(DEFAULT_PROJECT_ID)
+
+        self.assertFalse(self.repository.delete_project("missing-project"))
+        self.assertIsNotNone(self.repository.get_project())
+        self.assertEqual(self.repository.list_messages(conversation.id), [message])
+
     def test_rename_is_persisted(self) -> None:
         conversation = self.repository.create_conversation()
 

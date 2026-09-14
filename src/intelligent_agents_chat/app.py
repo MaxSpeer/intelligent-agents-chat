@@ -353,6 +353,7 @@ def index() -> None:
             {item.id: item.name for item in repository.list_projects()},
             value=project.id,
         )
+        project_delete_button.set_enabled(project.id != DEFAULT_PROJECT_ID)
 
     def render_conversation_list() -> None:
         conversation_list.clear()
@@ -655,6 +656,76 @@ def index() -> None:
         )
         render_all()
         composer.run_method("focus")
+
+    async def confirm_delete_project() -> None:
+        project = current_project()
+        if project.id == DEFAULT_PROJECT_ID:
+            ui.notify("The General project cannot be deleted.", type="warning")
+            return
+
+        def deletion_is_blocked() -> bool:
+            if any(
+                conversation.id in active_generations
+                for conversation in repository.list_conversations(project.id)
+            ):
+                ui.notify("Stop responses in this project before deleting it.", type="warning")
+                return True
+            if any(
+                document.status == "processing"
+                for document in document_store.list_documents(project.id)
+            ):
+                ui.notify(
+                    "Wait for document indexing to finish before deleting this project.",
+                    type="warning",
+                )
+                return True
+            return False
+
+        if deletion_is_blocked():
+            return
+        with ui.dialog() as dialog, ui.card().classes("w-96 max-w-full p-6 gap-5"):
+            ui.label("Delete project?").classes("text-xl font-bold")
+            ui.label(
+                f'Delete "{project.name}" and all of its chats, memory, and uploaded documents? '
+                "This cannot be undone."
+            ).classes("text-sm text-slate-500")
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Cancel", on_click=lambda: dialog.submit(False)).props("flat no-caps")
+                ui.button("Delete project", on_click=lambda: dialog.submit(True)).props(
+                    "unelevated no-caps color=negative"
+                )
+
+        if not await dialog or deletion_is_blocked():
+            return
+        try:
+            deleted = repository.delete_project(project.id)
+        except ValueError as error:
+            ui.notify(str(error), type="warning")
+            return
+
+        if deleted:
+            try:
+                document_service.blob_store.delete_project(project.id)
+            except OSError:
+                logger.exception(
+                    "Project deleted, but original upload files could not be removed",
+                    extra={"event": "ui.project.file_cleanup_failed", "project_id": project.id},
+                )
+                ui.notify(
+                    "Project deleted, but some uploaded files could not be removed from disk.",
+                    type="warning",
+                )
+            else:
+                ui.notify(f'Project "{project.name}" deleted.', type="positive")
+        if state.project_id == project.id:
+            state.project_id = DEFAULT_PROJECT_ID
+            remaining = repository.list_conversations(DEFAULT_PROJECT_ID)
+            replacement = remaining[0] if remaining else repository.create_conversation()
+            state.conversation_id = replacement.id
+        page_event(
+            logging.INFO, "ui.project.deleted", target_project_id=project.id, deleted=deleted
+        )
+        render_all()
 
     def select_conversation(conversation_id: str) -> None:
         if state.generating:
@@ -1668,6 +1739,13 @@ def index() -> None:
                 )
                 project_create_button.props["aria-label"] = "Create project"
                 project_create_button.tooltip("Create project")
+                project_delete_button = (
+                    ui.button(icon="delete_outline", on_click=confirm_delete_project)
+                    .props("flat round dense")
+                    .classes("project-delete")
+                )
+                project_delete_button.props["aria-label"] = "Delete project"
+                project_delete_button.tooltip("Delete project (General is kept)")
 
             ui.button(
                 "New conversation",

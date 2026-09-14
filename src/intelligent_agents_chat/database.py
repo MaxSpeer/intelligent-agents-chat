@@ -582,6 +582,33 @@ class ChatRepository:
         )
         return settings
 
+    def delete_project(self, project_id: str) -> bool:
+        """Delete a project and its database contents; original uploads are removed separately."""
+        if project_id == DEFAULT_PROJECT_ID:
+            raise ValueError("The General project cannot be deleted.")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            project = connection.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            if project is None:
+                return False
+            processing = connection.execute(
+                "SELECT 1 FROM documents WHERE project_id = ? AND status = 'processing'",
+                (project_id,),
+            ).fetchone()
+            if processing is not None:
+                raise ValueError(
+                    "Wait for document indexing to finish before deleting this project."
+                )
+            # vec0 has no foreign keys, including for vectors left by earlier document deletions.
+            connection.execute(
+                "DELETE FROM document_chunks_vec WHERE project_id = ?", (project_id,)
+            )
+            connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        log_event(logger, logging.INFO, "database.project.deleted", project_id=project_id)
+        return True
+
     def delete_conversation(self, conversation_id: str) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(

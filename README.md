@@ -1,5 +1,10 @@
 # Intelligent Agents Chat
 
+To delete a project, select it and click the trash icon beside the project selector.
+Confirm **Delete project** to remove its chats, memory, documents, and search index.
+The app returns to **General**, which is kept as the default project. Deletion waits
+until responses and document indexing in that project have finished.
+
 ## Feature Overview
 
 | Category | Feature | Idea and design decisions |

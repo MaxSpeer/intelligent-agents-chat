@@ -79,6 +79,16 @@ body {
     background: rgba(99, 91, 255, .09) !important;
 }
 
+.project-delete {
+    flex: 0 0 auto;
+    color: var(--muted) !important;
+}
+
+.project-delete:not([disabled]):hover {
+    color: #dc2626 !important;
+    background: rgba(220, 38, 38, .08) !important;
+}
+
 .eyebrow {
     color: var(--muted);
     font-size: .68rem;
